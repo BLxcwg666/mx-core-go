@@ -12,6 +12,7 @@ import (
 
 	"github.com/mx-space/core/internal/app"
 	"github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/pkg/nativelog"
 	"go.uber.org/zap"
 )
 
@@ -19,7 +20,11 @@ func main() {
 	configPath := flag.String("config", config.DefaultConfigPath, "Path to YAML config file")
 	flag.Parse()
 
-	logger, _ := zap.NewProduction()
+	logger, err := nativelog.NewZapLogger()
+	if err != nil {
+		logger, _ = zap.NewProduction()
+		logger.Warn("native log pipeline unavailable, fallback to zap production logger", zap.Error(err))
+	}
 	defer logger.Sync()
 
 	application, err := app.New(logger, *configPath)

@@ -16,6 +16,7 @@ import (
 	appconfigs "github.com/mx-space/core/internal/modules/configs"
 	"github.com/mx-space/core/internal/pkg/cron"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
+	"github.com/mx-space/core/internal/pkg/nativelog"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
@@ -304,30 +305,7 @@ func resolveLogDir(logType string) (string, error) {
 }
 
 func resolveNativeLogDir() string {
-	if dir := strings.TrimSpace(os.Getenv("MX_LOG_DIR")); dir != "" {
-		return dir
-	}
-
-	candidates := make([]string, 0, 4)
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("NODE_ENV")), "development") {
-		candidates = append(candidates, filepath.Join(".", "tmp", "log"))
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		candidates = append(candidates, filepath.Join(home, ".mx-space", "log"))
-	}
-	candidates = append(candidates, filepath.Join(".", "logs"))
-	candidates = append(candidates, filepath.Join(".", "tmp", "log"))
-
-	for _, dir := range candidates {
-		info, err := os.Stat(dir)
-		if err == nil && info.IsDir() {
-			return dir
-		}
-	}
-	if len(candidates) > 0 {
-		return candidates[0]
-	}
-	return filepath.Join(".", "logs")
+	return nativelog.ResolveDir()
 }
 
 func parsePM2LogMeta(filename string) (string, int) {
@@ -359,7 +337,7 @@ func formatByteSize(size int64) string {
 }
 
 func todayNativeLogFilename() string {
-	return "stdout_" + time.Now().Format("1-2-06") + ".log"
+	return nativelog.TodayFilename(time.Now())
 }
 
 func samePath(a, b string) bool {

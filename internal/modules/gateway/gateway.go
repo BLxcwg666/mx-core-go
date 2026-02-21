@@ -3,13 +3,17 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/pkg/nativelog"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	redis "github.com/redis/go-redis/v9"
 	socketio "github.com/zishang520/socket.io/v2/socket"
@@ -26,6 +30,8 @@ const (
 
 	redisKeyMaxOnlineCount      = "mx:max_online_count"
 	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
+
+	nativeLogSnapshotChunkSize = 32 * 1024
 )
 
 // Message is the envelope used by hub broadcasts and Redis fan-out.
@@ -47,12 +53,20 @@ type clientMeta struct {
 	room string
 }
 
+type adminLogSubscription struct {
+	streamID int
+	stopCh   chan struct{}
+}
+
 // Hub manages socket.io namespaces and cluster fan-out.
 type Hub struct {
 	mu sync.RWMutex
 
 	sidRoom   map[string]string
 	roomCount map[string]int
+
+	logSubMu sync.Mutex
+	logSubs  map[string]adminLogSubscription
 
 	broadcast  chan Message
 	register   chan clientMeta
@@ -69,6 +83,7 @@ func NewHub(rc *pkgredis.Client, logger *zap.Logger, adminTokenValidator func(st
 	h := &Hub{
 		sidRoom:             make(map[string]string),
 		roomCount:           make(map[string]int),
+		logSubs:             make(map[string]adminLogSubscription),
 		broadcast:           make(chan Message, 256),
 		register:            make(chan clientMeta, 256),
 		unregister:          make(chan clientMeta, 256),
@@ -115,7 +130,15 @@ func (h *Hub) registerNamespaces() {
 		h.register <- clientMeta{sid: sid, room: RoomAdmin}
 		_ = client.Emit("message", h.gatewayMessageFormat("GATEWAY_CONNECT", "WebSocket connected", nil))
 
+		_ = client.On("log", func(eventArgs ...any) {
+			h.subscribeStdout(client, parsePrevLogOption(eventArgs))
+		})
+		_ = client.On("unlog", func(_ ...any) {
+			h.unsubscribeStdout(sid)
+		})
+
 		_ = client.On("disconnect", func(_ ...any) {
+			h.unsubscribeStdout(sid)
 			h.unregister <- clientMeta{sid: sid, room: RoomAdmin}
 		})
 	})
@@ -160,6 +183,153 @@ func normalizeToken(raw string) string {
 		return strings.TrimSpace(token[7:])
 	}
 	return token
+}
+
+func parsePrevLogOption(args []any) bool {
+	if len(args) == 0 {
+		return true
+	}
+	return extractPrevLog(args[0], true)
+}
+
+func extractPrevLog(raw any, fallback bool) bool {
+	switch v := raw.(type) {
+	case map[string]any:
+		if value, ok := v["prevLog"]; ok {
+			return toBool(value, fallback)
+		}
+	case string:
+		payload := make(map[string]any)
+		if err := json.Unmarshal([]byte(v), &payload); err == nil {
+			if value, ok := payload["prevLog"]; ok {
+				return toBool(value, fallback)
+			}
+		}
+	}
+	return fallback
+}
+
+func toBool(raw any, fallback bool) bool {
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
+	case int:
+		return v != 0
+	case int8:
+		return v != 0
+	case int16:
+		return v != 0
+	case int32:
+		return v != 0
+	case int64:
+		return v != 0
+	case uint:
+		return v != 0
+	case uint8:
+		return v != 0
+	case uint16:
+		return v != 0
+	case uint32:
+		return v != 0
+	case uint64:
+		return v != 0
+	case float32:
+		return v != 0
+	case float64:
+		return v != 0
+	}
+	return fallback
+}
+
+func (h *Hub) subscribeStdout(client *socketio.Socket, prevLog bool) {
+	sid := string(client.Id())
+	if sid == "" {
+		return
+	}
+
+	h.logSubMu.Lock()
+	if _, exists := h.logSubs[sid]; exists {
+		h.logSubMu.Unlock()
+		return
+	}
+	streamID, stream := nativelog.Subscribe(512)
+	stopCh := make(chan struct{})
+	h.logSubs[sid] = adminLogSubscription{
+		streamID: streamID,
+		stopCh:   stopCh,
+	}
+	h.logSubMu.Unlock()
+
+	if prevLog {
+		h.emitNativeLogSnapshot(client)
+	}
+
+	go func() {
+		for {
+			select {
+			case <-stopCh:
+				return
+			case frame, ok := <-stream:
+				if !ok {
+					return
+				}
+				if frame == "" {
+					continue
+				}
+				_ = client.Emit("message", h.gatewayMessageFormat("STDOUT", frame, nil))
+			}
+		}
+	}()
+}
+
+func (h *Hub) unsubscribeStdout(sid string) {
+	if sid == "" {
+		return
+	}
+
+	h.logSubMu.Lock()
+	sub, exists := h.logSubs[sid]
+	if exists {
+		delete(h.logSubs, sid)
+	}
+	h.logSubMu.Unlock()
+	if !exists {
+		return
+	}
+
+	close(sub.stopCh)
+	nativelog.Unsubscribe(sub.streamID)
+}
+
+func (h *Hub) emitNativeLogSnapshot(client *socketio.Socket) {
+	path := nativelog.TodayFilePath(time.Now())
+	file, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	buf := make([]byte, nativeLogSnapshotChunkSize)
+	for {
+		n, readErr := file.Read(buf)
+		if n > 0 {
+			_ = client.Emit("message", h.gatewayMessageFormat("STDOUT", string(buf[:n]), nil))
+		}
+		if readErr == nil {
+			continue
+		}
+		if !errors.Is(readErr, io.EOF) && h.logger != nil {
+			h.logger.Warn("gateway log snapshot read failed", zap.String("path", path), zap.Error(readErr))
+		}
+		break
+	}
 }
 
 // Run starts the hub loop and Redis subscriber.
