@@ -20,17 +20,35 @@ func SetSecret(s string) {
 
 // Claims is the JWT payload.
 type Claims struct {
-	UserID string `json:"uid"`
+	UserID    string `json:"uid"`
+	SessionID string `json:"sid,omitempty"`
+	IP        string `json:"ip,omitempty"`
+	UA        string `json:"ua,omitempty"`
 	jwtlib.RegisteredClaims
+}
+
+type SignOptions struct {
+	SessionID string
+	IP        string
+	UA        string
 }
 
 // Sign creates a signed JWT token for the given user ID.
 func Sign(userID string, ttl time.Duration) (string, error) {
+	return SignWithOptions(userID, ttl, SignOptions{})
+}
+
+// SignWithOptions creates a signed JWT token and attaches extra session metadata.
+func SignWithOptions(userID string, ttl time.Duration, opts SignOptions) (string, error) {
+	now := time.Now()
 	claims := Claims{
-		UserID: userID,
+		UserID:    userID,
+		SessionID: opts.SessionID,
+		IP:        opts.IP,
+		UA:        opts.UA,
 		RegisteredClaims: jwtlib.RegisteredClaims{
-			ExpiresAt: jwtlib.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwtlib.NewNumericDate(time.Now()),
+			ExpiresAt: jwtlib.NewNumericDate(now.Add(ttl)),
+			IssuedAt:  jwtlib.NewNumericDate(now),
 		},
 	}
 	token := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, claims)

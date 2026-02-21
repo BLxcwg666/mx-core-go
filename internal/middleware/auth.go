@@ -7,23 +7,29 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
+	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"gorm.io/gorm"
 )
 
 const (
 	ContextKeyUserID = "user_id"
+	ContextKeySID    = "session_id"
 	apiTokenPrefix   = "txo"
 )
 
 // Auth returns a middleware that enforces JWT or API token authentication.
 func Auth(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, err := ValidateToken(db, extractToken(c))
+		claims, err := ValidateTokenClaims(db, extractToken(c))
 		if err != nil {
 			response.Unauthorized(c)
 			return
 		}
-		c.Set(ContextKeyUserID, userID)
+		c.Set(ContextKeyUserID, claims.UserID)
+		if claims.SessionID != "" {
+			c.Set(ContextKeySID, claims.SessionID)
+			sessionpkg.Touch(db, claims.UserID, claims.SessionID)
+		}
 		c.Next()
 	}
 }
@@ -31,8 +37,12 @@ func Auth(db *gorm.DB) gin.HandlerFunc {
 // OptionalAuth sets the user ID if a valid token is present, but does not block the request.
 func OptionalAuth(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if userID, err := ValidateToken(db, extractToken(c)); err == nil && userID != "" {
-			c.Set(ContextKeyUserID, userID)
+		if claims, err := ValidateTokenClaims(db, extractToken(c)); err == nil && claims.UserID != "" {
+			c.Set(ContextKeyUserID, claims.UserID)
+			if claims.SessionID != "" {
+				c.Set(ContextKeySID, claims.SessionID)
+				sessionpkg.Touch(db, claims.UserID, claims.SessionID)
+			}
 		}
 		c.Next()
 	}
@@ -40,25 +50,52 @@ func OptionalAuth(db *gorm.DB) gin.HandlerFunc {
 
 // ValidateToken validates JWT/API token and returns the authenticated user id.
 func ValidateToken(db *gorm.DB, rawToken string) (string, error) {
-	token := NormalizeToken(rawToken)
-	if token == "" {
-		return "", errors.New("token is required")
-	}
-
-	if strings.HasPrefix(token, apiTokenPrefix) {
-		return validateAPIToken(db, token)
-	}
-
-	claims, err := jwt.Parse(token)
+	claims, err := ValidateTokenClaims(db, rawToken)
 	if err != nil {
 		return "", err
 	}
 	return claims.UserID, nil
 }
 
+// ValidateTokenClaims validates JWT/API token and returns claims.
+func ValidateTokenClaims(db *gorm.DB, rawToken string) (*jwt.Claims, error) {
+	token := NormalizeToken(rawToken)
+	if token == "" {
+		return nil, errors.New("token is required")
+	}
+
+	if strings.HasPrefix(token, apiTokenPrefix) {
+		userID, err := validateAPIToken(db, token)
+		if err != nil {
+			return nil, err
+		}
+		return &jwt.Claims{UserID: userID}, nil
+	}
+
+	claims, err := jwt.Parse(token)
+	if err != nil {
+		return nil, err
+	}
+	active, err := sessionpkg.IsActive(db, claims.UserID, claims.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, errors.New("session expired or revoked")
+	}
+	return claims, nil
+}
+
 // CurrentUserID extracts the authenticated user ID from context.
 func CurrentUserID(c *gin.Context) string {
 	v, _ := c.Get(ContextKeyUserID)
+	id, _ := v.(string)
+	return id
+}
+
+// CurrentSessionID extracts the authenticated session ID from context.
+func CurrentSessionID(c *gin.Context) string {
+	v, _ := c.Get(ContextKeySID)
 	id, _ := v.(string)
 	return id
 }

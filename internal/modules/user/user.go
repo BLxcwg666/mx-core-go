@@ -11,8 +11,8 @@ import (
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	appconfigs "github.com/mx-space/core/internal/modules/configs"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
+	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -115,7 +115,7 @@ func (s *Service) GetByID(id string) (*models.UserModel, error) {
 	return &u, nil
 }
 
-func (s *Service) Login(username, password, ip string) (string, *models.UserModel, error) {
+func (s *Service) Login(username, password, ip, ua string) (string, *models.UserModel, error) {
 	var u models.UserModel
 	if err := s.db.Select("id, username, name, avatar, password, mail, url, introduce, social_ids, last_login_time, last_login_ip").
 		Where("username = ?", username).First(&u).Error; err != nil {
@@ -135,7 +135,7 @@ func (s *Service) Login(username, password, ip string) (string, *models.UserMode
 	u.LastLoginTime = &now
 	u.LastLoginIP = ip
 
-	token, err := jwtpkg.Sign(u.ID, 30*24*time.Hour)
+	token, _, err := sessionpkg.Issue(s.db, u.ID, ip, ua, sessionpkg.DefaultTTL)
 	return token, &u, err
 }
 
@@ -258,7 +258,7 @@ func (h *Handler) checkLogged(c *gin.Context) {
 			token = strings.TrimSpace(token[7:])
 		}
 		if token != "" {
-			_, err := jwtpkg.Parse(token)
+			_, err := middleware.ValidateToken(h.svc.db, token)
 			isAuthenticated = err == nil
 		}
 	}
@@ -273,16 +273,31 @@ func (h *Handler) allowLogin(c *gin.Context) {
 	_ = h.svc.db.Model(&models.AuthnModel{}).Count(&passkeyCount).Error
 
 	passwordEnabled := true
+	enabledProviders := map[string]bool{}
 	if h.cfgSvc != nil {
 		if cfg, err := h.cfgSvc.Get(); err == nil && cfg != nil {
 			passwordEnabled = !cfg.AuthSecurity.DisablePasswordLogin
+			for _, provider := range cfg.OAuth.Providers {
+				providerType := strings.ToLower(strings.TrimSpace(provider.Type))
+				if providerType == "" || !provider.Enabled {
+					continue
+				}
+				if oauthProviderClientID(cfg.OAuth.Public, providerType) == "" {
+					continue
+				}
+				enabledProviders[providerType] = true
+			}
 		}
 	}
 
-	response.OK(c, gin.H{
+	res := gin.H{
 		"password": passwordEnabled,
 		"passkey":  passkeyCount > 0,
-	})
+	}
+	for providerType, enabled := range enabledProviders {
+		res[providerType] = enabled
+	}
+	response.OK(c, res)
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -291,7 +306,7 @@ func (h *Handler) login(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	token, u, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP())
+	token, u, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		response.UnprocessableEntity(c, err.Error())
 		return
@@ -354,8 +369,10 @@ func (h *Handler) updateProfile(c *gin.Context) {
 }
 
 func (h *Handler) logout(c *gin.Context) {
-	// JWT is stateless; client discards the token.
-	// If using API tokens, the client should call DELETE /auth/token.
+	sessionID := middleware.CurrentSessionID(c)
+	if sessionID != "" {
+		_ = sessionpkg.Revoke(h.svc.db, middleware.CurrentUserID(c), sessionID)
+	}
 	response.NoContent(c)
 }
 
@@ -365,7 +382,11 @@ func (h *Handler) loginWithToken(c *gin.Context) {
 		response.Unauthorized(c)
 		return
 	}
-	token, err := jwtpkg.Sign(userID, 30*24*time.Hour)
+	currentSessionID := middleware.CurrentSessionID(c)
+	if currentSessionID != "" {
+		_ = sessionpkg.Revoke(h.svc.db, userID, currentSessionID)
+	}
+	token, _, err := sessionpkg.Issue(h.svc.db, userID, c.ClientIP(), c.Request.UserAgent(), sessionpkg.DefaultTTL)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -392,14 +413,61 @@ func (h *Handler) changePassword(c *gin.Context) {
 }
 
 func (h *Handler) listSessions(c *gin.Context) {
-	response.OK(c, gin.H{"data": []interface{}{}})
+	userID := middleware.CurrentUserID(c)
+	currentSessionID := middleware.CurrentSessionID(c)
+
+	sessions, err := sessionpkg.ListActive(h.svc.db, userID)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	data := make([]gin.H, 0, len(sessions))
+	for _, s := range sessions {
+		data = append(data, gin.H{
+			"id":      s.ID,
+			"ua":      s.UA,
+			"ip":      s.IP,
+			"date":    s.UpdatedAt,
+			"current": s.ID == currentSessionID,
+		})
+	}
+	if len(data) == 0 {
+		var u models.UserModel
+		if err := h.svc.db.Select("id, last_login_time, last_login_ip").First(&u, "id = ?", userID).Error; err == nil {
+			legacyDate := time.Now()
+			if u.LastLoginTime != nil {
+				legacyDate = *u.LastLoginTime
+			}
+			data = append(data, gin.H{
+				"id":      "legacy-current",
+				"ua":      c.Request.UserAgent(),
+				"ip":      u.LastLoginIP,
+				"date":    legacyDate,
+				"current": true,
+			})
+		}
+	}
+
+	response.OK(c, gin.H{"data": data})
 }
 
 func (h *Handler) deleteSession(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	sessionID := c.Param("tokenId")
+	if err := sessionpkg.Revoke(h.svc.db, userID, sessionID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		response.InternalError(c, err)
+		return
+	}
 	response.NoContent(c)
 }
 
 func (h *Handler) deleteAllSessions(c *gin.Context) {
+	userID := middleware.CurrentUserID(c)
+	if err := sessionpkg.RevokeAllExcept(h.svc.db, userID, middleware.CurrentSessionID(c)); err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	response.NoContent(c)
 }
 
@@ -431,4 +499,33 @@ func encodeSocialIDs(ids map[string]interface{}) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func oauthProviderClientID(public map[string]interface{}, providerType string) string {
+	if len(public) == 0 || strings.TrimSpace(providerType) == "" {
+		return ""
+	}
+	raw, ok := public[providerType]
+	if !ok {
+		for k, v := range public {
+			if strings.EqualFold(k, providerType) {
+				raw = v
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return ""
+		}
+	}
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"client_id", "clientId"} {
+		if value, ok := m[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
