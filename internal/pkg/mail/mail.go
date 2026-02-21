@@ -310,7 +310,7 @@ func renderTemplate(tpl string, data interface{}) (string, error) {
 // SendCommentNotify sends a new-comment notification to the admin.
 func (s *Sender) SendCommentNotify(to string, data CommentNotifyData) error {
 	if strings.TrimSpace(data.Master) == "" {
-		data.Master = "Mx Space"
+		data.Master = "Mix Space"
 	}
 	if strings.TrimSpace(data.OwnerAvatar) == "" {
 		data.OwnerAvatar = "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png"
@@ -326,7 +326,7 @@ func (s *Sender) SendCommentNotify(to string, data CommentNotifyData) error {
 	}
 	siteName := strings.TrimSpace(data.SiteName)
 	if siteName == "" {
-		siteName = "Mx Space"
+		siteName = "Mix Space"
 	}
 	html, err := renderTemplate(commentNotifyTpl, data)
 	if err != nil {
@@ -355,14 +355,14 @@ func (s *Sender) SendSubscribeVerify(to string, data SubscribeVerifyData) error 
 // SendReplyNotify sends a reply notification to the original commenter.
 func (s *Sender) SendReplyNotify(to string, data ReplyNotifyData) error {
 	if strings.TrimSpace(data.Master) == "" {
-		data.Master = "Mx Space"
+		data.Master = "Mix Space"
 	}
 	if strings.TrimSpace(data.OwnerAvatar) == "" {
 		data.OwnerAvatar = "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png"
 	}
 	siteName := strings.TrimSpace(data.SiteName)
 	if siteName == "" {
-		siteName = "Mx Space"
+		siteName = "Mix Space"
 	}
 	html, err := renderTemplate(replyNotifyTpl, data)
 	if err != nil {
@@ -378,7 +378,7 @@ func (s *Sender) SendReplyNotify(to string, data ReplyNotifyData) error {
 // SendNewsletter sends a newsletter email for newly published content.
 func (s *Sender) SendNewsletter(to string, data NewsletterData) error {
 	if strings.TrimSpace(data.OwnerName) == "" {
-		data.OwnerName = "Mx Space"
+		data.OwnerName = "Mix Space"
 	}
 	if strings.TrimSpace(data.OwnerAvatar) == "" {
 		data.OwnerAvatar = "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png"
