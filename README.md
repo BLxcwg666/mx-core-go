@@ -1,5 +1,8 @@
 # Mix Space Core
 
+> [!WARNING]
+> 没写完，别急！！！
+
 这是以 Golang 重写的 Mix Space Core
 
 > [!WARNING]
@@ -15,6 +18,11 @@
 - **Redis**: >= 7.4.2
 - **MySQL**: >= 8.0.0
 - **MiliSearch**: >= 1.35.1
+
+## 管理员面板
+额暂时呢我不会把面板本体附带到 Go 编辑的二进制产物中  
+所以需要自行编译面板并在 `config.yml` 中填写 `dist` 路径  
+面板版本以 [BLxcwg666/mx-admin](https://github.com/BLxcwg666/mx-admin) 为准，其他版本及原作者的版本兼容性将不被保证
 
 ## 开发
 
