@@ -5,13 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
+	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -29,6 +30,7 @@ type RegisterDTO struct {
 
 type CreateTokenDTO struct {
 	Name      string     `json:"name"       binding:"required"`
+	Expired   *time.Time `json:"expired"`
 	ExpiredAt *time.Time `json:"expired_at"`
 }
 
@@ -37,18 +39,18 @@ type loginResponse struct {
 }
 
 type tokenResponse struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Token     string     `json:"token"`
-	ExpiredAt *time.Time `json:"expired_at"`
-	Created   time.Time  `json:"created"`
+	ID      string     `json:"id"`
+	Name    string     `json:"name"`
+	Token   string     `json:"token"`
+	Expired *time.Time `json:"expired"`
+	Created time.Time  `json:"created"`
 }
 
 type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
-func (s *Service) Login(username, password string) (string, error) {
+func (s *Service) Login(username, password, ip, ua string) (string, error) {
 	var u models.UserModel
 	if err := s.db.Select("id, password").
 		Where("username = ?", username).First(&u).Error; err != nil {
@@ -60,7 +62,8 @@ func (s *Service) Login(username, password string) (string, error) {
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
 		return "", fmt.Errorf("wrong password")
 	}
-	return jwtpkg.Sign(u.ID, 30*24*time.Hour)
+	token, _, err := sessionpkg.Issue(s.db, u.ID, ip, ua, sessionpkg.DefaultTTL)
+	return token, err
 }
 
 func (s *Service) Register(dto *RegisterDTO) (*models.UserModel, error) {
@@ -89,6 +92,29 @@ func (s *Service) ListTokens(userID string) ([]models.APIToken, error) {
 		Order("created_at DESC").Find(&tokens).Error
 }
 
+func (s *Service) GetToken(userID, tokenID string) (*models.APIToken, error) {
+	var t models.APIToken
+	if err := s.db.Where("id = ? AND user_id = ? AND (expired_at IS NULL OR expired_at > ?)", tokenID, userID, time.Now()).
+		First(&t).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (s *Service) VerifyTokenString(token string) (bool, error) {
+	var count int64
+	err := s.db.Model(&models.APIToken{}).
+		Where("token = ? AND (expired_at IS NULL OR expired_at > ?)", token, time.Now()).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (s *Service) CreateToken(userID string, dto *CreateTokenDTO) (*models.APIToken, error) {
 	b := make([]byte, 20)
 	if _, err := rand.Read(b); err != nil {
@@ -100,7 +126,7 @@ func (s *Service) CreateToken(userID string, dto *CreateTokenDTO) (*models.APITo
 		UserID:    userID,
 		Token:     token,
 		Name:      dto.Name,
-		ExpiredAt: dto.ExpiredAt,
+		ExpiredAt: firstNonNilTime(dto.Expired, dto.ExpiredAt),
 	}
 	return &t, s.db.Create(&t).Error
 }
@@ -146,7 +172,7 @@ func (h *Handler) login(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	token, err := h.svc.Login(dto.Username, dto.Password)
+	token, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		response.UnprocessableEntity(c, err.Error())
 		return
@@ -160,7 +186,7 @@ func (h *Handler) signInUsername(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	token, err := h.svc.Login(dto.Username, dto.Password)
+	token, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		response.UnprocessableEntity(c, err.Error())
 		return
@@ -190,6 +216,36 @@ func (h *Handler) register(c *gin.Context) {
 }
 
 func (h *Handler) listTokens(c *gin.Context) {
+	if token := strings.TrimSpace(c.Query("token")); token != "" {
+		ok, err := h.svc.VerifyTokenString(token)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, ok)
+		return
+	}
+
+	if tokenID := strings.TrimSpace(c.Query("id")); tokenID != "" {
+		t, err := h.svc.GetToken(middleware.CurrentUserID(c), tokenID)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if t == nil {
+			response.NotFound(c)
+			return
+		}
+		response.OK(c, tokenResponse{
+			ID:      t.ID,
+			Name:    t.Name,
+			Token:   t.Token,
+			Expired: t.ExpiredAt,
+			Created: t.CreatedAt,
+		})
+		return
+	}
+
 	tokens, err := h.svc.ListTokens(middleware.CurrentUserID(c))
 	if err != nil {
 		response.InternalError(c, err)
@@ -199,7 +255,7 @@ func (h *Handler) listTokens(c *gin.Context) {
 	for i, t := range tokens {
 		items[i] = tokenResponse{
 			ID: t.ID, Name: t.Name, Token: t.Token,
-			ExpiredAt: t.ExpiredAt, Created: t.CreatedAt,
+			Expired: t.ExpiredAt, Created: t.CreatedAt,
 		}
 	}
 	response.OK(c, gin.H{"data": items})
@@ -218,7 +274,7 @@ func (h *Handler) createToken(c *gin.Context) {
 	}
 	response.Created(c, tokenResponse{
 		ID: t.ID, Name: t.Name, Token: t.Token,
-		ExpiredAt: t.ExpiredAt, Created: t.CreatedAt,
+		Expired: t.ExpiredAt, Created: t.CreatedAt,
 	})
 }
 
@@ -338,4 +394,13 @@ func (h *Handler) asOwner(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"status": true})
+}
+
+func firstNonNilTime(values ...*time.Time) *time.Time {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }

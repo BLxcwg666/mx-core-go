@@ -42,6 +42,7 @@ func Connect(cfg *config.AppConfig) (*gorm.DB, error) {
 func migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&models.UserModel{},
+		&models.UserSession{},
 		&models.APIToken{},
 		&models.OAuth2Token{},
 		&models.AuthnModel{},
