@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,30 +18,12 @@ const (
 // Auth returns a middleware that enforces JWT or API token authentication.
 func Auth(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := extractToken(c)
-		if token == "" {
-			response.Unauthorized(c)
-			return
-		}
-
-		if strings.HasPrefix(token, apiTokenPrefix) {
-			userID, err := validateAPIToken(db, token)
-			if err != nil {
-				response.Unauthorized(c)
-				return
-			}
-			c.Set(ContextKeyUserID, userID)
-			c.Next()
-			return
-		}
-
-		claims, err := jwt.Parse(token)
+		userID, err := ValidateToken(db, extractToken(c))
 		if err != nil {
 			response.Unauthorized(c)
 			return
 		}
-
-		c.Set(ContextKeyUserID, claims.UserID)
+		c.Set(ContextKeyUserID, userID)
 		c.Next()
 	}
 }
@@ -48,20 +31,29 @@ func Auth(db *gorm.DB) gin.HandlerFunc {
 // OptionalAuth sets the user ID if a valid token is present, but does not block the request.
 func OptionalAuth(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := extractToken(c)
-		if token != "" {
-			if strings.HasPrefix(token, apiTokenPrefix) {
-				if userID, err := validateAPIToken(db, token); err == nil {
-					c.Set(ContextKeyUserID, userID)
-				}
-			} else {
-				if claims, err := jwt.Parse(token); err == nil {
-					c.Set(ContextKeyUserID, claims.UserID)
-				}
-			}
+		if userID, err := ValidateToken(db, extractToken(c)); err == nil && userID != "" {
+			c.Set(ContextKeyUserID, userID)
 		}
 		c.Next()
 	}
+}
+
+// ValidateToken validates JWT/API token and returns the authenticated user id.
+func ValidateToken(db *gorm.DB, rawToken string) (string, error) {
+	token := NormalizeToken(rawToken)
+	if token == "" {
+		return "", errors.New("token is required")
+	}
+
+	if strings.HasPrefix(token, apiTokenPrefix) {
+		return validateAPIToken(db, token)
+	}
+
+	claims, err := jwt.Parse(token)
+	if err != nil {
+		return "", err
+	}
+	return claims.UserID, nil
 }
 
 // CurrentUserID extracts the authenticated user ID from context.
@@ -77,15 +69,23 @@ func IsAuthenticated(c *gin.Context) bool {
 }
 
 func extractToken(c *gin.Context) string {
-	auth := strings.TrimSpace(c.GetHeader("Authorization"))
+	auth := c.GetHeader("Authorization")
 	if auth != "" {
-		lowerAuth := strings.ToLower(auth)
-		if strings.HasPrefix(lowerAuth, "bearer ") {
-			return strings.TrimSpace(auth[7:])
-		}
-		return auth
+		return NormalizeToken(auth)
 	}
-	return c.Query("token")
+	return NormalizeToken(c.Query("token"))
+}
+
+// NormalizeToken trims spaces and strips optional Bearer prefix.
+func NormalizeToken(raw string) string {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return strings.TrimSpace(token[7:])
+	}
+	return token
 }
 
 func validateAPIToken(db *gorm.DB, token string) (string, error) {
@@ -96,8 +96,11 @@ func validateAPIToken(db *gorm.DB, token string) (string, error) {
 		Select("user_id").
 		Where("token = ? AND (expired_at IS NULL OR expired_at > NOW()) AND deleted_at IS NULL", token).
 		Scan(&row).Error
-	if err != nil || row.UserID == "" {
+	if err != nil {
 		return "", err
+	}
+	if row.UserID == "" {
+		return "", errors.New("api token not found")
 	}
 	return row.UserID, nil
 }

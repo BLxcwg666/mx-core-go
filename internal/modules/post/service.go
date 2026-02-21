@@ -149,6 +149,8 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 	}
 	if dto.IsPublished != nil {
 		post.IsPublished = *dto.IsPublished
+	} else {
+		post.IsPublished = true
 	}
 	if dto.Pin != nil {
 		post.Pin = *dto.Pin

@@ -134,7 +134,10 @@ func New(logger *zap.Logger, configPath string) (*App, error) {
 	}
 	router.Use(cors.New(corsConfig))
 
-	hub := gateway.NewHub(rc, logger)
+	hub := gateway.NewHub(rc, logger, func(token string) bool {
+		_, err := middleware.ValidateToken(db, token)
+		return err == nil
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
 
@@ -409,10 +412,14 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	search.NewHandler(searchSvc).RegisterRoutes(api, authMW)
 
 	// WebSocket gateway
-	adminAuthFn := func(c *gin.Context) bool {
-		return middleware.IsAuthenticated(c)
-	}
-	gateway.RegisterRoutes(api, a.hub, adminAuthFn)
+	gateway.RegisterRoutes(root, a.hub)
+	api.GET("/gateway/stats", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"public": a.hub.ClientCount(gateway.RoomPublic),
+			"admin":  a.hub.ClientCount(gateway.RoomAdmin),
+			"total":  a.hub.ClientCount(""),
+		})
+	})
 
 	if taskSvc != nil {
 		aiSvc := ai.NewService(db, cfgSvc, taskSvc)
