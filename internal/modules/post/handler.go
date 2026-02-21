@@ -160,6 +160,10 @@ func (h *Handler) create(c *gin.Context) {
 			response.Conflict(c, err.Error())
 			return
 		}
+		if err.Error() == "category is required" || err.Error() == "category not found" {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -179,6 +183,10 @@ func (h *Handler) update(c *gin.Context) {
 
 	post, err := h.svc.Update(id, &dto)
 	if err != nil {
+		if err.Error() == "category is required" || err.Error() == "category not found" {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}

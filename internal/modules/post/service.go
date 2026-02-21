@@ -3,6 +3,7 @@ package post
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/slugtracker"
@@ -131,6 +132,22 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 		return nil, fmt.Errorf("slug already exists")
 	}
 
+	categoryID := ""
+	if dto.CategoryID != nil {
+		categoryID = strings.TrimSpace(*dto.CategoryID)
+	}
+	if categoryID == "" {
+		return nil, fmt.Errorf("category is required")
+	}
+
+	var category models.CategoryModel
+	if err := s.db.First(&category, "id = ?", categoryID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("category not found")
+		}
+		return nil, err
+	}
+
 	post := models.PostModel{
 		WriteBase: models.WriteBase{
 			Title:  dto.Title,
@@ -139,7 +156,7 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 		},
 		Slug:       dto.Slug,
 		Summary:    dto.Summary,
-		CategoryID: dto.CategoryID,
+		CategoryID: &category.ID,
 		Tags:       dto.Tags,
 	}
 	if dto.Copyright != nil {
@@ -160,6 +177,9 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 	}
 
 	if err := s.db.Create(&post).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Preload("Category").First(&post, "id = ?", post.ID).Error; err != nil {
 		return nil, err
 	}
 	return &post, nil
@@ -191,7 +211,19 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 		updates["summary"] = *dto.Summary
 	}
 	if dto.CategoryID != nil {
-		updates["category_id"] = *dto.CategoryID
+		categoryID := strings.TrimSpace(*dto.CategoryID)
+		if categoryID == "" {
+			return nil, fmt.Errorf("category is required")
+		}
+
+		var category models.CategoryModel
+		if err := s.db.First(&category, "id = ?", categoryID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("category not found")
+			}
+			return nil, err
+		}
+		updates["category_id"] = category.ID
 	}
 	if dto.Copyright != nil {
 		updates["copyright"] = *dto.Copyright
@@ -219,7 +251,7 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 	if oldSlug != "" && s.slugTracker != nil {
 		go s.slugTracker.Track(oldSlug, "post", post.ID) // nolint:errcheck
 	}
-	return post, nil
+	return s.GetByID(post.ID)
 }
 
 // Delete soft-deletes a post by ID.
