@@ -1,6 +1,7 @@
 package metapreset
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -37,16 +38,23 @@ func (h *Handler) ensureBuiltins() {
 		builtins := []models.MetaPresetModel{
 			{
 				Key:               "aiGen",
-				Label:             "AI Participation",
+				Label:             "AI 参与声明",
 				Type:              "checkbox",
 				Scope:             "both",
-				Description:       "Declare how AI participated in the writing process.",
+				Description:       "声明 AI 在创作过程中的参与程度",
 				AllowCustomOption: true,
 				Options: []models.MetaFieldOption{
-					{Value: -1, Label: "No AI", Exclusive: true},
-					{Value: 0, Label: "Assisted writing"},
-					{Value: 1, Label: "Polishing"},
-					{Value: 2, Label: "Fully generated", Exclusive: true},
+					{Value: -1, Label: "无 AI (手作)", Exclusive: true},
+					{Value: 0, Label: "辅助写作"},
+					{Value: 1, Label: "润色"},
+					{Value: 2, Label: "完全 AI 生成", Exclusive: true},
+					{Value: 3, Label: "故事整理"},
+					{Value: 4, Label: "标题生成"},
+					{Value: 5, Label: "校对"},
+					{Value: 6, Label: "灵感提供"},
+					{Value: 7, Label: "改写"},
+					{Value: 8, Label: "AI 作图"},
+					{Value: 9, Label: "口述"},
 				},
 				IsBuiltin: true,
 				Order:     0,
@@ -54,7 +62,7 @@ func (h *Handler) ensureBuiltins() {
 			},
 			{
 				Key:         "cover",
-				Label:       "Cover",
+				Label:       "封面图",
 				Type:        "url",
 				Scope:       "both",
 				Placeholder: "https://...",
@@ -64,33 +72,33 @@ func (h *Handler) ensureBuiltins() {
 			},
 			{
 				Key:         "banner",
-				Label:       "Banner",
+				Label:       "横幅信息",
 				Type:        "object",
 				Scope:       "both",
-				Description: "Top banner for article/note detail page.",
+				Description: "在文章顶部显示的提示横幅",
 				Children: []models.MetaPresetChild{
 					{
 						Key:   "type",
-						Label: "Type",
+						Label: "类型",
 						Type:  "select",
 						Options: []models.MetaFieldOption{
-							{Value: "info", Label: "Info"},
-							{Value: "warning", Label: "Warning"},
-							{Value: "error", Label: "Error"},
-							{Value: "success", Label: "Success"},
-							{Value: "secondary", Label: "Secondary"},
+							{Value: "info", Label: "信息"},
+							{Value: "warning", Label: "警告"},
+							{Value: "error", Label: "错误"},
+							{Value: "success", Label: "成功"},
+							{Value: "secondary", Label: "次要"},
 						},
 					},
 					{
 						Key:   "message",
-						Label: "Message",
+						Label: "消息内容",
 						Type:  "textarea",
 					},
 					{
 						Key:         "className",
-						Label:       "Class Name",
+						Label:       "自定义类名",
 						Type:        "text",
-						Placeholder: "optional css class",
+						Placeholder: "可选的 CSS 类名",
 					},
 				},
 				IsBuiltin: true,
@@ -99,20 +107,20 @@ func (h *Handler) ensureBuiltins() {
 			},
 			{
 				Key:         "keywords",
-				Label:       "SEO Keywords",
+				Label:       "SEO 关键词",
 				Type:        "tags",
 				Scope:       "both",
-				Placeholder: "input keyword then press enter",
+				Placeholder: "输入关键词后按回车",
 				IsBuiltin:   true,
 				Order:       3,
 				Enabled:     true,
 			},
 			{
 				Key:         "style",
-				Label:       "Style",
+				Label:       "文章样式",
 				Type:        "text",
 				Scope:       "both",
-				Placeholder: "article style name",
+				Placeholder: "输入样式名称",
 				IsBuiltin:   true,
 				Order:       4,
 				Enabled:     true,
@@ -121,22 +129,36 @@ func (h *Handler) ensureBuiltins() {
 
 		for _, preset := range builtins {
 			var existing models.MetaPresetModel
-			err := h.db.Where("`key` = ? AND is_builtin = ?", preset.Key, true).First(&existing).Error
+			err := h.db.Where("`key` = ?", preset.Key).First(&existing).Error
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					_ = h.db.Create(&preset).Error
+					if createErr := h.db.Create(&preset).Error; createErr != nil {
+						// If key already exists due legacy/dirty data, upgrade that record to builtin.
+						_ = h.db.Where("`key` = ?", preset.Key).Updates(map[string]interface{}{
+							"label":               preset.Label,
+							"type":                preset.Type,
+							"scope":               preset.Scope,
+							"description":         preset.Description,
+							"placeholder":         preset.Placeholder,
+							"options":             marshalJSONColumn(preset.Options),
+							"allow_custom_option": preset.AllowCustomOption,
+							"children":            marshalJSONColumn(preset.Children),
+							"is_builtin":          true,
+						}).Error
+					}
 				}
 				continue
 			}
 			_ = h.db.Model(&existing).Updates(map[string]interface{}{
-				"label":       preset.Label,
-				"description": preset.Description,
-				"placeholder": preset.Placeholder,
-				"options":     preset.Options,
-				"children":    preset.Children,
-				"scope":       preset.Scope,
-				"type":        preset.Type,
-				"order":       preset.Order,
+				"label":               preset.Label,
+				"type":                preset.Type,
+				"scope":               preset.Scope,
+				"description":         preset.Description,
+				"placeholder":         preset.Placeholder,
+				"options":             marshalJSONColumn(preset.Options),
+				"allow_custom_option": preset.AllowCustomOption,
+				"children":            marshalJSONColumn(preset.Children),
+				"is_builtin":          true,
 			}).Error
 		}
 	})
@@ -346,13 +368,13 @@ func (h *Handler) update(c *gin.Context) {
 			updates["scope"] = scope
 		}
 		if dto.Options != nil {
-			updates["options"] = *dto.Options
+			updates["options"] = marshalJSONColumn(*dto.Options)
 		}
 		if dto.AllowCustomOption != nil {
 			updates["allow_custom_option"] = *dto.AllowCustomOption
 		}
 		if dto.Children != nil {
-			updates["children"] = *dto.Children
+			updates["children"] = marshalJSONColumn(*dto.Children)
 		}
 		if dto.Order != nil {
 			updates["order"] = *dto.Order
@@ -430,4 +452,15 @@ func parseBoolLike(raw string) bool {
 	}
 	v, err := strconv.ParseBool(raw)
 	return err == nil && v
+}
+
+func marshalJSONColumn(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }

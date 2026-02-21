@@ -40,7 +40,7 @@ func Connect(cfg *config.AppConfig) (*gorm.DB, error) {
 
 // migrate runs GORM auto-migration for all models.
 func migrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.UserModel{},
 		&models.UserSession{},
 		&models.APIToken{},
@@ -72,5 +72,18 @@ func migrate(db *gorm.DB) error {
 		&models.MetaPresetModel{},
 		&models.ServerlessStorageModel{},
 		&models.OptionModel{},
-	)
+	); err != nil {
+		return err
+	}
+
+	if db.Dialector.Name() == "mysql" {
+		if err := db.Exec("ALTER TABLE `meta_presets` MODIFY COLUMN `options` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
+		if err := db.Exec("ALTER TABLE `meta_presets` MODIFY COLUMN `children` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

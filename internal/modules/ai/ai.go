@@ -166,13 +166,7 @@ func (s *Service) GenerateSummaryStream(c *gin.Context, articleID, lang string) 
 		return
 	}
 
-	var provider *appcfg.AIProvider
-	for i, p := range cfg.AI.Providers {
-		if p.Enabled {
-			provider = &cfg.AI.Providers[i]
-			break
-		}
-	}
+	provider := selectAIProvider(cfg.AI, cfg.AI.SummaryModel)
 	if provider == nil {
 		sendEvent("error", `"no enabled AI provider"`)
 		return
@@ -222,13 +216,7 @@ func (s *Service) executeSummary(ctx context.Context, taskID string, payload Sum
 		return
 	}
 
-	var provider *appcfg.AIProvider
-	for i, p := range cfg.AI.Providers {
-		if p.Enabled {
-			provider = &cfg.AI.Providers[i]
-			break
-		}
-	}
+	provider := selectAIProvider(cfg.AI, cfg.AI.SummaryModel)
 	if provider == nil {
 		s.taskSvc.UpdateStatus(ctx, taskID, taskqueue.TaskFailed, nil, "no enabled AI provider")
 		return
@@ -838,13 +826,7 @@ func (h *Handler) generateSummaryNow(ctx context.Context, refID, lang string) (*
 		return nil, errors.New("AI summary is disabled")
 	}
 
-	var provider *appcfg.AIProvider
-	for i := range cfg.AI.Providers {
-		if cfg.AI.Providers[i].Enabled {
-			provider = &cfg.AI.Providers[i]
-			break
-		}
-	}
+	provider := selectAIProvider(cfg.AI, cfg.AI.SummaryModel)
 	if provider == nil {
 		return nil, errors.New("no enabled AI provider")
 	}
@@ -1118,6 +1100,44 @@ func (h *Handler) testProviderConnection(c *gin.Context) {
 	}
 	_ = result
 	response.OK(c, gin.H{"ok": true})
+}
+
+func selectAIProvider(cfg appcfg.AIConfig, assignment *appcfg.AIModelAssignment) *appcfg.AIProvider {
+	var providerID string
+	var overrideModel string
+	if assignment != nil {
+		providerID = strings.TrimSpace(assignment.ProviderID)
+		overrideModel = strings.TrimSpace(assignment.Model)
+	}
+
+	pick := func(provider appcfg.AIProvider) *appcfg.AIProvider {
+		selected := provider
+		if overrideModel != "" {
+			selected.DefaultModel = overrideModel
+		}
+		return &selected
+	}
+
+	if providerID != "" {
+		for _, provider := range cfg.Providers {
+			if !provider.Enabled {
+				continue
+			}
+			if strings.TrimSpace(provider.ID) != providerID {
+				continue
+			}
+			return pick(provider)
+		}
+	}
+
+	for _, provider := range cfg.Providers {
+		if !provider.Enabled {
+			continue
+		}
+		return pick(provider)
+	}
+
+	return nil
 }
 
 func modelsFromProvider(provider appcfg.AIProvider) []modelInfo {
@@ -1440,20 +1460,10 @@ func (h *Handler) testCommentReview(c *gin.Context) {
 		return
 	}
 
-	var provider *appcfg.AIProvider
-	for i := range cfg.AI.Providers {
-		if cfg.AI.Providers[i].Enabled {
-			copied := cfg.AI.Providers[i]
-			provider = &copied
-			break
-		}
-	}
+	provider := selectAIProvider(cfg.AI, cfg.AI.CommentReviewModel)
 	if provider == nil || strings.TrimSpace(provider.APIKey) == "" {
 		response.BadRequest(c, "no enabled AI provider")
 		return
-	}
-	if model := strings.TrimSpace(cfg.AI.CommentReviewModel); model != "" {
-		provider.DefaultModel = model
 	}
 
 	reviewType := strings.ToLower(strings.TrimSpace(cfg.CommentOptions.AIReviewType))

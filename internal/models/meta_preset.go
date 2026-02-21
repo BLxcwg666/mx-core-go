@@ -14,7 +14,7 @@ type MetaPresetChild struct {
 	Type        string            `json:"type"`
 	Description string            `json:"description,omitempty"`
 	Placeholder string            `json:"placeholder,omitempty"`
-	Options     []MetaFieldOption `json:"options,omitempty" gorm:"serializer:json"`
+	Options     []MetaFieldOption `json:"options,omitempty" gorm:"serializer:json;type:longtext"`
 }
 
 // MetaPresetModel stores reusable metadata field definitions.
@@ -26,9 +26,9 @@ type MetaPresetModel struct {
 	Description       string            `json:"description"`
 	Placeholder       string            `json:"placeholder"`
 	Scope             string            `json:"scope"                gorm:"index;default:'both'"`
-	Options           []MetaFieldOption `json:"options,omitempty"    gorm:"serializer:json"`
+	Options           []MetaFieldOption `json:"options,omitempty"    gorm:"serializer:json;type:longtext"`
 	AllowCustomOption bool              `json:"allowCustomOption"`
-	Children          []MetaPresetChild `json:"children,omitempty"   gorm:"serializer:json"`
+	Children          []MetaPresetChild `json:"children,omitempty"   gorm:"serializer:json;type:longtext"`
 	IsBuiltin         bool              `json:"isBuiltin"`
 	Order             int               `json:"order"                gorm:"index;default:0"`
 	Enabled           bool              `json:"enabled"              gorm:"default:true"`

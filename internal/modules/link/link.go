@@ -504,10 +504,10 @@ func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkSt
 		From:   cfg.MailOptions.From,
 	}
 	if cfg.MailOptions.SMTP != nil {
-		mailCfg.Host = cfg.MailOptions.SMTP.Host
-		mailCfg.Port = cfg.MailOptions.SMTP.Port
-		mailCfg.User = cfg.MailOptions.SMTP.Auth.User
-		mailCfg.Pass = cfg.MailOptions.SMTP.Auth.Pass
+		mailCfg.Host = cfg.MailOptions.SMTP.Options.Host
+		mailCfg.Port = cfg.MailOptions.SMTP.Options.Port
+		mailCfg.User = cfg.MailOptions.SMTP.User
+		mailCfg.Pass = cfg.MailOptions.SMTP.Pass
 	}
 	if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" {
 		mailCfg.UseResend = true

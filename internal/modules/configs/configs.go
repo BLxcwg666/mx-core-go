@@ -1,11 +1,16 @@
 package configs
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf16"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/config"
@@ -16,6 +21,22 @@ import (
 )
 
 const configKey = "configs"
+
+//go:embed form_schema.template.json
+var formSchemaTemplateRaw []byte
+
+var providerNameUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+var (
+	formSchemaLoadOnce sync.Once
+	formSchemaTemplate map[string]interface{}
+	formSchemaLoadErr  error
+)
+
+type providerSelectOption struct {
+	Label string
+	Value string
+}
 
 // Service manages the persisted FullConfig.
 type Service struct {
@@ -75,13 +96,26 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 	if err != nil {
 		return nil, err
 	}
-	merged := map[string]json.RawMessage{}
+	merged := map[string]interface{}{}
 	if err := json.Unmarshal(currentJSON, &merged); err != nil {
 		return nil, err
 	}
+
 	for k, v := range partial {
-		merged[k] = v
+		if len(strings.TrimSpace(string(v))) == 0 {
+			continue
+		}
+		var incoming interface{}
+		if err := json.Unmarshal(v, &incoming); err != nil {
+			return nil, err
+		}
+		if existing, ok := merged[k]; ok {
+			merged[k] = deepMergeJSON(existing, incoming)
+			continue
+		}
+		merged[k] = incoming
 	}
+
 	mergedJSON, err := json.Marshal(merged)
 	if err != nil {
 		return nil, err
@@ -97,6 +131,32 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 	s.mu.Unlock()
 
 	return &updated, s.persist(&updated)
+}
+
+func deepMergeJSON(oldVal, newVal interface{}) interface{} {
+	oldMap, oldIsMap := oldVal.(map[string]interface{})
+	newMap, newIsMap := newVal.(map[string]interface{})
+	if oldIsMap && newIsMap {
+		out := make(map[string]interface{}, len(oldMap))
+		for k, v := range oldMap {
+			out[k] = v
+		}
+		for k, v := range newMap {
+			if existing, ok := out[k]; ok {
+				out[k] = deepMergeJSON(existing, v)
+				continue
+			}
+			out[k] = v
+		}
+		return out
+	}
+
+	// Arrays should be replaced as a whole.
+	if _, ok := newVal.([]interface{}); ok {
+		return newVal
+	}
+
+	return newVal
 }
 
 func (s *Service) persist(cfg *config.FullConfig) error {
@@ -246,89 +306,21 @@ func (h *Handler) getOptionsAll(c *gin.Context) {
 }
 
 func (h *Handler) getFormSchema(c *gin.Context) {
-	defaults := convertMapKeys(config.DefaultFullConfig(), snakeToCamelKey)
-	response.OK(c, gin.H{
-		"title":       "System Config",
-		"description": "System configuration schema",
-		"groups": []interface{}{
-			gin.H{
-				"key":         "site",
-				"title":       "Site",
-				"description": "Basic site settings",
-				"icon":        "settings",
-				"sections": []interface{}{
-					gin.H{
-						"key":   "seo",
-						"title": "SEO",
-						"fields": []interface{}{
-							buildField("title", "Site Title", "input", true),
-							buildField("description", "Description", "textarea", false),
-							buildField("keywords", "Keywords", "tags", false),
-						},
-					},
-					gin.H{
-						"key":   "url",
-						"title": "URL",
-						"fields": []interface{}{
-							buildField("webUrl", "Web URL", "input", true),
-							buildField("adminUrl", "Admin URL", "input", false),
-							buildField("serverUrl", "Server URL", "input", false),
-							buildField("wsUrl", "WS URL", "input", false),
-						},
-					},
-				},
-			},
-			gin.H{
-				"key":         "system",
-				"title":       "System",
-				"description": "System and integration settings",
-				"icon":        "plug",
-				"sections": []interface{}{
-					gin.H{
-						"key":   "mailOptions",
-						"title": "Mail",
-						"fields": []interface{}{
-							buildField("enable", "Enabled", "switch", false),
-							buildField("provider", "Provider", "select", false, []interface{}{
-								gin.H{"label": "smtp", "value": "smtp"},
-								gin.H{"label": "resend", "value": "resend"},
-							}),
-							buildField("from", "From", "input", false),
-						},
-					},
-					gin.H{
-						"key":   "adminExtra",
-						"title": "Admin",
-						"fields": []interface{}{
-							buildField("enableAdminProxy", "Enable Admin Proxy", "switch", false),
-							buildField("background", "Login Background", "input", false),
-							buildField("walineServerUrl", "Waline URL", "input", false),
-						},
-					},
-					gin.H{
-						"key":   "authSecurity",
-						"title": "Auth",
-						"fields": []interface{}{
-							buildField("disablePasswordLogin", "Disable Password Login", "switch", false),
-						},
-					},
-					gin.H{
-						"key":   "featureList",
-						"title": "Features",
-						"fields": []interface{}{
-							buildField("friendlyCommentEditorEnabled", "Friendly Comment Editor", "switch", false),
-						},
-					},
-					gin.H{
-						"key":    "ai",
-						"title":  "AI",
-						"fields": []interface{}{},
-					},
-				},
-			},
-		},
-		"defaults": defaults,
-	})
+	schema, err := loadFormSchemaTemplate()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	cfg, err := h.svc.Get()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	schema["defaults"] = convertMapKeys(config.DefaultFullConfig(), snakeToCamelKey)
+	attachAIProviderOptions(schema, cfg.AI)
+	response.OK(c, schema)
 }
 
 // defaultEmailTemplates returns the built-in EJS template and example render props for each type.
@@ -418,17 +410,187 @@ func (h *Handler) deleteEmailTemplate(c *gin.Context) {
 	response.NoContent(c)
 }
 
-func buildField(key, title, component string, required bool, options ...[]interface{}) gin.H {
-	ui := gin.H{"component": component}
-	if len(options) > 0 && len(options[0]) > 0 {
-		ui["options"] = options[0]
+func loadFormSchemaTemplate() (map[string]interface{}, error) {
+	formSchemaLoadOnce.Do(func() {
+		decoded := decodeJSONBytes(formSchemaTemplateRaw)
+		if err := json.Unmarshal(decoded, &formSchemaTemplate); err != nil {
+			formSchemaLoadErr = err
+		}
+	})
+	if formSchemaLoadErr != nil {
+		return nil, formSchemaLoadErr
 	}
-	return gin.H{
-		"key":      key,
-		"title":    title,
-		"required": required,
-		"ui":       ui,
+
+	raw, err := json.Marshal(formSchemaTemplate)
+	if err != nil {
+		return nil, err
 	}
+	out := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func decodeJSONBytes(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+
+	if len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE {
+		return utf16ToUTF8(raw[2:], true)
+	}
+
+	if len(raw) >= 2 && raw[0] == 0xFE && raw[1] == 0xFF {
+		return utf16ToUTF8(raw[2:], false)
+	}
+
+	return raw
+}
+
+func utf16ToUTF8(raw []byte, littleEndian bool) []byte {
+	if len(raw) < 2 {
+		return []byte{}
+	}
+	u16 := make([]uint16, 0, len(raw)/2)
+	for i := 0; i+1 < len(raw); i += 2 {
+		if littleEndian {
+			u16 = append(u16, uint16(raw[i])|uint16(raw[i+1])<<8)
+			continue
+		}
+		u16 = append(u16, uint16(raw[i])<<8|uint16(raw[i+1]))
+	}
+	return []byte(string(utf16.Decode(u16)))
+}
+
+func attachAIProviderOptions(schema map[string]interface{}, aiCfg config.AIConfig) {
+	options := make([]providerSelectOption, 0, len(aiCfg.Providers))
+	seen := map[string]struct{}{}
+
+	addOption := func(id, label string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		if strings.TrimSpace(label) == "" {
+			label = id
+		}
+		options = append(options, providerSelectOption{Label: label, Value: id})
+	}
+
+	for _, provider := range aiCfg.Providers {
+		addOption(provider.ID, formatAIProviderLabel(provider))
+	}
+
+	if aiCfg.SummaryModel != nil {
+		addOption(aiCfg.SummaryModel.ProviderID, aiCfg.SummaryModel.ProviderID)
+	}
+	if aiCfg.CommentReviewModel != nil {
+		addOption(aiCfg.CommentReviewModel.ProviderID, aiCfg.CommentReviewModel.ProviderID)
+	}
+	if len(options) == 0 {
+		return
+	}
+
+	groups, ok := schema["groups"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, group := range groups {
+		groupMap, ok := group.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprintf("%v", groupMap["key"])) != "ai" {
+			continue
+		}
+
+		sections, ok := groupMap["sections"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, section := range sections {
+			sectionMap, ok := section.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprintf("%v", sectionMap["key"])) != "ai" {
+				continue
+			}
+
+			fields, ok := sectionMap["fields"].([]interface{})
+			if !ok {
+				continue
+			}
+			attachAIProviderOptionsToFields(fields, options)
+		}
+	}
+}
+
+func attachAIProviderOptionsToFields(fields []interface{}, options []providerSelectOption) {
+	for _, field := range fields {
+		fieldMap, ok := field.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if strings.TrimSpace(fmt.Sprintf("%v", fieldMap["key"])) == "providerId" &&
+			strings.TrimSpace(fmt.Sprintf("%v", fieldMap["title"])) == "Provider ID" {
+			ui, _ := fieldMap["ui"].(map[string]interface{})
+			if ui == nil {
+				ui = map[string]interface{}{}
+				fieldMap["ui"] = ui
+			}
+
+			ui["component"] = "select"
+			selectOptions := make([]map[string]interface{}, 0, len(options))
+			for _, option := range options {
+				selectOptions = append(selectOptions, map[string]interface{}{
+					"label": option.Label,
+					"value": option.Value,
+				})
+			}
+			ui["options"] = selectOptions
+		}
+
+		nestedFields, ok := fieldMap["fields"].([]interface{})
+		if !ok {
+			continue
+		}
+		attachAIProviderOptionsToFields(nestedFields, options)
+	}
+}
+
+func formatAIProviderLabel(provider config.AIProvider) string {
+	name := strings.TrimSpace(provider.Name)
+	providerType := strings.TrimSpace(provider.Type)
+	id := strings.TrimSpace(provider.ID)
+
+	displayName := name
+	if providerNameUUIDPattern.MatchString(displayName) {
+		displayName = ""
+	}
+
+	if displayName != "" && providerType != "" {
+		return fmt.Sprintf("%s (%s)", displayName, providerType)
+	}
+	if displayName != "" {
+		return displayName
+	}
+	if providerType != "" {
+		return providerType
+	}
+	if id != "" {
+		return id
+	}
+	return "Unknown"
 }
 
 func normalizeOptionKey(key string) string {

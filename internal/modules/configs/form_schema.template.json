@@ -1,0 +1,898 @@
+{
+  "title": "设置",
+  "groups": [
+    {
+      "key": "site",
+      "title": "网站",
+      "description": "站点地址、SEO",
+      "icon": "globe",
+      "sections": [
+        {
+          "key": "url",
+          "title": "网站设置",
+          "fields": [
+            {
+              "key": "webUrl",
+              "title": "前端地址",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "adminUrl",
+              "title": "管理后台地址",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "serverUrl",
+              "title": "API 地址",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "wsUrl",
+              "title": "Gateway 地址",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            }
+          ]
+        },
+        {
+          "key": "seo",
+          "title": "SEO 优化",
+          "fields": [
+            {
+              "key": "title",
+              "title": "网站标题",
+              "ui": {
+                "component": "input"
+              }
+            },
+            {
+              "key": "description",
+              "title": "网站描述",
+              "ui": {
+                "component": "input"
+              }
+            },
+            {
+              "key": "keywords",
+              "title": "关键字",
+              "ui": {
+                "component": "tags"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "content",
+      "title": "内容",
+      "description": "评论、文本、友链",
+      "icon": "file-text",
+      "sections": [
+        {
+          "key": "commentOptions",
+          "title": "评论设置",
+          "fields": [
+            {
+              "key": "antiSpam",
+              "title": "反垃圾评论",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "aiReview",
+              "title": "开启 AI 审核",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "aiReviewType",
+              "title": "AI 审核方式",
+              "ui": {
+                "component": "select",
+                "options": [
+                  {
+                    "label": "是非",
+                    "value": "binary"
+                  },
+                  {
+                    "label": "评分",
+                    "value": "score"
+                  }
+                ]
+              },
+              "description": "默认为是非，可以选择评分"
+            },
+            {
+              "key": "aiReviewThreshold",
+              "title": "AI 审核阈值",
+              "ui": {
+                "component": "number"
+              },
+              "description": "分数大于多少时会被归类为垃圾评论，范围为 1-10, 默认为 5",
+              "required": true
+            },
+            {
+              "key": "testAiReview",
+              "title": "测试 AI 审核",
+              "ui": {
+                "component": "action",
+                "showWhen": {
+                  "aiReview": "true"
+                },
+                "actionId": "test-ai-review",
+                "actionLabel": "测试"
+              },
+              "description": "输入测试内容，验证 AI 审核功能是否正常工作"
+            },
+            {
+              "key": "disableComment",
+              "title": "全站禁止评论",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "敏感时期专用"
+            },
+            {
+              "key": "spamKeywords",
+              "title": "自定义屏蔽关键词",
+              "ui": {
+                "component": "tags"
+              }
+            },
+            {
+              "key": "blockIps",
+              "title": "自定义屏蔽 IP",
+              "ui": {
+                "component": "tags"
+              }
+            },
+            {
+              "key": "disableNoChinese",
+              "title": "禁止非中文评论",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "commentShouldAudit",
+              "title": "只展示已读评论",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "recordIpLocation",
+              "title": "评论公开归属地",
+              "ui": {
+                "component": "switch"
+              }
+            }
+          ]
+        },
+        {
+          "key": "textOptions",
+          "title": "文本设定",
+          "fields": [
+            {
+              "key": "macros",
+              "title": "开启文本宏替换",
+              "ui": {
+                "component": "switch"
+              }
+            }
+          ]
+        },
+        {
+          "key": "friendLinkOptions",
+          "title": "友链设定",
+          "fields": [
+            {
+              "key": "allowApply",
+              "title": "允许申请友链",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "allowSubPath",
+              "title": "允许子路径友链",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "例如 /blog 子路径"
+            },
+            {
+              "key": "enableAvatarInternalization",
+              "title": "友链头像转内链",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "通过审核后将会下载友链头像并改为内部链接，仅支持常见图片格式，其他格式将不会转换"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "notification",
+      "title": "通知",
+      "description": "邮件、Bark 推送",
+      "icon": "bell",
+      "sections": [
+        {
+          "key": "mailOptions",
+          "title": "邮件通知设置",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "开启邮箱提醒",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "provider",
+              "title": "邮件服务",
+              "ui": {
+                "component": "select",
+                "options": [
+                  {
+                    "label": "SMTP",
+                    "value": "smtp"
+                  },
+                  {
+                    "label": "Resend",
+                    "value": "resend"
+                  }
+                ]
+              }
+            },
+            {
+              "key": "from",
+              "title": "发件邮箱地址",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              },
+              "description": "Resend 必填；SMTP 可选，不填则使用 SMTP 用户名",
+              "required": true
+            },
+            {
+              "key": "smtp",
+              "title": "SMTP 配置",
+              "ui": {
+                "component": "input",
+                "showWhen": {
+                  "provider": "smtp"
+                }
+              },
+              "fields": [
+                {
+                  "key": "user",
+                  "title": "SMTP 用户名",
+                  "ui": {
+                    "component": "input",
+                    "halfGrid": true
+                  }
+                },
+                {
+                  "key": "pass",
+                  "title": "SMTP 密码",
+                  "ui": {
+                    "component": "password",
+                    "halfGrid": true
+                  }
+                },
+                {
+                  "key": "host",
+                  "title": "SMTP 主机",
+                  "ui": {
+                    "component": "input",
+                    "halfGrid": true
+                  }
+                },
+                {
+                  "key": "port",
+                  "title": "SMTP 端口",
+                  "ui": {
+                    "component": "number",
+                    "halfGrid": true
+                  },
+                  "required": true
+                },
+                {
+                  "key": "secure",
+                  "title": "使用 SSL/TLS",
+                  "ui": {
+                    "component": "switch"
+                  }
+                }
+              ]
+            },
+            {
+              "key": "resend",
+              "title": "Resend 配置",
+              "ui": {
+                "component": "input",
+                "showWhen": {
+                  "provider": "resend"
+                }
+              },
+              "fields": [
+                {
+                  "key": "apiKey",
+                  "title": "Resend API Key",
+                  "ui": {
+                    "component": "password"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "barkOptions",
+          "title": "Bark 通知设定",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "开启 Bark 通知",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "key",
+              "title": "设备 Key",
+              "ui": {
+                "component": "password"
+              }
+            },
+            {
+              "key": "serverUrl",
+              "title": "服务器 URL",
+              "ui": {
+                "component": "input"
+              },
+              "description": "如果不填写，则使用默认的服务器，https://day.app"
+            },
+            {
+              "key": "enableComment",
+              "title": "开启评论通知",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "enableThrottleGuard",
+              "title": "开启请求被限流时通知",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "当请求被限流会通知，或许可以一定程度上预警被攻击"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "search",
+      "title": "搜索推送",
+      "description": "搜索引擎、全文检索",
+      "icon": "search",
+      "sections": [
+        {
+          "key": "baiduSearchOptions",
+          "title": "百度推送设定",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "开启推送",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "token",
+              "title": "Token",
+              "ui": {
+                "component": "password"
+              }
+            }
+          ]
+        },
+        {
+          "key": "bingSearchOptions",
+          "title": "Bing 推送设定",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "开启推送",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "token",
+              "title": "Bing API 密钥",
+              "ui": {
+                "component": "password"
+              }
+            }
+          ]
+        },
+        {
+          "key": "meiliSearchOptions",
+          "title": "MeiliSearch 设置",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "启用 MeiliSearch",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "本地全文搜索引擎，需要在 docker-compose 中启用 meilisearch 服务"
+            },
+            {
+              "key": "indexName",
+              "title": "索引名称",
+              "ui": {
+                "component": "input"
+              },
+              "description": "搜索索引名称，默认为 mx-space"
+            },
+            {
+              "key": "searchCacheTTL",
+              "title": "搜索缓存时间（秒）",
+              "ui": {
+                "component": "number"
+              },
+              "description": "搜索结果缓存时间，默认 300 秒",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "storage",
+      "title": "存储",
+      "description": "S3 对象存储、备份、图床",
+      "icon": "database",
+      "sections": [
+        {
+          "key": "s3Options",
+          "title": "S3 对象存储设置",
+          "fields": [
+            {
+              "key": "endpoint",
+              "title": "S3 服务端点",
+              "ui": {
+                "component": "input"
+              },
+              "description": "例如：https://s3.amazonaws.com 或 https://oss-cn-hangzhou.aliyuncs.com"
+            },
+            {
+              "key": "accessKeyId",
+              "title": "Access Key ID / SecretId",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "secretAccessKey",
+              "title": "Secret Access Key / SecretKey",
+              "ui": {
+                "component": "password",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "bucket",
+              "title": "Bucket 名称",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "region",
+              "title": "地域 Region",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "customDomain",
+              "title": "自定义域名",
+              "ui": {
+                "component": "input"
+              },
+              "description": "如果配置了 CDN 或自定义域名，填写此项；留空则使用默认的 S3 URL"
+            },
+            {
+              "key": "pathStyleAccess",
+              "title": "路径风格访问",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "启用路径风格访问（Path-style），适用于 MinIO 等兼容 S3 的服务"
+            }
+          ]
+        },
+        {
+          "key": "backupOptions",
+          "title": "备份设置",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "开启自动备份到 S3",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "需要先配置 S3 对象存储设置"
+            },
+            {
+              "key": "path",
+              "title": "备份文件路径",
+              "ui": {
+                "component": "input"
+              },
+              "description": "支持占位符：{Y}年4位 {y}年2位 {m}月 {d}日 {h}时 {i}分 {s}秒 {timestamp}时间戳 {uuid} {md5} 等"
+            }
+          ]
+        },
+        {
+          "key": "imageBedOptions",
+          "title": "图床设置",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "启用 S3 图床",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "启用后，编辑器上传的图片将存储到 S3；需要先配置 S3 对象存储设置"
+            },
+            {
+              "key": "path",
+              "title": "图片存储路径",
+              "ui": {
+                "component": "input"
+              },
+              "description": "支持占位符：{Y}年4位 {y}年2位 {m}月 {d}日 {h}时 {i}分 {s}秒 {timestamp}时间戳 {uuid} {md5} {md5-16} {str-N}随机字符串 {filename}原文件名"
+            },
+            {
+              "key": "allowedFormats",
+              "title": "允许的图片格式",
+              "ui": {
+                "component": "input"
+              },
+              "description": "逗号分隔，例如：jpg,jpeg,png,gif,webp"
+            },
+            {
+              "key": "maxSizeMB",
+              "title": "最大文件大小（MB）",
+              "ui": {
+                "component": "number"
+              },
+              "description": "单个图片文件的最大大小限制，单位：MB",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "ai",
+      "title": "AI",
+      "description": "AI 摘要、翻译、写作助手",
+      "icon": "sparkles",
+      "sections": [
+        {
+          "key": "ai",
+          "title": "AI 设定",
+          "fields": [
+            {
+              "key": "providers",
+              "title": "AI Providers",
+              "ui": {
+                "component": "tags"
+              },
+              "description": "配置多个 AI 服务提供商"
+            },
+            {
+              "key": "summaryModel",
+              "title": "摘要功能模型",
+              "ui": {
+                "component": "input"
+              },
+              "fields": [
+                {
+                  "key": "providerId",
+                  "title": "Provider ID",
+                  "ui": {
+                    "component": "input"
+                  },
+                  "description": "指向 providers 中某个 provider 的 id"
+                },
+                {
+                  "key": "model",
+                  "title": "模型覆盖",
+                  "ui": {
+                    "component": "input"
+                  },
+                  "description": "覆盖 provider 的默认模型，留空使用 provider 默认值"
+                }
+              ]
+            },
+            {
+              "key": "commentReviewModel",
+              "title": "评论审核模型",
+              "ui": {
+                "component": "input"
+              },
+              "fields": [
+                {
+                  "key": "providerId",
+                  "title": "Provider ID",
+                  "ui": {
+                    "component": "input"
+                  },
+                  "description": "指向 providers 中某个 provider 的 id"
+                },
+                {
+                  "key": "model",
+                  "title": "模型覆盖",
+                  "ui": {
+                    "component": "input"
+                  },
+                  "description": "覆盖 provider 的默认模型，留空使用 provider 默认值"
+                }
+              ]
+            },
+            {
+              "key": "enableSummary",
+              "title": "可调用 AI 摘要",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "是否开启调用 AI 去生成摘要"
+            },
+            {
+              "key": "enableAutoGenerateSummary",
+              "title": "开启 AI 摘要自动生成",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "此选项开启后，将会在文章发布后自动生成摘要，需要开启上面的选项，否则无效"
+            },
+            {
+              "key": "aiSummaryTargetLanguage",
+              "title": "AI 摘要目标语言",
+              "ui": {
+                "component": "input"
+              },
+              "description": "生成的摘要目标语言，默认为 `auto`，根据用户的语言自动选择；如果需要固定语言，请填写 [ISO 639-1 语言代码](https://www.w3schools.com/tags/ref_language_codes.asp)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "system",
+      "title": "系统",
+      "description": "后台设置、功能开关、安全",
+      "icon": "settings",
+      "sections": [
+        {
+          "key": "adminExtra",
+          "title": "后台附加设置",
+          "fields": [
+            {
+              "key": "enableAdminProxy",
+              "title": "开启后台管理反代",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "是否可以通过 API 访问后台"
+            },
+            {
+              "key": "background",
+              "title": "登录页面背景",
+              "ui": {
+                "component": "input"
+              }
+            },
+            {
+              "key": "gaodemapKey",
+              "title": "高德查询 API Key",
+              "ui": {
+                "component": "password"
+              },
+              "description": "日记地点定位"
+            }
+          ]
+        },
+        {
+          "key": "featureList",
+          "title": "特征开关设定",
+          "fields": [
+            {
+              "key": "emailSubscribe",
+              "title": "开启邮件推送订阅",
+              "ui": {
+                "component": "switch"
+              }
+            }
+          ]
+        },
+        {
+          "key": "thirdPartyServiceIntegration",
+          "title": "第三方服务信息",
+          "fields": [
+            {
+              "key": "githubToken",
+              "title": "GitHub Token",
+              "ui": {
+                "component": "password"
+              },
+              "description": "用于调用 GitHub API，获取仓库信息等；可选参数，如果没有遇到限流问题，可以不填写"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "defaults": {
+    "seo": {
+      "title": "我的小世界呀",
+      "description": "哈喽~欢迎光临",
+      "keywords": []
+    },
+    "url": {
+      "wsUrl": "http://localhost:2333",
+      "adminUrl": "http://localhost:2333/proxy/qaqdmin",
+      "serverUrl": "http://localhost:2333",
+      "webUrl": "http://localhost:2323"
+    },
+    "mailOptions": {
+      "enable": false,
+      "provider": "smtp",
+      "from": "",
+      "smtp": {
+        "user": "",
+        "pass": "",
+        "options": {
+          "host": "",
+          "port": 465,
+          "secure": true
+        }
+      },
+      "resend": {
+        "apiKey": ""
+      }
+    },
+    "commentOptions": {
+      "antiSpam": false,
+      "aiReview": false,
+      "aiReviewType": "binary",
+      "aiReviewThreshold": 5,
+      "testAiReview": "__action__",
+      "disableComment": false,
+      "blockIps": [],
+      "disableNoChinese": false,
+      "recordIpLocation": true,
+      "spamKeywords": [],
+      "commentShouldAudit": false
+    },
+    "barkOptions": {
+      "enable": false,
+      "key": "",
+      "serverUrl": "https://api.day.app",
+      "enableComment": true,
+      "enableThrottleGuard": false
+    },
+    "friendLinkOptions": {
+      "allowApply": true,
+      "allowSubPath": false,
+      "enableAvatarInternalization": true
+    },
+    "s3Options": {
+      "endpoint": "",
+      "accessKeyId": "",
+      "secretAccessKey": "",
+      "bucket": "",
+      "region": "",
+      "customDomain": "",
+      "pathStyleAccess": false
+    },
+    "backupOptions": {
+      "enable": false,
+      "path": "backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip"
+    },
+    "imageBedOptions": {
+      "enable": false,
+      "path": "images/{Y}/{m}/{uuid}.{ext}",
+      "allowedFormats": "jpg,jpeg,png,gif,webp",
+      "maxSizeMB": 10
+    },
+    "imageStorageOptions": {
+      "enable": false,
+      "syncOnPublish": false,
+      "deleteLocalAfterSync": false,
+      "endpoint": null,
+      "secretId": null,
+      "secretKey": null,
+      "bucket": null,
+      "region": "auto",
+      "customDomain": "",
+      "prefix": ""
+    },
+    "baiduSearchOptions": {
+      "enable": false,
+      "token": null
+    },
+    "bingSearchOptions": {
+      "enable": false,
+      "token": null
+    },
+    "algoliaSearchOptions": {
+      "enable": false,
+      "apiKey": "",
+      "appId": "",
+      "indexName": "",
+      "maxTruncateSize": 10000
+    },
+    "meiliSearchOptions": {
+      "enable": true,
+      "indexName": "mx-space",
+      "searchCacheTTL": 300
+    },
+    "adminExtra": {
+      "enableAdminProxy": true,
+      "background": "",
+      "gaodemapKey": null
+    },
+    "textOptions": {
+      "macros": true
+    },
+    "featureList": {
+      "emailSubscribe": false
+    },
+    "thirdPartyServiceIntegration": {
+      "githubToken": ""
+    },
+    "authSecurity": {
+      "disablePasswordLogin": false
+    },
+    "ai": {
+      "providers": [],
+      "enableSummary": false,
+      "enableAutoGenerateSummary": false,
+      "aiSummaryTargetLanguage": "auto"
+    },
+    "oauth": {
+      "providers": [],
+      "secrets": {},
+      "public": {}
+    }
+  },
+  "description": "* 敏感字段不显示，后端默认不返回敏感字段，显示为空"
+}
