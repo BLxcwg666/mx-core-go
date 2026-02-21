@@ -49,7 +49,7 @@ type projectResponse struct {
 }
 
 func toResponse(p *models.ProjectModel) projectResponse {
-	images := p.Images
+	images := []string(p.Images)
 	if images == nil {
 		images = []string{}
 	}
@@ -98,7 +98,7 @@ func (s *Service) Create(dto *CreateProjectDTO) (*models.ProjectModel, error) {
 	p := models.ProjectModel{
 		Name: dto.Name, Description: dto.Description,
 		PreviewURL: dto.PreviewURL, DocURL: dto.DocURL, ProjectURL: dto.ProjectURL,
-		Images: dto.Images, Avatar: dto.Avatar, Text: dto.Text,
+		Images: models.StringArray(dto.Images), Avatar: dto.Avatar, Text: dto.Text,
 	}
 	return &p, s.db.Create(&p).Error
 }
@@ -125,7 +125,7 @@ func (s *Service) Update(id string, dto *UpdateProjectDTO) (*models.ProjectModel
 		updates["project_url"] = *dto.ProjectURL
 	}
 	if dto.Images != nil {
-		updates["images"] = dto.Images
+		updates["images"] = models.StringArray(dto.Images)
 	}
 	if dto.Avatar != nil {
 		updates["avatar"] = *dto.Avatar
