@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/configs"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
+	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"gorm.io/gorm"
 )
 
@@ -52,10 +53,11 @@ func (h *OAuthHandler) listProviders(c *gin.Context) {
 	}
 	var providers []providerInfo
 	for _, p := range cfg.OAuth.Providers {
-		if p.Enabled && p.ClientID != "" {
+		providerType := strings.TrimSpace(p.Type)
+		if p.Enabled && providerType != "" && oauthClientID(cfg.OAuth.Public, providerType) != "" {
 			providers = append(providers, providerInfo{
-				ID:      p.ID,
-				Name:    p.Name,
+				ID:      providerType,
+				Name:    providerType,
 				Enabled: true,
 			})
 		}
@@ -79,8 +81,10 @@ func (h *OAuthHandler) redirectToProvider(c *gin.Context) {
 
 	var provider *oauthProviderDef
 	for _, p := range cfg.OAuth.Providers {
-		if p.ID == providerID && p.Enabled && p.ClientID != "" {
-			def := oauthDef(providerID, p.ClientID, callbackURL, c)
+		providerType := strings.TrimSpace(p.Type)
+		clientID := oauthClientID(cfg.OAuth.Public, providerType)
+		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" {
+			def := oauthDef(providerID, clientID, callbackURL, c)
 			if def != nil {
 				provider = def
 				break
@@ -113,9 +117,10 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 
 	var clientID, clientSecret string
 	for _, p := range cfg.OAuth.Providers {
-		if p.ID == providerID && p.Enabled {
-			clientID = p.ClientID
-			clientSecret = p.ClientSecret
+		providerType := strings.TrimSpace(p.Type)
+		if strings.EqualFold(providerType, providerID) && p.Enabled {
+			clientID = oauthClientID(cfg.OAuth.Public, providerType)
+			clientSecret = oauthClientSecret(cfg.OAuth.Secrets, providerType)
 			break
 		}
 	}
@@ -167,7 +172,7 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 		h.db.Create(&oauthRecord)
 	}
 
-	token, err := jwtpkg.Sign(owner.ID, 30*24*time.Hour)
+	token, _, err := sessionpkg.Issue(h.db, owner.ID, c.ClientIP(), c.Request.UserAgent(), sessionpkg.DefaultTTL)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -363,4 +368,41 @@ func fetchSocialUser(providerID, accessToken string) (*socialUserInfo, error) {
 	}
 
 	return nil, fmt.Errorf("unsupported provider: %s", providerID)
+}
+
+func oauthClientID(public map[string]interface{}, providerType string) string {
+	return oauthClientField(public, providerType, "client_id", "clientId")
+}
+
+func oauthClientSecret(secrets map[string]interface{}, providerType string) string {
+	return oauthClientField(secrets, providerType, "client_secret", "clientSecret")
+}
+
+func oauthClientField(source map[string]interface{}, providerType string, keys ...string) string {
+	if len(source) == 0 || strings.TrimSpace(providerType) == "" {
+		return ""
+	}
+	raw, ok := source[providerType]
+	if !ok {
+		for k, v := range source {
+			if strings.EqualFold(k, providerType) {
+				raw = v
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return ""
+		}
+	}
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	for _, key := range keys {
+		if value, ok := m[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

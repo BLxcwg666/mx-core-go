@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -974,11 +975,35 @@ type OAuthConfig struct {
 }
 
 type OAuthProvider struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Enabled      bool   `json:"enabled"`
+	Type    string `json:"type"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (p *OAuthProvider) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type    string `json:"type"`
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.Type = strings.TrimSpace(raw.Type)
+	if p.Type == "" {
+		p.Type = strings.TrimSpace(raw.ID)
+	}
+	p.Enabled = raw.Enabled
+	return nil
+}
+
+func (p OAuthProvider) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type    string `json:"type"`
+		Enabled bool   `json:"enabled"`
+	}{
+		Type:    strings.TrimSpace(p.Type),
+		Enabled: p.Enabled,
+	})
 }
 
 // DefaultFullConfig returns sensible defaults matching the original TypeScript defaults.
