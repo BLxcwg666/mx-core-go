@@ -13,6 +13,7 @@
 
 - **Go**: >= 1.22
 - **Redis**: >= 7.4.2
+- **MySQL**: >= 8.0.0
 - **MiliSearch**: >= 1.35.1
 
 ## 开发
@@ -23,5 +24,8 @@
 
 # 许可
 
-GNU Affero General Public License v3.0 (AGPLv3)  
-项目灵感 / 思路 / 知识产权仍属于 [Innei](https://github.com/Innei)
+本项目采用 GNU Affero General Public License v3.0 (AGPLv3) 开源
+
+# 致谢与声明
+- API 设计及原始逻辑来源于 [Innei](https://github.com/Innei) 的 [mx-space/core](https://github.com/mx-space/core)。
+- 本项目是该作品的 Golang 兼容实现
