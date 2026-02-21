@@ -1,6 +1,7 @@
 package note
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/mx-space/core/internal/models"
@@ -21,6 +22,38 @@ type CreateNoteDTO struct {
 	Images      []models.Image   `json:"images"`
 }
 
+func (d *CreateNoteDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase CreateNoteDTO
+	type camelCase struct {
+		IsPublished *bool      `json:"isPublished"`
+		PublicAt    *time.Time `json:"publicAt"`
+		TopicID     *string    `json:"topicId"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = CreateNoteDTO(snake)
+	if d.IsPublished == nil {
+		d.IsPublished = camel.IsPublished
+	}
+	if d.PublicAt == nil {
+		d.PublicAt = camel.PublicAt
+	}
+	if d.TopicID == nil {
+		d.TopicID = camel.TopicID
+	}
+
+	return nil
+}
+
 type UpdateNoteDTO struct {
 	Title       *string          `json:"title"`
 	Text        *string          `json:"text"`
@@ -34,6 +67,38 @@ type UpdateNoteDTO struct {
 	Location    *string          `json:"location"`
 	TopicID     *string          `json:"topic_id"`
 	Images      []models.Image   `json:"images"`
+}
+
+func (d *UpdateNoteDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase UpdateNoteDTO
+	type camelCase struct {
+		IsPublished *bool      `json:"isPublished"`
+		PublicAt    *time.Time `json:"publicAt"`
+		TopicID     *string    `json:"topicId"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = UpdateNoteDTO(snake)
+	if d.IsPublished == nil {
+		d.IsPublished = camel.IsPublished
+	}
+	if d.PublicAt == nil {
+		d.PublicAt = camel.PublicAt
+	}
+	if d.TopicID == nil {
+		d.TopicID = camel.TopicID
+	}
+
+	return nil
 }
 
 type noteResponse struct {
