@@ -7,6 +7,8 @@
 > 此项目基于 `mx-space/core` 9.7.0 做了 API 兼容，独立于主线，因此不会继续跟进主线的更改  
 > 您可以对此项目进行贡献，但我仍希望你去支持本家 [Innei](https://github.com/Innei) 的作品
 
+本家: https://github.com/mx-space/core
+
 ## 环境要求
 
 - **Go**: >= 1.22
