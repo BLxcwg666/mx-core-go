@@ -133,7 +133,7 @@ func (h *Handler) listAround(c *gin.Context) {
 		ID          string `json:"id"`
 		NID         int    `json:"nid"`
 		Title       string `json:"title"`
-		IsPublished bool   `json:"is_published"`
+		IsPublished bool   `json:"isPublished"`
 		Created     any    `json:"created"`
 		Modified    any    `json:"modified"`
 	}

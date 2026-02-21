@@ -24,7 +24,7 @@ import (
 )
 
 type CreateWebhookDTO struct {
-	PayloadURL string   `json:"payload_url" binding:"required,url"`
+	PayloadURL string   `json:"payloadUrl" binding:"required,url"`
 	Events     []string `json:"events"      binding:"required,min=1"`
 	Enabled    *bool    `json:"enabled"`
 	Secret     string   `json:"secret"`
@@ -32,55 +32,11 @@ type CreateWebhookDTO struct {
 }
 
 type UpdateWebhookDTO struct {
-	PayloadURL *string  `json:"payload_url"`
+	PayloadURL *string  `json:"payloadUrl"`
 	Events     []string `json:"events"`
 	Enabled    *bool    `json:"enabled"`
 	Secret     *string  `json:"secret"`
 	Scope      *int     `json:"scope"`
-}
-
-func (d *CreateWebhookDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase CreateWebhookDTO
-	type camelCase struct {
-		PayloadURL string `json:"payloadUrl"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = CreateWebhookDTO(snake)
-	if strings.TrimSpace(d.PayloadURL) == "" {
-		d.PayloadURL = strings.TrimSpace(camel.PayloadURL)
-	}
-	return nil
-}
-
-func (d *UpdateWebhookDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase UpdateWebhookDTO
-	type camelCase struct {
-		PayloadURL *string `json:"payloadUrl"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = UpdateWebhookDTO(snake)
-	if d.PayloadURL == nil && camel.PayloadURL != nil {
-		d.PayloadURL = camel.PayloadURL
-	}
-	return nil
 }
 
 var webhookEventEnum = []string{
@@ -165,7 +121,7 @@ func normalizeWebhookEvents(events []string) []string {
 
 type webhookResponse struct {
 	ID         string    `json:"id"`
-	PayloadURL string    `json:"payload_url"`
+	PayloadURL string    `json:"payloadUrl"`
 	Events     []string  `json:"events"`
 	Enabled    bool      `json:"enabled"`
 	Scope      int       `json:"scope"`
@@ -509,7 +465,7 @@ func (h *Handler) listEventsEnum(c *gin.Context) {
 
 func (h *Handler) listEvents(c *gin.Context) {
 	q := pagination.FromContext(c)
-	hookID := c.Query("hook_id")
+	hookID := c.Query("hookId")
 	var hookIDPtr *string
 	if hookID != "" {
 		hookIDPtr = &hookID

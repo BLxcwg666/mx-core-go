@@ -1,7 +1,6 @@
 package page
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -22,32 +21,8 @@ type CreatePageDTO struct {
 	Subtitle     string                 `json:"subtitle"`
 	Order        *int                   `json:"order"`
 	Meta         map[string]interface{} `json:"meta"`
-	AllowComment *bool                  `json:"allow_comment"`
+	AllowComment *bool                  `json:"allowComment"`
 	Images       []models.Image         `json:"images"`
-}
-
-func (d *CreatePageDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase CreatePageDTO
-	type camelCase struct {
-		AllowComment *bool `json:"allowComment"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = CreatePageDTO(snake)
-	if d.AllowComment == nil {
-		d.AllowComment = camel.AllowComment
-	}
-
-	return nil
 }
 
 type UpdatePageDTO struct {
@@ -57,32 +32,8 @@ type UpdatePageDTO struct {
 	Subtitle     *string                `json:"subtitle"`
 	Order        *int                   `json:"order"`
 	Meta         map[string]interface{} `json:"meta"`
-	AllowComment *bool                  `json:"allow_comment"`
+	AllowComment *bool                  `json:"allowComment"`
 	Images       []models.Image         `json:"images"`
-}
-
-func (d *UpdatePageDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase UpdatePageDTO
-	type camelCase struct {
-		AllowComment *bool `json:"allowComment"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = UpdatePageDTO(snake)
-	if d.AllowComment == nil {
-		d.AllowComment = camel.AllowComment
-	}
-
-	return nil
 }
 
 type pageResponse struct {
@@ -93,7 +44,7 @@ type pageResponse struct {
 	Subtitle     string                 `json:"subtitle"`
 	Order        int                    `json:"order"`
 	Meta         map[string]interface{} `json:"meta"`
-	AllowComment bool                   `json:"allow_comment"`
+	AllowComment bool                   `json:"allowComment"`
 	Images       []models.Image         `json:"images"`
 	Created      time.Time              `json:"created"`
 	Modified     time.Time              `json:"modified"`

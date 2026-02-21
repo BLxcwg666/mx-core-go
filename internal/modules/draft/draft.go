@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,45 +15,13 @@ import (
 )
 
 type CreateDraftDTO struct {
-	RefType          models.DraftRefType    `json:"ref_type" binding:"required"`
-	RefID            *string                `json:"ref_id"`
+	RefType          models.DraftRefType    `json:"refType" binding:"required"`
+	RefID            *string                `json:"refId"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"`
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
-	TypeSpecificData map[string]interface{} `json:"type_specific_data"`
-}
-
-func (d *CreateDraftDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase CreateDraftDTO
-	type camelCase struct {
-		RefType          models.DraftRefType    `json:"refType"`
-		RefID            *string                `json:"refId"`
-		TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = CreateDraftDTO(snake)
-	if d.RefType == "" {
-		d.RefType = camel.RefType
-	}
-	if d.RefID == nil {
-		d.RefID = camel.RefID
-	}
-	if d.TypeSpecificData == nil {
-		d.TypeSpecificData = camel.TypeSpecificData
-	}
-
-	return nil
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
 }
 
 type UpdateDraftDTO struct {
@@ -62,45 +29,21 @@ type UpdateDraftDTO struct {
 	Text             *string                `json:"text"`
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
-	TypeSpecificData map[string]interface{} `json:"type_specific_data"`
-}
-
-func (d *UpdateDraftDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase UpdateDraftDTO
-	type camelCase struct {
-		TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = UpdateDraftDTO(snake)
-	if d.TypeSpecificData == nil {
-		d.TypeSpecificData = camel.TypeSpecificData
-	}
-
-	return nil
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
 }
 
 type draftResponse struct {
 	ID               string                 `json:"id"`
-	RefType          models.DraftRefType    `json:"ref_type"`
-	RefID            *string                `json:"ref_id"`
+	RefType          models.DraftRefType    `json:"refType"`
+	RefID            *string                `json:"refId"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"`
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
-	TypeSpecificData map[string]interface{} `json:"type_specific_data,omitempty"`
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty"`
 	Version          int                    `json:"version"`
-	PublishedVersion *int                   `json:"published_version"`
-	HistoryCount     int                    `json:"history_count"`
+	PublishedVersion *int                   `json:"publishedVersion"`
+	HistoryCount     int                    `json:"historyCount"`
 	Created          time.Time              `json:"created"`
 	Updated          time.Time              `json:"updated"`
 }
@@ -111,7 +54,7 @@ func toResponse(d *models.DraftModel) draftResponse {
 		images = []models.Image{}
 	}
 	return draftResponse{
-		ID: d.ID, RefType: normalizeDraftRefType(d.RefType), RefID: d.RefID,
+		ID: d.ID, RefType: d.RefType, RefID: d.RefID,
 		Title: d.Title, Text: d.Text, Images: images, Meta: d.Meta,
 		TypeSpecificData: d.TypeSpecificData,
 		Version:          d.Version, PublishedVersion: d.PublishedVersion,
@@ -128,48 +71,10 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func normalizeDraftRefType(refType models.DraftRefType) models.DraftRefType {
-	switch models.DraftRefType(strings.ToLower(strings.TrimSpace(string(refType)))) {
-	case models.DraftRefPost:
-		return models.DraftRefPost
-	case models.DraftRefNote:
-		return models.DraftRefNote
-	case models.DraftRefPage:
-		return models.DraftRefPage
-	case models.DraftRefPostLegacy:
-		return models.DraftRefPost
-	case models.DraftRefNoteLegacy:
-		return models.DraftRefNote
-	case models.DraftRefPageLegacy:
-		return models.DraftRefPage
-	default:
-		return refType
-	}
-}
-
-func draftRefTypeVariants(refType string) []string {
-	switch normalizeDraftRefType(models.DraftRefType(refType)) {
-	case models.DraftRefPost:
-		return []string{string(models.DraftRefPost), string(models.DraftRefPostLegacy)}
-	case models.DraftRefNote:
-		return []string{string(models.DraftRefNote), string(models.DraftRefNoteLegacy)}
-	case models.DraftRefPage:
-		return []string{string(models.DraftRefPage), string(models.DraftRefPageLegacy)}
-	default:
-		refType = strings.TrimSpace(refType)
-		if refType == "" {
-			return nil
-		}
-		return []string{refType}
-	}
-}
-
 func (s *Service) List(q pagination.Query, refType *string) ([]models.DraftModel, response.Pagination, error) {
 	tx := s.db.Model(&models.DraftModel{}).Order("updated_at DESC")
 	if refType != nil {
-		if variants := draftRefTypeVariants(*refType); len(variants) > 0 {
-			tx = tx.Where("ref_type IN ?", variants)
-		}
+		tx = tx.Where("ref_type = ?", *refType)
 	}
 	var items []models.DraftModel
 	pag, err := pagination.Paginate(tx, q, &items)
@@ -189,10 +94,7 @@ func (s *Service) GetByID(id string) (*models.DraftModel, error) {
 
 func (s *Service) GetByRef(refType, refID string) (*models.DraftModel, error) {
 	var d models.DraftModel
-	tx := s.db.Where("ref_id = ?", refID).Preload("History").Order("version DESC")
-	if variants := draftRefTypeVariants(refType); len(variants) > 0 {
-		tx = tx.Where("ref_type IN ?", variants)
-	}
+	tx := s.db.Where("ref_type = ? AND ref_id = ?", refType, refID).Preload("History").Order("version DESC")
 	err := tx.First(&d).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -204,16 +106,12 @@ func (s *Service) GetByRef(refType, refID string) (*models.DraftModel, error) {
 }
 
 func (s *Service) GetNewByRefType(refType string) ([]models.DraftModel, error) {
-	tx := s.db.Model(&models.DraftModel{}).Where("ref_id IS NULL").Order("updated_at DESC")
-	if variants := draftRefTypeVariants(refType); len(variants) > 0 {
-		tx = tx.Where("ref_type IN ?", variants)
-	}
+	tx := s.db.Model(&models.DraftModel{}).Where("ref_type = ? AND ref_id IS NULL", refType).Order("updated_at DESC")
 	var items []models.DraftModel
 	return items, tx.Find(&items).Error
 }
 
 func (s *Service) Create(dto *CreateDraftDTO) (*models.DraftModel, error) {
-	dto.RefType = normalizeDraftRefType(dto.RefType)
 	d := models.DraftModel{
 		RefType:          dto.RefType,
 		RefID:            dto.RefID,
@@ -274,7 +172,7 @@ func (s *Service) Publish(id string) (string, error) {
 
 	var targetID string
 
-	switch normalizeDraftRefType(d.RefType) {
+	switch d.RefType {
 	case models.DraftRefPost:
 		if d.RefID != nil {
 			updates := map[string]interface{}{"title": d.Title, "text": d.Text}
@@ -398,10 +296,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
-	refType := c.Query("ref_type")
-	if refType == "" {
-		refType = c.Query("refType")
-	}
+	refType := c.Query("refType")
 	var rtPtr *string
 	if refType != "" {
 		rtPtr = &refType
@@ -509,7 +404,7 @@ func (h *Handler) publish(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	response.OK(c, gin.H{"target_id": targetID})
+	response.OK(c, gin.H{"targetId": targetID})
 }
 
 func (h *Handler) history(c *gin.Context) {
@@ -538,11 +433,11 @@ func (h *Handler) historyVersion(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{
-		"title":              snapshot.Title,
-		"text":               snapshot.Text,
-		"version":            snapshot.Version,
-		"type_specific_data": snapshot.TypeSpecificData,
-		"saved_at":           snapshot.SavedAt,
+		"title":            snapshot.Title,
+		"text":             snapshot.Text,
+		"version":          snapshot.Version,
+		"typeSpecificData": snapshot.TypeSpecificData,
+		"savedAt":          snapshot.SavedAt,
 	})
 }
 

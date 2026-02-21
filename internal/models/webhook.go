@@ -5,13 +5,13 @@ import "time"
 // WebhookModel defines an outbound webhook endpoint.
 type WebhookModel struct {
 	Base
-	PayloadURL string   `json:"payload_url" gorm:"not null"`
+	PayloadURL string   `json:"payloadUrl" gorm:"not null"`
 	Events     []string `json:"events"      gorm:"serializer:json"`
 	Enabled    bool     `json:"enabled"     gorm:"default:true"`
 	Secret     string   `json:"-"           gorm:"not null"`
 	Scope      int      `json:"scope"`
 
-	EventLogs []WebhookEventModel `json:"event_logs,omitempty" gorm:"foreignKey:HookID"`
+	EventLogs []WebhookEventModel `json:"eventLogs,omitempty" gorm:"foreignKey:HookID"`
 }
 
 func (WebhookModel) TableName() string { return "webhooks" }
@@ -19,7 +19,7 @@ func (WebhookModel) TableName() string { return "webhooks" }
 // WebhookEventModel is the audit trail of webhook deliveries.
 type WebhookEventModel struct {
 	Base
-	HookID    string    `json:"hook_id"   gorm:"index;not null"`
+	HookID    string    `json:"hookId"   gorm:"index;not null"`
 	Event     string    `json:"event"     gorm:"not null"`
 	Headers   string    `json:"headers"   gorm:"type:longtext"`
 	Payload   string    `json:"payload"   gorm:"type:longtext"`

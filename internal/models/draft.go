@@ -19,15 +19,15 @@ const (
 // DraftModel stores versioned drafts for posts, notes, and pages.
 type DraftModel struct {
 	Base
-	RefType          DraftRefType           `json:"ref_type"          gorm:"index"`
-	RefID            *string                `json:"ref_id"            gorm:"index"`
+	RefType          DraftRefType           `json:"refType"           gorm:"index"`
+	RefID            *string                `json:"refId"             gorm:"index"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"              gorm:"type:longtext"`
 	Images           []Image                `json:"images"            gorm:"serializer:json"`
 	Meta             map[string]interface{} `json:"meta,omitempty"    gorm:"serializer:json"`
-	TypeSpecificData map[string]interface{} `json:"type_specific_data,omitempty" gorm:"serializer:json"`
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"serializer:json"`
 	Version          int                    `json:"version"           gorm:"default:0"`
-	PublishedVersion *int                   `json:"published_version"`
+	PublishedVersion *int                   `json:"publishedVersion"`
 
 	History []DraftHistoryModel `json:"history,omitempty" gorm:"foreignKey:DraftID"`
 }
@@ -41,11 +41,11 @@ type DraftHistoryModel struct {
 	Version          int                    `json:"version"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"              gorm:"type:longtext"`
-	TypeSpecificData map[string]interface{} `json:"type_specific_data,omitempty" gorm:"serializer:json"`
-	SavedAt          time.Time              `json:"saved_at"`
-	IsFullSnapshot   bool                   `json:"is_full_snapshot"  gorm:"default:true"`
-	RefVersion       *int                   `json:"ref_version"`
-	BaseVersion      *int                   `json:"base_version"`
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"serializer:json"`
+	SavedAt          time.Time              `json:"savedAt"`
+	IsFullSnapshot   bool                   `json:"isFullSnapshot"  gorm:"default:true"`
+	RefVersion       *int                   `json:"refVersion"`
+	BaseVersion      *int                   `json:"baseVersion"`
 }
 
 func (DraftHistoryModel) TableName() string { return "draft_histories" }

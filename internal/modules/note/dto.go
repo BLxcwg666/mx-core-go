@@ -1,7 +1,6 @@
 package note
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/mx-space/core/internal/models"
@@ -10,95 +9,31 @@ import (
 type CreateNoteDTO struct {
 	Title       string           `json:"title"       binding:"required"`
 	Text        string           `json:"text"        binding:"required"`
-	IsPublished *bool            `json:"is_published"`
+	IsPublished *bool            `json:"isPublished"`
 	Password    string           `json:"password"`
-	PublicAt    *time.Time       `json:"public_at"`
+	PublicAt    *time.Time       `json:"publicAt"`
 	Mood        string           `json:"mood"`
 	Weather     string           `json:"weather"`
 	Bookmark    *bool            `json:"bookmark"`
 	Coordinates *models.GeoPoint `json:"coordinates"`
 	Location    string           `json:"location"`
-	TopicID     *string          `json:"topic_id"`
+	TopicID     *string          `json:"topicId"`
 	Images      []models.Image   `json:"images"`
-}
-
-func (d *CreateNoteDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase CreateNoteDTO
-	type camelCase struct {
-		IsPublished *bool      `json:"isPublished"`
-		PublicAt    *time.Time `json:"publicAt"`
-		TopicID     *string    `json:"topicId"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = CreateNoteDTO(snake)
-	if d.IsPublished == nil {
-		d.IsPublished = camel.IsPublished
-	}
-	if d.PublicAt == nil {
-		d.PublicAt = camel.PublicAt
-	}
-	if d.TopicID == nil {
-		d.TopicID = camel.TopicID
-	}
-
-	return nil
 }
 
 type UpdateNoteDTO struct {
 	Title       *string          `json:"title"`
 	Text        *string          `json:"text"`
-	IsPublished *bool            `json:"is_published"`
+	IsPublished *bool            `json:"isPublished"`
 	Password    *string          `json:"password"`
-	PublicAt    *time.Time       `json:"public_at"`
+	PublicAt    *time.Time       `json:"publicAt"`
 	Mood        *string          `json:"mood"`
 	Weather     *string          `json:"weather"`
 	Bookmark    *bool            `json:"bookmark"`
 	Coordinates *models.GeoPoint `json:"coordinates"`
 	Location    *string          `json:"location"`
-	TopicID     *string          `json:"topic_id"`
+	TopicID     *string          `json:"topicId"`
 	Images      []models.Image   `json:"images"`
-}
-
-func (d *UpdateNoteDTO) UnmarshalJSON(data []byte) error {
-	type snakeCase UpdateNoteDTO
-	type camelCase struct {
-		IsPublished *bool      `json:"isPublished"`
-		PublicAt    *time.Time `json:"publicAt"`
-		TopicID     *string    `json:"topicId"`
-	}
-
-	var snake snakeCase
-	if err := json.Unmarshal(data, &snake); err != nil {
-		return err
-	}
-
-	var camel camelCase
-	if err := json.Unmarshal(data, &camel); err != nil {
-		return err
-	}
-
-	*d = UpdateNoteDTO(snake)
-	if d.IsPublished == nil {
-		d.IsPublished = camel.IsPublished
-	}
-	if d.PublicAt == nil {
-		d.PublicAt = camel.PublicAt
-	}
-	if d.TopicID == nil {
-		d.TopicID = camel.TopicID
-	}
-
-	return nil
 }
 
 type noteResponse struct {
@@ -106,15 +41,15 @@ type noteResponse struct {
 	NID         int              `json:"nid"`
 	Title       string           `json:"title"`
 	Text        string           `json:"text"`
-	IsPublished bool             `json:"is_published"`
-	PublicAt    *time.Time       `json:"public_at"`
+	IsPublished bool             `json:"isPublished"`
+	PublicAt    *time.Time       `json:"publicAt"`
 	Mood        string           `json:"mood"`
 	Weather     string           `json:"weather"`
 	Bookmark    bool             `json:"bookmark"`
 	Coordinates *models.GeoPoint `json:"coordinates"`
 	Location    string           `json:"location"`
 	Count       models.Count     `json:"count"`
-	TopicID     *string          `json:"topic_id"`
+	TopicID     *string          `json:"topicId"`
 	Topic       interface{}      `json:"topic"`
 	Images      []models.Image   `json:"images"`
 	Created     time.Time        `json:"created"`
