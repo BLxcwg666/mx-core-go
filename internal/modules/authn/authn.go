@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -13,8 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
+	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"gorm.io/gorm"
 )
 
@@ -236,7 +237,7 @@ func (h *Handler) authenticationVerify(c *gin.Context) {
 			response.InternalError(c, err)
 			return
 		}
-		token, err := jwtpkg.Sign(owner.ID, 30*24*time.Hour)
+		token, _, err := sessionpkg.Issue(h.db, owner.ID, c.ClientIP(), c.Request.UserAgent(), sessionpkg.DefaultTTL)
 		if err != nil {
 			response.InternalError(c, err)
 			return
@@ -268,7 +269,7 @@ func (h *Handler) listItems(c *gin.Context) {
 			"created":              item.CreatedAt,
 		})
 	}
-	response.OK(c, out)
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) deleteItem(c *gin.Context) {
