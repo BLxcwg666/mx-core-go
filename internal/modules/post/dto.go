@@ -1,6 +1,7 @@
 package post
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/mx-space/core/internal/models"
@@ -21,6 +22,38 @@ type CreatePostDTO struct {
 	Images      []models.Image `json:"images"`
 }
 
+func (d *CreatePostDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase CreatePostDTO
+	type camelCase struct {
+		CategoryID  *string `json:"categoryId"`
+		IsPublished *bool   `json:"isPublished"`
+		PinOrder    *int    `json:"pinOrder"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = CreatePostDTO(snake)
+	if d.CategoryID == nil {
+		d.CategoryID = camel.CategoryID
+	}
+	if d.IsPublished == nil {
+		d.IsPublished = camel.IsPublished
+	}
+	if d.PinOrder == nil {
+		d.PinOrder = camel.PinOrder
+	}
+
+	return nil
+}
+
 // UpdatePostDTO is the request body for updating a post (all fields optional).
 type UpdatePostDTO struct {
 	Slug        *string        `json:"slug"`
@@ -34,6 +67,38 @@ type UpdatePostDTO struct {
 	Pin         *bool          `json:"pin"`
 	PinOrder    *int           `json:"pin_order"`
 	Images      []models.Image `json:"images"`
+}
+
+func (d *UpdatePostDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase UpdatePostDTO
+	type camelCase struct {
+		CategoryID  *string `json:"categoryId"`
+		IsPublished *bool   `json:"isPublished"`
+		PinOrder    *int    `json:"pinOrder"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = UpdatePostDTO(snake)
+	if d.CategoryID == nil {
+		d.CategoryID = camel.CategoryID
+	}
+	if d.IsPublished == nil {
+		d.IsPublished = camel.IsPublished
+	}
+	if d.PinOrder == nil {
+		d.PinOrder = camel.PinOrder
+	}
+
+	return nil
 }
 
 // ListQuery holds query params for listing posts.

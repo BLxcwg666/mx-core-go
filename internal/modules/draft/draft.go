@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,11 +17,43 @@ import (
 type CreateDraftDTO struct {
 	RefType          models.DraftRefType    `json:"ref_type" binding:"required"`
 	RefID            *string                `json:"ref_id"`
-	Title            string                 `json:"title"    binding:"required"`
-	Text             string                 `json:"text"     binding:"required"`
+	Title            string                 `json:"title"`
+	Text             string                 `json:"text"`
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
 	TypeSpecificData map[string]interface{} `json:"type_specific_data"`
+}
+
+func (d *CreateDraftDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase CreateDraftDTO
+	type camelCase struct {
+		RefType          models.DraftRefType    `json:"refType"`
+		RefID            *string                `json:"refId"`
+		TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = CreateDraftDTO(snake)
+	if d.RefType == "" {
+		d.RefType = camel.RefType
+	}
+	if d.RefID == nil {
+		d.RefID = camel.RefID
+	}
+	if d.TypeSpecificData == nil {
+		d.TypeSpecificData = camel.TypeSpecificData
+	}
+
+	return nil
 }
 
 type UpdateDraftDTO struct {
@@ -29,6 +62,30 @@ type UpdateDraftDTO struct {
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
 	TypeSpecificData map[string]interface{} `json:"type_specific_data"`
+}
+
+func (d *UpdateDraftDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase UpdateDraftDTO
+	type camelCase struct {
+		TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = UpdateDraftDTO(snake)
+	if d.TypeSpecificData == nil {
+		d.TypeSpecificData = camel.TypeSpecificData
+	}
+
+	return nil
 }
 
 type draftResponse struct {
@@ -104,13 +161,12 @@ func (s *Service) GetByRef(refType, refID string) (*models.DraftModel, error) {
 	return &d, nil
 }
 
-func (s *Service) GetNewByRefType(refType string, q pagination.Query) ([]models.DraftModel, response.Pagination, error) {
+func (s *Service) GetNewByRefType(refType string) ([]models.DraftModel, error) {
 	tx := s.db.Model(&models.DraftModel{}).
 		Where("ref_type = ? AND ref_id IS NULL", refType).
 		Order("updated_at DESC")
 	var items []models.DraftModel
-	pag, err := pagination.Paginate(tx, q, &items)
-	return items, pag, err
+	return items, tx.Find(&items).Error
 }
 
 func (s *Service) Create(dto *CreateDraftDTO) (*models.DraftModel, error) {
@@ -299,6 +355,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
 	refType := c.Query("ref_type")
+	if refType == "" {
+		refType = c.Query("refType")
+	}
 	var rtPtr *string
 	if refType != "" {
 		rtPtr = &refType
@@ -341,15 +400,14 @@ func (h *Handler) getByRef(c *gin.Context) {
 		return
 	}
 	if d == nil {
-		response.NotFound(c)
+		response.OK(c, nil)
 		return
 	}
 	response.OK(c, toResponse(d))
 }
 
 func (h *Handler) getNewByRef(c *gin.Context) {
-	q := pagination.FromContext(c)
-	items, pag, err := h.svc.GetNewByRefType(c.Param("refType"), q)
+	items, err := h.svc.GetNewByRefType(c.Param("refType"))
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -358,7 +416,7 @@ func (h *Handler) getNewByRef(c *gin.Context) {
 	for i, d := range items {
 		out[i] = toResponse(&d)
 	}
-	response.Paged(c, out, pag)
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) create(c *gin.Context) {
