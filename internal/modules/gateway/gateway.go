@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
+	redis "github.com/redis/go-redis/v9"
 	socketio "github.com/zishang520/socket.io/v2/socket"
 	"go.uber.org/zap"
 )
@@ -20,6 +23,9 @@ const (
 	namespaceWeb    = "/web"
 	redisChanAdmin  = "mx:gateway:admin"
 	redisChanPublic = "mx:gateway:public"
+
+	redisKeyMaxOnlineCount      = "mx:max_online_count"
+	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
 )
 
 // Message is the envelope used by hub broadcasts and Redis fan-out.
@@ -195,11 +201,13 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) registerClient(c clientMeta) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	trackOnline := false
+	currentOnline := 0
 
+	h.mu.Lock()
 	if oldRoom, ok := h.sidRoom[c.sid]; ok {
 		if oldRoom == c.room {
+			h.mu.Unlock()
 			return
 		}
 		if h.roomCount[oldRoom] > 0 {
@@ -209,6 +217,15 @@ func (h *Hub) registerClient(c clientMeta) {
 
 	h.sidRoom[c.sid] = c.room
 	h.roomCount[c.room]++
+	if c.room == RoomPublic {
+		trackOnline = true
+		currentOnline = h.roomCount[RoomPublic]
+	}
+	h.mu.Unlock()
+
+	if trackOnline {
+		h.updateDailyOnlineStats(currentOnline)
+	}
 }
 
 func (h *Hub) unregisterClient(c clientMeta) {
@@ -224,6 +241,46 @@ func (h *Hub) unregisterClient(c clientMeta) {
 	if h.roomCount[room] > 0 {
 		h.roomCount[room]--
 	}
+}
+
+func (h *Hub) updateDailyOnlineStats(currentOnline int) {
+	if h.rc == nil || currentOnline < 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	dateKey := shortDateKey(time.Now())
+
+	maxOnline := 0
+	currentMax, err := h.rc.Raw().HGet(ctx, redisKeyMaxOnlineCount, dateKey).Result()
+	switch {
+	case err == nil:
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(currentMax)); parseErr == nil {
+			maxOnline = parsed
+		}
+	case err == redis.Nil:
+		// no-op
+	default:
+		if h.logger != nil {
+			h.logger.Warn("gateway get max online failed", zap.Error(err))
+		}
+	}
+
+	if currentOnline > maxOnline {
+		if err := h.rc.Raw().HSet(ctx, redisKeyMaxOnlineCount, dateKey, currentOnline).Err(); err != nil && h.logger != nil {
+			h.logger.Warn("gateway set max online failed", zap.Error(err))
+		}
+	}
+
+	if err := h.rc.Raw().HIncrBy(ctx, redisKeyMaxOnlineCountTotal, dateKey, 1).Err(); err != nil && h.logger != nil {
+		h.logger.Warn("gateway incr online total failed", zap.Error(err))
+	}
+}
+
+func shortDateKey(t time.Time) string {
+	return t.Format("1-2-06")
 }
 
 func (h *Hub) gatewayMessageFormat(event string, payload interface{}, code *int) gatewayPayload {

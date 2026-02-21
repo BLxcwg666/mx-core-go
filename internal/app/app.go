@@ -262,7 +262,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Infrastructure
 	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW)
-	aggregate.RegisterRoutes(api, db, cfgSvc)
+	aggregate.RegisterRoutes(api, db, cfgSvc, a.hub, rc)
 	ack.NewHandler(db, a.hub).RegisterRoutes(api)
 	if apiPrefix != "" {
 		feed.RegisterRoutes(api, db, cfgSvc) // also at /api/v2/feed

@@ -12,8 +12,15 @@ import (
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/configs"
+	"github.com/mx-space/core/internal/modules/gateway"
+	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
+)
+
+const (
+	redisKeyMaxOnlineCount      = "mx:max_online_count"
+	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
 )
 
 type aggregateData struct {
@@ -147,7 +154,7 @@ type sitemapItem struct {
 	PublishedAt time.Time `json:"published_at"`
 }
 
-func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service) {
+func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, hub *gateway.Hub, rc *pkgredis.Client) {
 	rg.GET("/aggregate", func(c *gin.Context) {
 		data, err := buildAggregate(db, cfgSvc, c.Query("theme"))
 		if err != nil {
@@ -524,11 +531,24 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service) {
 		db.Model(&models.AnalyzeModel{}).Count(&stat.CallTime)
 		db.Model(&models.AnalyzeModel{}).Distinct("ip").Count(&stat.UV)
 
-		todayStart := time.Now().Truncate(24 * time.Hour)
+		todayStart := beginningOfDay(time.Now())
 		db.Model(&models.AnalyzeModel{}).Where("timestamp >= ?", todayStart).Distinct("ip").Count(&stat.TodayIPAccessCount)
+
 		stat.TodayMaxOnline = "0"
 		stat.TodayOnlineTotal = "0"
 		stat.Online = 0
+		if hub != nil {
+			stat.Online = int64(hub.ClientCount(gateway.RoomPublic))
+		}
+		if rc != nil {
+			dateKey := shortDateKey(time.Now())
+			if todayMaxOnline, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCount, dateKey).Result(); err == nil && strings.TrimSpace(todayMaxOnline) != "" {
+				stat.TodayMaxOnline = todayMaxOnline
+			}
+			if todayOnlineTotal, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCountTotal, dateKey).Result(); err == nil && strings.TrimSpace(todayOnlineTotal) != "" {
+				stat.TodayOnlineTotal = todayOnlineTotal
+			}
+		}
 		response.OK(c, stat)
 	})
 
@@ -882,4 +902,14 @@ func publishedAt(created, modified time.Time) time.Time {
 		return modified
 	}
 	return created
+}
+
+func beginningOfDay(t time.Time) time.Time {
+	local := t.In(time.Local)
+	y, m, d := local.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+}
+
+func shortDateKey(t time.Time) string {
+	return t.Format("1-2-06")
 }

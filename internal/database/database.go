@@ -77,6 +77,9 @@ func migrate(db *gorm.DB) error {
 	}
 
 	if db.Dialector.Name() == "mysql" {
+		if err := db.Exec("ALTER TABLE `analyzes` MODIFY COLUMN `ua` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
 		if err := db.Exec("ALTER TABLE `meta_presets` MODIFY COLUMN `options` LONGTEXT NULL").Error; err != nil {
 			return err
 		}

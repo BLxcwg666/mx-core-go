@@ -21,18 +21,18 @@ func Middleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next() // handle request first to get status code
 
-		// Only track 2xx GET requests to public content paths.
+		// Track successful public GET requests.
 		if c.Request.Method != "GET" {
 			return
 		}
-		path := c.Request.URL.Path
+		rawPath := strings.TrimSpace(c.Request.URL.Path)
+		if rawPath != "/api" && !strings.HasPrefix(rawPath, "/api/") {
+			return
+		}
+		path := normalizeAnalyzePath(rawPath)
 
 		// Skip proxy paths
 		if strings.HasPrefix(path, "/proxy") {
-			return
-		}
-
-		if !isPublicContentPath(path) {
 			return
 		}
 		if c.Writer.Status() < 200 || c.Writer.Status() >= 300 {
@@ -49,16 +49,23 @@ func Middleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		ip := c.ClientIP()
-		ua := parseUA(c.GetHeader("User-Agent"))
+		ip := strings.TrimSpace(c.ClientIP())
+		if ip == "" || ip == "127.0.0.1" || ip == "localhost" || ip == "::1" {
+			return
+		}
 
-		go db.Create(&models.AnalyzeModel{
-			IP:        ip,
-			UA:        ua,
-			Path:      path,
-			Referer:   c.GetHeader("Referer"),
-			Timestamp: time.Now(),
-		})
+		ua := parseUA(c.GetHeader("User-Agent"))
+		referer := c.GetHeader("Referer")
+
+		go func() {
+			_ = db.Create(&models.AnalyzeModel{
+				IP:        ip,
+				UA:        ua,
+				Path:      path,
+				Referer:   referer,
+				Timestamp: time.Now(),
+			}).Error
+		}()
 	}
 }
 
@@ -74,14 +81,48 @@ func isBotUA(ua string) bool {
 	return false
 }
 
-func isPublicContentPath(path string) bool {
-	publicPrefixes := []string{"/posts/", "/notes/", "/pages/", "/recently/"}
-	for _, p := range publicPrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
+func normalizeAnalyzePath(path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return "/"
+	}
+
+	if p == "/api" {
+		return "/"
+	}
+	if strings.HasPrefix(p, "/api/") {
+		p = strings.TrimPrefix(p, "/api")
+	}
+	if strings.HasPrefix(p, "/v") {
+		rest := p[2:]
+		if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+			if isDigits(rest[:slash]) {
+				p = rest[slash:]
+			}
+		} else if isDigits(rest) {
+			return "/"
 		}
 	}
-	return false
+
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
+
+func isDigits(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	for _, ch := range raw {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseUA(ua string) map[string]interface{} {

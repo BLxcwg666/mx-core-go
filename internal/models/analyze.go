@@ -6,7 +6,7 @@ import "time"
 type AnalyzeModel struct {
 	Base
 	IP        string                 `json:"ip"        gorm:"index"`
-	UA        map[string]interface{} `json:"ua"        gorm:"serializer:json"`
+	UA        map[string]interface{} `json:"ua"        gorm:"serializer:json;type:longtext"`
 	Country   string                 `json:"country"`
 	Path      string                 `json:"path"      gorm:"index"`
 	Referer   string                 `json:"referer"   gorm:"index"`
