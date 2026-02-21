@@ -258,6 +258,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Versioned API
 	api := r.Group(apiPrefix)
+	api.Use(middleware.OptionalAuth(db))
 
 	// Infrastructure
 	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW)
