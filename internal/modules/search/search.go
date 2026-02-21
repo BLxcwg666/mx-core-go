@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	appcfg "github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/configs"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -24,10 +25,37 @@ var httpClient = &http.Client{Timeout: 10 * time.Second}
 type SearchResult struct {
 	ID      string `json:"id"`
 	Title   string `json:"title"`
-	Summary string `json:"summary"`
+	Summary string `json:"summary,omitempty"`
 	Type    string `json:"type"` // post | note | page
 	Slug    string `json:"slug,omitempty"`
 	NID     int    `json:"nid,omitempty"`
+
+	Created  *time.Time `json:"created,omitempty"`
+	Modified *time.Time `json:"modified,omitempty"`
+
+	CategoryID  *string        `json:"categoryId,omitempty"`
+	Category    interface{}    `json:"category,omitempty"`
+	Copyright   *bool          `json:"copyright,omitempty"`
+	IsPublished *bool          `json:"isPublished,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	Count       *models.Count  `json:"count,omitempty"`
+	Pin         *bool          `json:"pin,omitempty"`
+	PinOrder    *int           `json:"pinOrder,omitempty"`
+	Images      []models.Image `json:"images,omitempty"`
+
+	Mood        string           `json:"mood,omitempty"`
+	Weather     string           `json:"weather,omitempty"`
+	PublicAt    *time.Time       `json:"publicAt,omitempty"`
+	Bookmark    *bool            `json:"bookmark,omitempty"`
+	Coordinates *models.GeoPoint `json:"coordinates,omitempty"`
+	Location    string           `json:"location,omitempty"`
+	TopicID     *string          `json:"topicId,omitempty"`
+	Topic       interface{}      `json:"topic,omitempty"`
+
+	Subtitle     string                 `json:"subtitle,omitempty"`
+	Order        *int                   `json:"order,omitempty"`
+	AllowComment *bool                  `json:"allowComment,omitempty"`
+	Meta         map[string]interface{} `json:"meta,omitempty"`
 }
 
 // Service handles search indexing and querying.
@@ -86,7 +114,7 @@ func (s *Service) Search(q string) ([]SearchResult, error) {
 	return s.mysqlSearch(q)
 }
 
-func (s *Service) SearchByType(docType, keyword string, page, size int) ([]SearchResult, response.Pagination, error) {
+func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin bool) ([]SearchResult, response.Pagination, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -105,6 +133,9 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 	switch docType {
 	case "post":
 		tx := s.db.Model(&models.PostModel{})
+		if !isAdmin {
+			tx = tx.Where("is_published = ?", true)
+		}
 		if keyword != "" {
 			tx = tx.Where("title LIKE ? OR text LIKE ?", like, like)
 		}
@@ -113,7 +144,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 		}
 		var posts []models.PostModel
 		if err := tx.
-			Select("id, slug, title, summary").
+			Preload("Category").
 			Order("created_at DESC").
 			Offset(offset).
 			Limit(size).
@@ -121,13 +152,42 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 			return nil, response.Pagination{}, err
 		}
 		for _, p := range posts {
+			tags := p.Tags
+			if tags == nil {
+				tags = []string{}
+			}
+			count := models.Count{Read: p.ReadCount, Like: p.LikeCount}
+			isPublished := p.IsPublished
+			copyright := p.Copyright
+			pin := p.Pin
+			pinOrder := p.PinOrder
+			created := p.CreatedAt
+			modified := p.UpdatedAt
 			results = append(results, SearchResult{
-				ID: p.ID, Title: p.Title, Summary: p.Summary, Type: "post", Slug: p.Slug,
+				ID:          p.ID,
+				Title:       p.Title,
+				Summary:     p.Summary,
+				Type:        "post",
+				Slug:        p.Slug,
+				Created:     &created,
+				Modified:    &modified,
+				CategoryID:  p.CategoryID,
+				Category:    p.Category,
+				Copyright:   &copyright,
+				IsPublished: &isPublished,
+				Tags:        tags,
+				Count:       &count,
+				Pin:         &pin,
+				PinOrder:    &pinOrder,
+				Images:      p.Images,
 			})
 		}
 
 	case "note":
 		tx := s.db.Model(&models.NoteModel{})
+		if !isAdmin {
+			tx = tx.Where("is_published = ?", true)
+		}
 		if keyword != "" {
 			tx = tx.Where("title LIKE ? OR text LIKE ?", like, like)
 		}
@@ -136,7 +196,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 		}
 		var notes []models.NoteModel
 		if err := tx.
-			Select("id, n_id, title").
+			Preload("Topic").
 			Order("created_at DESC").
 			Offset(offset).
 			Limit(size).
@@ -144,8 +204,29 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 			return nil, response.Pagination{}, err
 		}
 		for _, n := range notes {
+			count := models.Count{Read: n.ReadCount, Like: n.LikeCount}
+			isPublished := n.IsPublished
+			bookmark := n.Bookmark
+			created := n.CreatedAt
+			modified := n.UpdatedAt
 			results = append(results, SearchResult{
-				ID: n.ID, Title: n.Title, Type: "note", NID: n.NID,
+				ID:          n.ID,
+				Title:       n.Title,
+				Type:        "note",
+				NID:         n.NID,
+				Created:     &created,
+				Modified:    &modified,
+				IsPublished: &isPublished,
+				Mood:        n.Mood,
+				Weather:     n.Weather,
+				PublicAt:    n.PublicAt,
+				Bookmark:    &bookmark,
+				Coordinates: n.Coordinates,
+				Location:    n.Location,
+				Count:       &count,
+				TopicID:     n.TopicID,
+				Topic:       n.Topic,
+				Images:      n.Images,
 			})
 		}
 
@@ -159,7 +240,6 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 		}
 		var pages []models.PageModel
 		if err := tx.
-			Select("id, slug, title").
 			Order("created_at DESC").
 			Offset(offset).
 			Limit(size).
@@ -167,8 +247,22 @@ func (s *Service) SearchByType(docType, keyword string, page, size int) ([]Searc
 			return nil, response.Pagination{}, err
 		}
 		for _, pg := range pages {
+			order := pg.Order
+			allowComment := pg.AllowComment
+			created := pg.CreatedAt
+			modified := pg.UpdatedAt
 			results = append(results, SearchResult{
-				ID: pg.ID, Title: pg.Title, Type: "page", Slug: pg.Slug,
+				ID:           pg.ID,
+				Title:        pg.Title,
+				Type:         "page",
+				Slug:         pg.Slug,
+				Created:      &created,
+				Modified:     &modified,
+				Subtitle:     pg.Subtitle,
+				Order:        &order,
+				AllowComment: &allowComment,
+				Meta:         pg.Meta,
+				Images:       pg.Images,
 			})
 		}
 
@@ -403,7 +497,7 @@ func (h *Handler) searchByType(c *gin.Context) {
 		}
 	}
 
-	results, pag, err := h.svc.SearchByType(docType, keyword, page, size)
+	results, pag, err := h.svc.SearchByType(docType, keyword, page, size, middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
 		return
