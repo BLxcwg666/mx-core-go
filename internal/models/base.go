@@ -39,7 +39,7 @@ type Image struct {
 	Type     string `json:"type,omitempty"`
 	Src      string `json:"src"`
 	Accent   string `json:"accent,omitempty"`
-	Blurhash string `json:"blurhash,omitempty"`
+	Blurhash string `json:"blur_hash,omitempty"`
 }
 
 // Count tracks read and like counts for content.

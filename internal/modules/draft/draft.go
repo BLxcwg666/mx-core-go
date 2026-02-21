@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -101,7 +102,7 @@ type draftResponse struct {
 	PublishedVersion *int                   `json:"published_version"`
 	HistoryCount     int                    `json:"history_count"`
 	Created          time.Time              `json:"created"`
-	Modified         time.Time              `json:"modified"`
+	Updated          time.Time              `json:"updated"`
 }
 
 func toResponse(d *models.DraftModel) draftResponse {
@@ -110,12 +111,12 @@ func toResponse(d *models.DraftModel) draftResponse {
 		images = []models.Image{}
 	}
 	return draftResponse{
-		ID: d.ID, RefType: d.RefType, RefID: d.RefID,
+		ID: d.ID, RefType: normalizeDraftRefType(d.RefType), RefID: d.RefID,
 		Title: d.Title, Text: d.Text, Images: images, Meta: d.Meta,
 		TypeSpecificData: d.TypeSpecificData,
 		Version:          d.Version, PublishedVersion: d.PublishedVersion,
 		HistoryCount: len(d.History),
-		Created:      d.CreatedAt, Modified: d.UpdatedAt,
+		Created:      d.CreatedAt, Updated: d.UpdatedAt,
 	}
 }
 
@@ -127,10 +128,48 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+func normalizeDraftRefType(refType models.DraftRefType) models.DraftRefType {
+	switch models.DraftRefType(strings.ToLower(strings.TrimSpace(string(refType)))) {
+	case models.DraftRefPost:
+		return models.DraftRefPost
+	case models.DraftRefNote:
+		return models.DraftRefNote
+	case models.DraftRefPage:
+		return models.DraftRefPage
+	case models.DraftRefPostLegacy:
+		return models.DraftRefPost
+	case models.DraftRefNoteLegacy:
+		return models.DraftRefNote
+	case models.DraftRefPageLegacy:
+		return models.DraftRefPage
+	default:
+		return refType
+	}
+}
+
+func draftRefTypeVariants(refType string) []string {
+	switch normalizeDraftRefType(models.DraftRefType(refType)) {
+	case models.DraftRefPost:
+		return []string{string(models.DraftRefPost), string(models.DraftRefPostLegacy)}
+	case models.DraftRefNote:
+		return []string{string(models.DraftRefNote), string(models.DraftRefNoteLegacy)}
+	case models.DraftRefPage:
+		return []string{string(models.DraftRefPage), string(models.DraftRefPageLegacy)}
+	default:
+		refType = strings.TrimSpace(refType)
+		if refType == "" {
+			return nil
+		}
+		return []string{refType}
+	}
+}
+
 func (s *Service) List(q pagination.Query, refType *string) ([]models.DraftModel, response.Pagination, error) {
 	tx := s.db.Model(&models.DraftModel{}).Order("updated_at DESC")
 	if refType != nil {
-		tx = tx.Where("ref_type = ?", *refType)
+		if variants := draftRefTypeVariants(*refType); len(variants) > 0 {
+			tx = tx.Where("ref_type IN ?", variants)
+		}
 	}
 	var items []models.DraftModel
 	pag, err := pagination.Paginate(tx, q, &items)
@@ -150,8 +189,11 @@ func (s *Service) GetByID(id string) (*models.DraftModel, error) {
 
 func (s *Service) GetByRef(refType, refID string) (*models.DraftModel, error) {
 	var d models.DraftModel
-	err := s.db.Where("ref_type = ? AND ref_id = ?", refType, refID).
-		Preload("History").Order("version DESC").First(&d).Error
+	tx := s.db.Where("ref_id = ?", refID).Preload("History").Order("version DESC")
+	if variants := draftRefTypeVariants(refType); len(variants) > 0 {
+		tx = tx.Where("ref_type IN ?", variants)
+	}
+	err := tx.First(&d).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -162,14 +204,16 @@ func (s *Service) GetByRef(refType, refID string) (*models.DraftModel, error) {
 }
 
 func (s *Service) GetNewByRefType(refType string) ([]models.DraftModel, error) {
-	tx := s.db.Model(&models.DraftModel{}).
-		Where("ref_type = ? AND ref_id IS NULL", refType).
-		Order("updated_at DESC")
+	tx := s.db.Model(&models.DraftModel{}).Where("ref_id IS NULL").Order("updated_at DESC")
+	if variants := draftRefTypeVariants(refType); len(variants) > 0 {
+		tx = tx.Where("ref_type IN ?", variants)
+	}
 	var items []models.DraftModel
 	return items, tx.Find(&items).Error
 }
 
 func (s *Service) Create(dto *CreateDraftDTO) (*models.DraftModel, error) {
+	dto.RefType = normalizeDraftRefType(dto.RefType)
 	d := models.DraftModel{
 		RefType:          dto.RefType,
 		RefID:            dto.RefID,
@@ -230,7 +274,7 @@ func (s *Service) Publish(id string) (string, error) {
 
 	var targetID string
 
-	switch d.RefType {
+	switch normalizeDraftRefType(d.RefType) {
 	case models.DraftRefPost:
 		if d.RefID != nil {
 			updates := map[string]interface{}{"title": d.Title, "text": d.Text}

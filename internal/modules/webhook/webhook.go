@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,14 +27,140 @@ type CreateWebhookDTO struct {
 	PayloadURL string   `json:"payload_url" binding:"required,url"`
 	Events     []string `json:"events"      binding:"required,min=1"`
 	Enabled    *bool    `json:"enabled"`
-	Scope      string   `json:"scope"`
+	Secret     string   `json:"secret"`
+	Scope      *int     `json:"scope"`
 }
 
 type UpdateWebhookDTO struct {
 	PayloadURL *string  `json:"payload_url"`
 	Events     []string `json:"events"`
 	Enabled    *bool    `json:"enabled"`
-	Scope      *string  `json:"scope"`
+	Secret     *string  `json:"secret"`
+	Scope      *int     `json:"scope"`
+}
+
+func (d *CreateWebhookDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase CreateWebhookDTO
+	type camelCase struct {
+		PayloadURL string `json:"payloadUrl"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = CreateWebhookDTO(snake)
+	if strings.TrimSpace(d.PayloadURL) == "" {
+		d.PayloadURL = strings.TrimSpace(camel.PayloadURL)
+	}
+	return nil
+}
+
+func (d *UpdateWebhookDTO) UnmarshalJSON(data []byte) error {
+	type snakeCase UpdateWebhookDTO
+	type camelCase struct {
+		PayloadURL *string `json:"payloadUrl"`
+	}
+
+	var snake snakeCase
+	if err := json.Unmarshal(data, &snake); err != nil {
+		return err
+	}
+	var camel camelCase
+	if err := json.Unmarshal(data, &camel); err != nil {
+		return err
+	}
+
+	*d = UpdateWebhookDTO(snake)
+	if d.PayloadURL == nil && camel.PayloadURL != nil {
+		d.PayloadURL = camel.PayloadURL
+	}
+	return nil
+}
+
+var webhookEventEnum = []string{
+	"GATEWAY_CONNECT",
+	"GATEWAY_DISCONNECT",
+	"VISITOR_ONLINE",
+	"VISITOR_OFFLINE",
+	"AUTH_FAILED",
+	"COMMENT_CREATE",
+	"COMMENT_DELETE",
+	"COMMENT_UPDATE",
+	"POST_CREATE",
+	"POST_UPDATE",
+	"POST_DELETE",
+	"NOTE_CREATE",
+	"NOTE_UPDATE",
+	"NOTE_DELETE",
+	"PAGE_CREATE",
+	"PAGE_UPDATE",
+	"PAGE_DELETE",
+	"TOPIC_CREATE",
+	"TOPIC_UPDATE",
+	"TOPIC_DELETE",
+	"CATEGORY_CREATE",
+	"CATEGORY_UPDATE",
+	"CATEGORY_DELETE",
+	"SAY_CREATE",
+	"SAY_DELETE",
+	"SAY_UPDATE",
+	"LINK_APPLY",
+	"RECENTLY_CREATE",
+	"RECENTLY_UPDATE",
+	"RECENTLY_DELETE",
+	"TRANSLATION_CREATE",
+	"TRANSLATION_UPDATE",
+	"CONTENT_REFRESH",
+	"IMAGE_REFRESH",
+	"IMAGE_FETCH",
+	"ADMIN_NOTIFICATION",
+	"STDOUT",
+	"ACTIVITY_LIKE",
+	"ACTIVITY_UPDATE_PRESENCE",
+	"ACTIVITY_LEAVE_PRESENCE",
+	"ARTICLE_READ_COUNT_UPDATE",
+}
+
+var acceptedWebhookEvents = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(webhookEventEnum))
+	for _, event := range webhookEventEnum {
+		out[event] = struct{}{}
+	}
+	return out
+}()
+
+func normalizeWebhookEvents(events []string) []string {
+	if len(events) == 0 {
+		return []string{}
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(events))
+	for _, event := range events {
+		next := strings.TrimSpace(event)
+		if next == "" {
+			continue
+		}
+		if strings.EqualFold(next, "all") {
+			return []string{"all"}
+		}
+		next = strings.ToUpper(next)
+		if _, ok := acceptedWebhookEvents[next]; !ok {
+			continue
+		}
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
+	return out
 }
 
 type webhookResponse struct {
@@ -38,7 +168,7 @@ type webhookResponse struct {
 	PayloadURL string    `json:"payload_url"`
 	Events     []string  `json:"events"`
 	Enabled    bool      `json:"enabled"`
-	Scope      string    `json:"scope"`
+	Scope      int       `json:"scope"`
 	Created    time.Time `json:"created"`
 	Modified   time.Time `json:"modified"`
 }
@@ -59,11 +189,9 @@ type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
-func (s *Service) List(q pagination.Query) ([]models.WebhookModel, response.Pagination, error) {
-	tx := s.db.Model(&models.WebhookModel{}).Order("created_at DESC")
+func (s *Service) List() ([]models.WebhookModel, error) {
 	var items []models.WebhookModel
-	pag, err := pagination.Paginate(tx, q, &items)
-	return items, pag, err
+	return items, s.db.Order("created_at DESC").Find(&items).Error
 }
 
 func (s *Service) GetByID(id string) (*models.WebhookModel, error) {
@@ -78,15 +206,29 @@ func (s *Service) GetByID(id string) (*models.WebhookModel, error) {
 }
 
 func (s *Service) Create(dto *CreateWebhookDTO) (*models.WebhookModel, error) {
+	events := normalizeWebhookEvents(dto.Events)
+	if len(events) == 0 {
+		return nil, fmt.Errorf("events is empty")
+	}
+
 	secretBytes := make([]byte, 20)
 	if _, err := rand.Read(secretBytes); err != nil {
 		return nil, err
 	}
+	secret := strings.TrimSpace(dto.Secret)
+	if secret == "" {
+		secret = hex.EncodeToString(secretBytes)
+	}
+	scope := 4
+	if dto.Scope != nil {
+		scope = *dto.Scope
+	}
+
 	w := models.WebhookModel{
 		PayloadURL: dto.PayloadURL,
-		Events:     dto.Events,
-		Secret:     hex.EncodeToString(secretBytes),
-		Scope:      dto.Scope,
+		Events:     events,
+		Secret:     secret,
+		Scope:      scope,
 		Enabled:    true,
 	}
 	if dto.Enabled != nil {
@@ -105,13 +247,20 @@ func (s *Service) Update(id string, dto *UpdateWebhookDTO) (*models.WebhookModel
 		updates["payload_url"] = *dto.PayloadURL
 	}
 	if dto.Events != nil {
-		updates["events"] = dto.Events
+		events := normalizeWebhookEvents(dto.Events)
+		if len(events) == 0 {
+			return nil, fmt.Errorf("events is empty")
+		}
+		updates["events"] = events
 	}
 	if dto.Enabled != nil {
 		updates["enabled"] = *dto.Enabled
 	}
 	if dto.Scope != nil {
 		updates["scope"] = *dto.Scope
+	}
+	if dto.Secret != nil {
+		updates["secret"] = strings.TrimSpace(*dto.Secret)
 	}
 	return w, s.db.Model(w).Updates(updates).Error
 }
@@ -123,54 +272,71 @@ func (s *Service) Delete(id string) error {
 // Dispatch sends an event payload to all matching webhooks.
 func (s *Service) Dispatch(event string, payload interface{}) {
 	var hooks []models.WebhookModel
-	s.db.Where("enabled = ? AND JSON_CONTAINS(events, ?)", true, fmt.Sprintf("%q", event)).
-		Find(&hooks)
+	s.db.Where("enabled = ?", true).Find(&hooks)
 
 	for _, hook := range hooks {
+		if !webhookContainsEvent(hook.Events, event) {
+			continue
+		}
 		go s.deliver(hook, event, payload)
 	}
 }
 
 func (s *Service) deliver(hook models.WebhookModel, event string, payload interface{}) {
 	body, _ := json.Marshal(payload)
-	mac := hmac.New(sha256.New, []byte(hook.Secret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	payloadString := string(body)
+
+	signature := signWithHash(sha1.New, hook.Secret, payloadString)
+	signature256 := signWithHash(sha256.New, hook.Secret, payloadString)
+	timestamp := fmt.Sprintf("%d", time.Now().UnixMilli())
+	headers := map[string]string{
+		"X-Webhook-Signature":    signature,
+		"X-Webhook-Event":        event,
+		"X-Webhook-Id":           hook.ID,
+		"X-Webhook-Timestamp":    timestamp,
+		"X-Webhook-Signature256": signature256,
+	}
 
 	req, err := http.NewRequest("POST", hook.PayloadURL, bytes.NewReader(body))
 	if err != nil {
-		s.logEvent(hook.ID, event, payload, nil, false, 0, err.Error())
+		s.logEvent(hook.ID, event, headers, payloadString, nil, false, 0, err.Error())
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Mx-Event", event)
-	req.Header.Set("X-Mx-Signature-256", sig)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		s.logEvent(hook.ID, event, payload, nil, false, 0, err.Error())
+		s.logEvent(hook.ID, event, headers, payloadString, nil, false, 0, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
-	s.logEvent(hook.ID, event, payload, map[string]interface{}{
-		"status": resp.Status,
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	s.logEvent(hook.ID, event, headers, payloadString, map[string]interface{}{
+		"headers":   resp.Header,
+		"data":      parseJSONOrString(bodyBytes),
+		"timestamp": time.Now().UnixMilli(),
+		"status":    resp.Status,
 	}, resp.StatusCode >= 200 && resp.StatusCode < 300, resp.StatusCode, "")
 }
 
-func (s *Service) logEvent(hookID, event string, payload, respData interface{}, success bool, status int, errMsg string) {
+func (s *Service) logEvent(hookID, event string, headers map[string]string, payload string, respData interface{}, success bool, status int, errMsg string) {
 	log := models.WebhookEventModel{
 		HookID:    hookID,
 		Event:     event,
-		Payload:   toMap(payload),
-		Response:  toMap(respData),
+		Headers:   toJSONString(headers),
+		Payload:   payload,
+		Response:  toJSONString(respData),
 		Success:   success,
 		Status:    status,
 		Timestamp: time.Now(),
 	}
 	if errMsg != "" {
-		log.Response = map[string]interface{}{"error": errMsg}
+		log.Response = toJSONString(map[string]interface{}{"error": errMsg})
 	}
 	s.db.Create(&log)
 }
@@ -214,7 +380,11 @@ func (s *Service) Redispatch(eventID string) error {
 	if !hook.Enabled {
 		return fmt.Errorf("hook is disabled")
 	}
-	go s.deliver(*hook, event.Event, event.Payload)
+	var payload interface{}
+	if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {
+		payload = event.Payload
+	}
+	go s.deliver(*hook, event.Event, payload)
 	return nil
 }
 
@@ -222,14 +392,43 @@ func (s *Service) ClearEventsByHookID(hookID string) error {
 	return s.db.Where("hook_id = ?", hookID).Delete(&models.WebhookEventModel{}).Error
 }
 
-func toMap(v interface{}) map[string]interface{} {
-	if v == nil {
-		return nil
+func webhookContainsEvent(events []string, event string) bool {
+	event = strings.ToUpper(strings.TrimSpace(event))
+	for _, item := range events {
+		next := strings.ToUpper(strings.TrimSpace(item))
+		if next == "ALL" || next == event {
+			return true
+		}
 	}
-	b, _ := json.Marshal(v)
-	var m map[string]interface{}
-	json.Unmarshal(b, &m)
-	return m
+	return false
+}
+
+func parseJSONOrString(data []byte) interface{} {
+	if len(data) == 0 {
+		return ""
+	}
+	var out interface{}
+	if err := json.Unmarshal(data, &out); err == nil {
+		return out
+	}
+	return string(data)
+}
+
+func toJSONString(v interface{}) string {
+	if v == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+func signWithHash(newHash func() hash.Hash, secret, payload string) string {
+	mac := hmac.New(newHash, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 type Handler struct{ svc *Service }
@@ -244,15 +443,15 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g.PATCH("/:id", h.update)
 	g.DELETE("/:id", h.delete)
 
-	g.GET("/events", h.listEvents)
+	g.GET("/events", h.listEventsEnum)
+	g.GET("/dispatches", h.listEvents)
 	g.POST("/redispatch/:id", h.redispatch)
 	g.DELETE("/clear/:id", h.clearEvents)
 	g.GET("/:id", h.listEventsByHook)
 }
 
 func (h *Handler) list(c *gin.Context) {
-	q := pagination.FromContext(c)
-	items, pag, err := h.svc.List(q)
+	items, err := h.svc.List()
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -261,7 +460,7 @@ func (h *Handler) list(c *gin.Context) {
 	for i, w := range items {
 		out[i] = toResponse(&w)
 	}
-	response.Paged(c, out, pag)
+	response.OK(c, out)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -302,6 +501,10 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
+}
+
+func (h *Handler) listEventsEnum(c *gin.Context) {
+	response.OK(c, webhookEventEnum)
 }
 
 func (h *Handler) listEvents(c *gin.Context) {

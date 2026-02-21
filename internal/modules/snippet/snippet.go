@@ -3,6 +3,7 @@ package snippet
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,15 +53,35 @@ type snippetResponse struct {
 	Method    string             `json:"method"`
 	BuiltIn   bool               `json:"built_in"`
 	Created   time.Time          `json:"created"`
-	Modified  time.Time          `json:"modified"`
+	Updated   time.Time          `json:"updated"`
 }
 
 func toResponse(s *models.SnippetModel) snippetResponse {
 	return snippetResponse{
-		ID: s.ID, Type: s.Type, Name: s.Name, Reference: s.Reference,
+		ID: s.ID, Type: normalizeSnippetType(s.Type), Name: s.Name, Reference: s.Reference,
 		Raw: s.Raw, Comment: s.Comment, Private: s.Private, Enable: s.Enable,
 		Schema: s.Schema, Metatype: s.Metatype, Method: s.Method, BuiltIn: s.BuiltIn,
-		Created: s.CreatedAt, Modified: s.UpdatedAt,
+		Created: s.CreatedAt, Updated: s.UpdatedAt,
+	}
+}
+
+func normalizeSnippetType(t models.SnippetType) models.SnippetType {
+	switch strings.ToLower(strings.TrimSpace(string(t))) {
+	case string(models.SnippetTypeJSON):
+		return models.SnippetTypeJSON
+	case string(models.SnippetTypeJSON5):
+		return models.SnippetTypeJSON5
+	case string(models.SnippetTypeFunction):
+		return models.SnippetTypeFunction
+	case string(models.SnippetTypeYAML):
+		return models.SnippetTypeYAML
+	case "html", "javascript", "css", "sql", "typescript", string(models.SnippetTypeText):
+		return models.SnippetTypeText
+	default:
+		if t == "" {
+			return models.SnippetTypeJSON
+		}
+		return models.SnippetTypeText
 	}
 }
 
@@ -101,6 +122,7 @@ func (s *Service) GetByID(id string) (*models.SnippetModel, error) {
 }
 
 func (s *Service) Create(dto *CreateSnippetDTO) (*models.SnippetModel, error) {
+	dto.Type = normalizeSnippetType(dto.Type)
 	var count int64
 	s.db.Model(&models.SnippetModel{}).Where("reference = ? AND name = ?", dto.Reference, dto.Name).Count(&count)
 	if count > 0 {
@@ -129,7 +151,7 @@ func (s *Service) Update(id string, dto *UpdateSnippetDTO) (*models.SnippetModel
 	}
 	updates := map[string]interface{}{}
 	if dto.Type != nil {
-		updates["type"] = *dto.Type
+		updates["type"] = normalizeSnippetType(*dto.Type)
 	}
 	if dto.Name != nil {
 		updates["name"] = *dto.Name
@@ -171,12 +193,12 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/snippets")
-	g.GET("", h.list)
-	g.GET("/group", h.listGroup)
-	g.GET("/group/:reference", h.listGroupByReference)
 	g.GET("/:id/:name", h.getByRef)
 
 	a := g.Group("", authMW)
+	a.GET("", h.list)
+	a.GET("/group", h.listGroup)
+	a.GET("/group/:reference", h.listGroupByReference)
 	a.GET("/all", h.listAll)
 	a.GET("/:id", h.getByID)
 	a.POST("", h.create)
@@ -188,7 +210,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
-	items, pag, err := h.svc.List(q, false)
+	items, pag, err := h.svc.List(q, true)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -290,21 +312,46 @@ func (h *Handler) delete(c *gin.Context) {
 
 // GET /snippets/group — return snippets grouped by reference
 func (h *Handler) listGroup(c *gin.Context) {
-	var items []models.SnippetModel
-	h.svc.db.Where("private = ?", false).Order("reference ASC, name ASC").Find(&items)
-
-	grouped := map[string][]snippetResponse{}
-	for _, s := range items {
-		key := s.Reference
-		grouped[key] = append(grouped[key], toResponse(&s))
+	q := pagination.FromContext(c)
+	type snippetGroup struct {
+		Reference string `json:"reference"`
+		Count     int64  `json:"count"`
 	}
-	response.OK(c, grouped)
+
+	var total int64
+	if err := h.svc.db.Model(&models.SnippetModel{}).Distinct("reference").Count(&total).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	var groups []snippetGroup
+	offset := (q.Page - 1) * q.Size
+	if err := h.svc.db.Model(&models.SnippetModel{}).
+		Select("reference, COUNT(*) AS count").
+		Group("reference").
+		Order("reference ASC").
+		Offset(offset).
+		Limit(q.Size).
+		Find(&groups).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	totalPage := int((total + int64(q.Size) - 1) / int64(q.Size))
+	pag := response.Pagination{
+		Total:       total,
+		CurrentPage: q.Page,
+		TotalPage:   totalPage,
+		Size:        q.Size,
+		HasNextPage: q.Page < totalPage,
+	}
+	response.Paged(c, groups, pag)
 }
 
 func (h *Handler) listGroupByReference(c *gin.Context) {
 	ref := c.Param("reference")
 	var items []models.SnippetModel
-	h.svc.db.Where("private = ? AND reference = ?", false, ref).Order("name ASC").Find(&items)
+	h.svc.db.Where("reference = ?", ref).Order("name ASC").Find(&items)
 	out := make([]snippetResponse, len(items))
 	for i, s := range items {
 		out[i] = toResponse(&s)
@@ -342,10 +389,7 @@ func (h *Handler) importSnippets(c *gin.Context) {
 		if count > 0 {
 			continue
 		}
-		snippetType := item.Type
-		if snippetType == "" {
-			snippetType = models.SnippetTypeJavaScript
-		}
+		snippetType := normalizeSnippetType(item.Type)
 		enable := true
 		if item.Enable != nil {
 			enable = *item.Enable

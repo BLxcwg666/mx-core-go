@@ -6,9 +6,14 @@ import "time"
 type DraftRefType string
 
 const (
-	DraftRefPost DraftRefType = "post"
-	DraftRefNote DraftRefType = "note"
-	DraftRefPage DraftRefType = "page"
+	DraftRefPost DraftRefType = "posts"
+	DraftRefNote DraftRefType = "notes"
+	DraftRefPage DraftRefType = "pages"
+
+	// compatibility
+	DraftRefPostLegacy DraftRefType = "post"
+	DraftRefNoteLegacy DraftRefType = "note"
+	DraftRefPageLegacy DraftRefType = "page"
 )
 
 // DraftModel stores versioned drafts for posts, notes, and pages.

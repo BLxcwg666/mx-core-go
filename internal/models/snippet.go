@@ -4,14 +4,11 @@ package models
 type SnippetType string
 
 const (
-	SnippetTypeJSON       SnippetType = "JSON"
-	SnippetTypeHTML       SnippetType = "HTML"
-	SnippetTypeJavaScript SnippetType = "JavaScript"
-	SnippetTypeCSS        SnippetType = "CSS"
-	SnippetTypeSQL        SnippetType = "SQL"
-	SnippetTypeYAML       SnippetType = "YAML"
-	SnippetTypeText       SnippetType = "Text"
-	SnippetTypeTS         SnippetType = "TypeScript"
+	SnippetTypeJSON     SnippetType = "json"
+	SnippetTypeJSON5    SnippetType = "json5"
+	SnippetTypeFunction SnippetType = "function"
+	SnippetTypeText     SnippetType = "text"
+	SnippetTypeYAML     SnippetType = "yaml"
 )
 
 // SnippetModel stores code snippets.
