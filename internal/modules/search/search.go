@@ -21,6 +21,11 @@ import (
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
+const (
+	servedByMeili = "meilisearch"
+	servedByMySQL = "mysql"
+)
+
 // SearchResult is a single search hit returned to the client.
 type SearchResult struct {
 	ID      string `json:"id"`
@@ -105,13 +110,14 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 }
 
 // Search queries MeiliSearch, with MySQL LIKE fallback.
-func (s *Service) Search(q string) ([]SearchResult, error) {
+func (s *Service) Search(q string) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
 		if results, err := client.Search(q); err == nil {
-			return results, nil
+			return results, servedByMeili, nil
 		}
 	}
-	return s.mysqlSearch(q)
+	results, err := s.mysqlSearch(q)
+	return results, servedByMySQL, err
 }
 
 func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin bool) ([]SearchResult, response.Pagination, error) {
@@ -445,7 +451,8 @@ func (h *Handler) search(c *gin.Context) {
 		response.BadRequest(c, "q is required")
 		return
 	}
-	results, err := h.svc.Search(q)
+	results, servedBy, err := h.svc.Search(q)
+	c.Header("x-mx-served-by", servedBy)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -478,6 +485,8 @@ func (h *Handler) algoliaExportJSON(c *gin.Context) {
 }
 
 func (h *Handler) searchByType(c *gin.Context) {
+	c.Header("x-mx-served-by", servedByMySQL)
+
 	docType := c.Param("type")
 	keyword := c.Query("keyword")
 	if keyword == "" {
