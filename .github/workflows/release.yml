@@ -1,0 +1,112 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Windows
+          - goos: windows
+            goarch: amd64
+            output: mx-core-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            output: mx-core-windows-arm64.exe
+          # Linux
+          - goos: linux
+            goarch: amd64
+            output: mx-core-linux-amd64
+          - goos: linux
+            goarch: arm64
+            output: mx-core-linux-arm64
+          - goos: linux
+            goarch: arm
+            output: mx-core-linux-arm
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            output: mx-core-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            output: mx-core-darwin-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -trimpath \
+            -ldflags="-s -w -X 'main.Version=${{ github.ref_name }}' -X 'main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+            -o build/${{ matrix.output }} \
+            ./cmd/server
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: build/${{ matrix.output }}
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          cd artifacts
+          for dir in */; do
+            filename=$(basename "$dir")
+            # Enter the artifact directory to avoid nested directory structure
+            cd "$dir"
+            if [[ "$filename" == *.exe ]]; then
+              # Windows: create zip with binary directly in root
+              zip "../../release/${filename%.exe}.zip" *
+            else
+              # Linux/macOS: create tar.gz with binary directly in root
+              tar czf "../../release/${filename}.tar.gz" *
+            fi
+            cd ..
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
