@@ -25,6 +25,15 @@ const configKey = "configs"
 //go:embed form_schema.template.json
 var formSchemaTemplateRaw []byte
 
+//go:embed email-template/owner.template.ejs
+var ownerTemplateRaw string
+
+//go:embed email-template/guest.template.ejs
+var guestTemplateRaw string
+
+//go:embed email-template/newsletter.template.ejs
+var newsletterTemplateRaw string
+
 var providerNameUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 var (
@@ -329,29 +338,102 @@ var defaultEmailTemplates = map[string]struct {
 	Props    interface{}
 }{
 	"owner": {
-		Template: `<div>
-  <h2>New Comment Notification</h2>
-  <p>Your post <strong><%= title %></strong> has a new comment:</p>
-  <blockquote><%= comment %></blockquote>
-  <p>Author: <%= author %></p>
-</div>`,
-		Props: map[string]string{"title": "My Post", "comment": "Great article!", "author": "Guest"},
+		Template: ownerTemplateRaw,
+		Props: map[string]interface{}{
+			"author":  "Commentor",
+			"avatar":  "https://cloudflare-ipfs.com/ipfs/Qmd3W5DuhgHirLHGVixi6V76LhCkZUz6pnFt5AJBiyvHye/avatar/976.jpg",
+			"mail":    "commtor@example.com",
+			"text":    "世界！",
+			"ip":      "0.0.0.0",
+			"agent":   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+			"created": "2024-01-01T00:00:00.000Z",
+			"url":     "https://blog.commentor.com",
+			"link":    "https://innei.in/note/122#comments-37ccbeec9c15bb0ddc51ca7d",
+			"time":    "2024/01/01",
+			"title":   "匆匆",
+			"master":  "innei",
+			"aggregate": map[string]interface{}{
+				"post": map[string]interface{}{
+					"title":    "匆匆",
+					"id":       "d7e0ed429da8ae90988c37da",
+					"text":     "燕子去了，有再来的时候；杨柳枯了，有再青的时候；桃花谢了，有再开的时候。",
+					"created":  "2024-01-01T00:00:00.000Z",
+					"modified": nil,
+				},
+				"commentor": map[string]interface{}{
+					"author":     "Commentor",
+					"avatar":     "https://cloudflare-ipfs.com/ipfs/Qmd3W5DuhgHirLHGVixi6V76LhCkZUz6pnFt5AJBiyvHye/avatar/976.jpg",
+					"mail":       "commtor@example.com",
+					"text":       "世界！",
+					"ip":         "0.0.0.0",
+					"agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+					"created":    "2024-01-01T00:00:00.000Z",
+					"isWhispers": false,
+					"location":   "",
+					"url":        "https://blog.commentor.com",
+				},
+				"parent": map[string]interface{}{
+					"text": "你之前的评论内容",
+				},
+				"owner": map[string]interface{}{
+					"name":   "innei",
+					"avatar": "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png",
+					"mail":   "master@example.com",
+					"url":    "https://innei.in",
+				},
+			},
+		},
 	},
 	"guest": {
-		Template: `<div>
-  <h2>Author Replied</h2>
-  <p>Your comment on <strong><%= title %></strong> has a new reply:</p>
-  <blockquote><%= reply %></blockquote>
-</div>`,
-		Props: map[string]string{"title": "My Post", "reply": "Thanks for your feedback!"},
+		Template: guestTemplateRaw,
+		Props: map[string]interface{}{
+			"author": "innei",
+			"mail":   "commtor@example.com",
+			"text":   "给你的回复内容",
+			"ip":     "0.0.0.0",
+			"link":   "https://innei.in/note/122#comments-37ccbeec9c15bb0ddc51ca7d",
+			"time":   "2024/01/01",
+			"title":  "匆匆",
+			"master": "innei",
+			"aggregate": map[string]interface{}{
+				"parent": map[string]interface{}{
+					"text": "你之前的回复内容",
+				},
+				"owner": map[string]interface{}{
+					"name":   "innei",
+					"avatar": "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png",
+					"mail":   "master@example.com",
+					"url":    "https://innei.in",
+				},
+			},
+		},
 	},
 	"newsletter": {
-		Template: `<div>
-  <h2>Subscription Confirmation</h2>
-  <p>Please click the link below to confirm your subscription:</p>
-  <a href="<%= url %>">Confirm Subscription</a>
-</div>`,
-		Props: map[string]string{"url": "https://example.com/subscribe/verify?token=xxx"},
+		Template: newsletterTemplateRaw,
+		Props: map[string]interface{}{
+			"text":             "年纪在四十以上，二十以下的，恐怕就不易在前两派里有个地位了。他们的车破，又不敢“拉晚儿”……",
+			"title":            "骆驼祥子",
+			"author":           "innei",
+			"detail_link":      "#detail_link",
+			"unsubscribe_link": "#unsubscribe_link",
+			"master":           "innei",
+			"aggregate": map[string]interface{}{
+				"owner": map[string]interface{}{
+					"name":   "innei",
+					"avatar": "https://cdn.jsdelivr.net/gh/mx-space/.github@main/uwu.png",
+				},
+				"subscriber": map[string]interface{}{
+					"email":     "subscriber@mail.com",
+					"subscribe": 15,
+				},
+				"post": map[string]interface{}{
+					"text":    "年纪在四十以上，二十以下的，恐怕就不易在前两派里有个地位了。他们的车破，又不敢“拉晚儿”……",
+					"title":   "骆驼祥子",
+					"id":      "cdab54a19f3f03f7f5159df7",
+					"created": "2023-06-04T15:02:09.179Z",
+				},
+			},
+		},
 	},
 }
 

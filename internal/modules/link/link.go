@@ -516,7 +516,7 @@ func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkSt
 	sender := pkgmail.New(mailCfg)
 	_ = sender.Send(pkgmail.Message{
 		To:      []string{l.Email},
-		Subject: "友链申请审核结果",
+		Subject: "嘿!~, 主人已处理你的友链申请!~",
 		HTML:    buf.String(),
 	})
 }
