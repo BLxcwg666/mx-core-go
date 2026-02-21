@@ -1,0 +1,59 @@
+# Runtime config for mx-core-go.
+# Use: go run ./cmd/server --config ./config.yml
+
+port: 2333
+env: development
+
+# Admin dashboard build output path (served by API at /proxy/qaqdmin).
+# Example: ../mx-admin/dist or ./admin
+mx-admin: ./admin
+
+# Database startup config (MySQL).
+# If `database_url` or `dsn` is set, it has higher priority than `database.*` fields.
+database:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: password
+  name: mx_space
+  charset: utf8mb4
+  parse_time: true
+  loc: Local
+  # params:
+  #   timeout: 5s
+
+# Redis startup config.
+# If `redis_url` is set, it has higher priority than `redis.*` fields.
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  # username: ""
+  # password: ""
+  # tls: false
+  # scheme: redis
+  # params:
+  #   read_timeout: 3s
+
+# You can also use top-level URLs.
+# database_url: root:password@tcp(127.0.0.1:3306)/mx_space?charset=utf8mb4&parseTime=True&loc=Local
+# redis_url: redis://localhost:6379/0
+
+# JWT signing secret. Set this to a strong random string in production.
+jwt_secret: YOUR_JWT_SECRET
+
+# Optional server timezone. Supports IANA names (e.g. Asia/Shanghai) or offsets (e.g. +08:00).
+timezone: Asia/Shanghai
+
+# Startup MeiliSearch defaults (runtime fallback when DB config fields are empty).
+meilisearch:
+  # Optional but i recommend to use
+  enable: true
+  host: localhost
+  port: 7700
+  api_key: YOUR_MEILI_MASTER_KEY
+  index_name: mx-space
+
+# CORS whitelist used in production mode.
+# Supports exact host, prefix/suffix wildcard patterns, e.g. "*.example.com", "localhost:*".
+allowed_origins: []
