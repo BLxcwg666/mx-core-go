@@ -4,7 +4,7 @@ package models
 type ActivityModel struct {
 	Base
 	Type    string                 `json:"type"    gorm:"index;not null"`
-	Payload map[string]interface{} `json:"payload" gorm:"serializer:json"`
+	Payload map[string]interface{} `json:"payload" gorm:"type:longtext;serializer:json"`
 }
 
 func (ActivityModel) TableName() string { return "activities" }

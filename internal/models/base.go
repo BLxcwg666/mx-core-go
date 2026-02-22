@@ -28,7 +28,7 @@ type WriteBase struct {
 	Base
 	Title  string  `json:"title"  gorm:"not null"`
 	Text   string  `json:"text"   gorm:"type:longtext"`
-	Images []Image `json:"images" gorm:"serializer:json"`
+	Images []Image `json:"images" gorm:"type:longtext;serializer:json"`
 }
 
 // Image represents an embedded image reference.

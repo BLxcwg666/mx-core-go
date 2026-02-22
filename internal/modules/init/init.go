@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/modules/backup"
 	appconfigs "github.com/mx-space/core/internal/modules/configs"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -112,44 +113,13 @@ func (h *Handler) restore(c *gin.Context) {
 		return
 	}
 
-	if err := restoreFromZip(h.db, zr); err != nil {
+	if err := backup.RestoreFromZip(h.db, zr); err != nil {
 		response.InternalError(c, err)
 		return
 	}
+	if h.cfgSvc != nil {
+		h.cfgSvc.Invalidate()
+	}
 
 	response.OK(c, gin.H{"message": "restore successful"})
-}
-
-// restoreFromZip imports JSON table dumps from a backup ZIP.
-func restoreFromZip(db *gorm.DB, zr *zip.Reader) error {
-	for _, f := range zr.File {
-		if len(f.Name) < 5 || f.Name[len(f.Name)-5:] != ".json" {
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			continue
-		}
-		data, _ := io.ReadAll(rc)
-		rc.Close()
-
-		tableName := f.Name[:len(f.Name)-5]
-		for i := len(tableName) - 1; i >= 0; i-- {
-			if tableName[i] == '/' {
-				tableName = tableName[i+1:]
-				break
-			}
-		}
-
-		var rows []map[string]interface{}
-		if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 {
-			continue
-		}
-
-		db.Exec("DELETE FROM " + tableName)
-		for _, row := range rows {
-			db.Table(tableName).Create(row)
-		}
-	}
-	return nil
 }

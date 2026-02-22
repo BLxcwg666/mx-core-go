@@ -80,6 +80,18 @@ func migrate(db *gorm.DB) error {
 		if err := db.Exec("ALTER TABLE `analyzes` MODIFY COLUMN `ua` LONGTEXT NULL").Error; err != nil {
 			return err
 		}
+		if err := db.Exec("ALTER TABLE `posts` MODIFY COLUMN `images` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
+		if err := db.Exec("ALTER TABLE `notes` MODIFY COLUMN `images` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
+		if err := db.Exec("ALTER TABLE `pages` MODIFY COLUMN `images` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
+		if err := db.Exec("ALTER TABLE `activities` MODIFY COLUMN `payload` LONGTEXT NULL").Error; err != nil {
+			return err
+		}
 		if err := db.Exec("ALTER TABLE `meta_presets` MODIFY COLUMN `options` LONGTEXT NULL").Error; err != nil {
 			return err
 		}

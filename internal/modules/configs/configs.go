@@ -756,19 +756,29 @@ func snakeToCamelKey(s string) string {
 	if s == "" {
 		return s
 	}
+	parts := strings.Split(s, "_")
+	if len(parts) == 1 {
+		return s
+	}
 	out := make([]rune, 0, len(s))
-	upperNext := false
-	for _, r := range s {
-		if r == '_' {
-			upperNext = true
+	out = append(out, []rune(parts[0])...)
+	for _, part := range parts[1:] {
+		part = strings.TrimSpace(part)
+		if part == "" {
 			continue
 		}
-		if upperNext {
-			out = append(out, unicode.ToUpper(r))
-			upperNext = false
+		lower := strings.ToLower(part)
+		switch lower {
+		case "mb":
+			out = append(out, []rune("MB")...)
+			continue
+		case "ttl":
+			out = append(out, []rune("TTL")...)
 			continue
 		}
-		out = append(out, r)
+		runes := []rune(lower)
+		runes[0] = unicode.ToUpper(runes[0])
+		out = append(out, runes...)
 	}
 	return string(out)
 }
@@ -777,11 +787,19 @@ func camelToSnakeKey(s string) string {
 	if s == "" {
 		return s
 	}
-	out := make([]rune, 0, len(s)+4)
-	for i, r := range s {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) == 0 {
+		return ""
+	}
+	out := make([]rune, 0, len(runes)+4)
+	for i, r := range runes {
 		if unicode.IsUpper(r) {
 			if i > 0 {
-				out = append(out, '_')
+				prev := runes[i-1]
+				nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+				if unicode.IsLower(prev) || unicode.IsDigit(prev) || nextLower {
+					out = append(out, '_')
+				}
 			}
 			out = append(out, unicode.ToLower(r))
 			continue

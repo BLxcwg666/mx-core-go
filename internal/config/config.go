@@ -847,6 +847,35 @@ type SMTPConfig struct {
 	Options SMTPOptions `json:"options"`
 }
 
+func (s SMTPConfig) MarshalJSON() ([]byte, error) {
+	host := strings.TrimSpace(s.Options.Host)
+	port := s.Options.Port
+	if port == 0 {
+		port = 465
+	}
+	secure := s.Options.Secure
+
+	return json.Marshal(struct {
+		User    string      `json:"user"`
+		Pass    string      `json:"pass"`
+		Host    string      `json:"host"`
+		Port    int         `json:"port"`
+		Secure  bool        `json:"secure"`
+		Options SMTPOptions `json:"options"`
+	}{
+		User:   strings.TrimSpace(s.User),
+		Pass:   s.Pass,
+		Host:   host,
+		Port:   port,
+		Secure: secure,
+		Options: SMTPOptions{
+			Host:   host,
+			Port:   port,
+			Secure: secure,
+		},
+	})
+}
+
 type ResendConfig struct {
 	APIKey string `json:"api_key"`
 }

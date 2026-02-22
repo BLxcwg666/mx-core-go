@@ -9,10 +9,12 @@ require (
 	github.com/evanw/esbuild v0.27.3
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.0
+	github.com/go-sql-driver/mysql v1.7.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/zishang520/socket.io/v2 v2.5.0
+	go.mongodb.org/mongo-driver v1.17.9
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -36,7 +38,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.20.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
-	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
 	github.com/gookit/color v1.5.4 // indirect

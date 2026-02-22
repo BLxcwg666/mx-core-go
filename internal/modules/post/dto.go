@@ -61,7 +61,7 @@ type postResponse struct {
 	PinOrder    int            `json:"pinOrder"`
 	Images      []models.Image `json:"images"`
 	Created     time.Time      `json:"created"`
-	Modified    time.Time      `json:"modified"`
+	Modified    *time.Time     `json:"modified"`
 }
 
 func toResponse(p *models.PostModel) postResponse {
@@ -72,6 +72,11 @@ func toResponse(p *models.PostModel) postResponse {
 	images := p.Images
 	if images == nil {
 		images = []models.Image{}
+	}
+	var modified *time.Time
+	if !p.UpdatedAt.IsZero() {
+		modifiedAt := p.UpdatedAt
+		modified = &modifiedAt
 	}
 	return postResponse{
 		ID:          p.ID,
@@ -89,6 +94,6 @@ func toResponse(p *models.PostModel) postResponse {
 		PinOrder:    p.PinOrder,
 		Images:      images,
 		Created:     p.CreatedAt,
-		Modified:    p.UpdatedAt,
+		Modified:    modified,
 	}
 }

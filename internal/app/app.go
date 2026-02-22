@@ -395,7 +395,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	file.NewHandler(db).RegisterRoutes(api, authMW)
 
 	// Backups
-	backup.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
+	backup.NewHandler(db, cfgSvc, rc).RegisterRoutes(api, authMW)
 
 	// Analytics (admin)
 	analyze.NewHandler(db).RegisterRoutes(api, authMW)

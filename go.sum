@@ -137,6 +137,8 @@ github.com/zishang520/socket.io/v2 v2.5.0 h1:+KdZLbl4wWVzyI84RG+h21t8OY4ifz/Oo6q
 github.com/zishang520/socket.io/v2 v2.5.0/go.mod h1:+GyoPyakXDS6KsW81RAQpDA9+mJBXbcYcQ+Itx2D+rU=
 github.com/zishang520/webtransport-go v0.9.1 h1:Y3gqPM8cIDvQILsTyXJ5G9fp2PYqGqLI2z+QXpgboQc=
 github.com/zishang520/webtransport-go v0.9.1/go.mod h1:IgNAD6qLe3oWu7MSSkjusRNftpvjYxWjI4LmoH4VEyY=
+go.mongodb.org/mongo-driver v1.17.9 h1:IexDdCuuNJ3BHrELgBlyaH9p60JXAvdzWR128q+U5tU=
+go.mongodb.org/mongo-driver v1.17.9/go.mod h1:LlOhpH5NUEfhxcAwG0UEkMqwYcc4JU18gtCdGudk/tQ=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
 go.uber.org/mock v0.5.0 h1:KAMbZvZPyBPWgD14IrIQ38QCyjwpvVVV6K/bHl1IwQU=
