@@ -35,17 +35,17 @@ type UpdateProjectDTO struct {
 }
 
 type projectResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	PreviewURL  string    `json:"preview_url"`
-	DocURL      string    `json:"doc_url"`
-	ProjectURL  string    `json:"project_url"`
-	Images      []string  `json:"images"`
-	Avatar      string    `json:"avatar"`
-	Text        string    `json:"text"`
-	Created     time.Time `json:"created"`
-	Modified    time.Time `json:"modified"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	PreviewURL  string     `json:"preview_url"`
+	DocURL      string     `json:"doc_url"`
+	ProjectURL  string     `json:"project_url"`
+	Images      []string   `json:"images"`
+	Avatar      string     `json:"avatar"`
+	Text        string     `json:"text"`
+	Created     time.Time  `json:"created"`
+	Modified    *time.Time `json:"modified"`
 }
 
 func toResponse(p *models.ProjectModel) projectResponse {
@@ -53,11 +53,16 @@ func toResponse(p *models.ProjectModel) projectResponse {
 	if images == nil {
 		images = []string{}
 	}
+	var modified *time.Time
+	if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
+		modifiedAt := p.UpdatedAt
+		modified = &modifiedAt
+	}
 	return projectResponse{
 		ID: p.ID, Name: p.Name, Description: p.Description,
 		PreviewURL: p.PreviewURL, DocURL: p.DocURL, ProjectURL: p.ProjectURL,
 		Images: images, Avatar: p.Avatar, Text: p.Text,
-		Created: p.CreatedAt, Modified: p.UpdatedAt,
+		Created: p.CreatedAt, Modified: modified,
 	}
 }
 

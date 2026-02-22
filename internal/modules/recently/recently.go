@@ -34,16 +34,21 @@ type recentlyResponse struct {
 	DownCount    int             `json:"down"`
 	AllowComment bool            `json:"allow_comment"`
 	Created      time.Time       `json:"created"`
-	Modified     time.Time       `json:"modified"`
+	Modified     *time.Time      `json:"modified"`
 }
 
 func toResponse(r *models.RecentlyModel) recentlyResponse {
+	var modified *time.Time
+	if !r.UpdatedAt.IsZero() && r.UpdatedAt.Year() > 1 {
+		modifiedAt := r.UpdatedAt
+		modified = &modifiedAt
+	}
 	return recentlyResponse{
 		ID: r.ID, Content: r.Content,
 		RefType: r.RefType, RefID: r.RefID,
 		UpCount: r.UpCount, DownCount: r.DownCount,
 		AllowComment: r.AllowComment,
-		Created:      r.CreatedAt, Modified: r.UpdatedAt,
+		Created:      r.CreatedAt, Modified: modified,
 	}
 }
 

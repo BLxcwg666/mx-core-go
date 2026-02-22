@@ -50,16 +50,49 @@ type noteResponse struct {
 	Location    string           `json:"location"`
 	Count       models.Count     `json:"count"`
 	TopicID     *string          `json:"topicId"`
-	Topic       interface{}      `json:"topic"`
+	Topic       *noteTopic       `json:"topic"`
 	Images      []models.Image   `json:"images"`
 	Created     time.Time        `json:"created"`
-	Modified    time.Time        `json:"modified"`
+	Modified    *time.Time       `json:"modified"`
+}
+
+type noteTopic struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Slug        string     `json:"slug"`
+	Description string     `json:"description"`
+	Introduce   string     `json:"introduce"`
+	Icon        string     `json:"icon"`
+	Created     time.Time  `json:"created"`
+	Modified    *time.Time `json:"modified"`
+}
+
+func nullableModified(t time.Time) *time.Time {
+	if t.IsZero() || t.Year() <= 1 {
+		return nil
+	}
+	modifiedAt := t
+	return &modifiedAt
 }
 
 func toResponse(n *models.NoteModel) noteResponse {
 	images := n.Images
 	if images == nil {
 		images = []models.Image{}
+	}
+	modified := nullableModified(n.UpdatedAt)
+	var topic *noteTopic
+	if n.Topic != nil {
+		topic = &noteTopic{
+			ID:          n.Topic.ID,
+			Name:        n.Topic.Name,
+			Slug:        n.Topic.Slug,
+			Description: n.Topic.Description,
+			Introduce:   n.Topic.Introduce,
+			Icon:        n.Topic.Icon,
+			Created:     n.Topic.CreatedAt,
+			Modified:    nullableModified(n.Topic.UpdatedAt),
+		}
 	}
 	return noteResponse{
 		ID:          n.ID,
@@ -75,9 +108,9 @@ func toResponse(n *models.NoteModel) noteResponse {
 		Location:    n.Location,
 		Count:       models.Count{Read: n.ReadCount, Like: n.LikeCount},
 		TopicID:     n.TopicID,
-		Topic:       n.Topic,
+		Topic:       topic,
 		Images:      images,
 		Created:     n.CreatedAt,
-		Modified:    n.UpdatedAt,
+		Modified:    modified,
 	}
 }

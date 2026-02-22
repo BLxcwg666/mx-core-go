@@ -140,13 +140,17 @@ func (h *Handler) listAround(c *gin.Context) {
 
 	out := make([]timelineItem, 0, len(items))
 	for _, n := range items {
+		var modified any
+		if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
+			modified = n.UpdatedAt
+		}
 		out = append(out, timelineItem{
 			ID:          n.ID,
 			NID:         n.NID,
 			Title:       n.Title,
 			IsPublished: n.IsPublished,
 			Created:     n.CreatedAt,
-			Modified:    n.UpdatedAt,
+			Modified:    modified,
 		})
 	}
 
