@@ -1008,12 +1008,20 @@ func mergeRestoreCount(value interface{}, row map[string]interface{}, columns ma
 		return
 	}
 	if _, ok := columns["read_count"]; ok {
-		if read, exists := countMap["read"]; exists {
+		read, exists := countMap["read"]
+		if !exists {
+			read, exists = countMap["reads"]
+		}
+		if exists {
 			row["read_count"] = normalizeBSONValue(read)
 		}
 	}
 	if _, ok := columns["like_count"]; ok {
-		if like, exists := countMap["like"]; exists {
+		like, exists := countMap["like"]
+		if !exists {
+			like, exists = countMap["likes"]
+		}
+		if exists {
 			row["like_count"] = normalizeBSONValue(like)
 		}
 	}

@@ -21,6 +21,10 @@ import (
 const (
 	redisKeyMaxOnlineCount      = "mx:max_online_count"
 	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
+
+	readLikeTypePost = 0
+	readLikeTypeNote = 1
+	readLikeTypeAll  = 2
 )
 
 type aggregateData struct {
@@ -103,6 +107,11 @@ type readLikeResponse struct {
 type wordCountResponse struct {
 	Words int64 `json:"words"`
 	Count int64 `json:"count"`
+}
+
+type readLikeTotal struct {
+	Reads int64 `gorm:"column:read_total"`
+	Likes int64 `gorm:"column:like_total"`
 }
 
 type topNote struct {
@@ -513,23 +522,36 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 
 	rg.GET("/aggregate/stat", func(c *gin.Context) {
 		var stat statResponse
-		db.Model(&models.PostModel{}).Where("is_published = ?", true).Count(&stat.Posts)
-		db.Model(&models.NoteModel{}).Where("is_published = ?", true).Count(&stat.Notes)
+		db.Model(&models.PostModel{}).Count(&stat.Posts)
+		db.Model(&models.NoteModel{}).Count(&stat.Notes)
 		db.Model(&models.PageModel{}).Count(&stat.Pages)
-		db.Model(&models.CommentModel{}).Count(&stat.Comments)
-		db.Model(&models.CommentModel{}).Count(&stat.AllComments)
+		db.Model(&models.CommentModel{}).
+			Where("parent_id IS NULL").
+			Where("state IN ?", []models.CommentState{models.CommentRead, models.CommentUnread}).
+			Count(&stat.Comments)
+		db.Model(&models.CommentModel{}).
+			Where("state IN ?", []models.CommentState{models.CommentRead, models.CommentUnread}).
+			Count(&stat.AllComments)
 		db.Model(&models.CommentModel{}).Where("state = ?", models.CommentUnread).Count(&stat.UnreadComments)
 		db.Model(&models.SayModel{}).Count(&stat.Says)
 		db.Model(&models.LinkModel{}).Where("state = ?", models.LinkPass).Count(&stat.Links)
 		db.Model(&models.LinkModel{}).Where("state = ?", models.LinkAudit).Count(&stat.LinkApply)
 		db.Model(&models.ProjectModel{}).Count(&stat.Projects)
 		db.Model(&models.SnippetModel{}).Count(&stat.Snippets)
-		db.Model(&models.CategoryModel{}).Where("type = ?", 0).Count(&stat.Categories)
+		db.Model(&models.CategoryModel{}).Count(&stat.Categories)
 		db.Model(&models.TopicModel{}).Count(&stat.Topics)
 		db.Model(&models.RecentlyModel{}).Count(&stat.Recently)
 
-		db.Model(&models.AnalyzeModel{}).Count(&stat.CallTime)
-		db.Model(&models.AnalyzeModel{}).Distinct("ip").Count(&stat.UV)
+		if callTime, ok := loadStatCounterFromOptions(db, "apiCallTime", "api_call_time", "call_time"); ok {
+			stat.CallTime = callTime
+		} else {
+			db.Model(&models.AnalyzeModel{}).Count(&stat.CallTime)
+		}
+		if uv, ok := loadStatCounterFromOptions(db, "uv"); ok {
+			stat.UV = uv
+		} else {
+			db.Model(&models.AnalyzeModel{}).Distinct("ip").Count(&stat.UV)
+		}
 
 		todayStart := beginningOfDay(time.Now())
 		db.Model(&models.AnalyzeModel{}).Where("timestamp >= ?", todayStart).Distinct("ip").Count(&stat.TodayIPAccessCount)
@@ -553,36 +575,33 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 	})
 
 	rg.GET("/aggregate/count_read_and_like", func(c *gin.Context) {
-		var reads, likes int64
-		var posts []models.PostModel
-		db.Select("read_count, like_count").Find(&posts)
-		for _, p := range posts {
-			reads += int64(p.ReadCount)
-			likes += int64(p.LikeCount)
+		requestType := parseReadLikeType(c.Query("type"))
+		legacyCompatible := !isTruthy(c.Query("accurate"))
+
+		postTotals, err := loadReadLikeTotal(db.Model(&models.PostModel{}))
+		if err != nil {
+			response.InternalError(c, err)
+			return
 		}
-		var notes []models.NoteModel
-		db.Select("read_count, like_count").Find(&notes)
-		for _, n := range notes {
-			reads += int64(n.ReadCount)
-			likes += int64(n.LikeCount)
+		noteTotals, err := loadReadLikeTotal(db.Model(&models.NoteModel{}))
+		if err != nil {
+			response.InternalError(c, err)
+			return
 		}
-		response.OK(c, readLikeResponse{
-			Reads:      reads,
-			Likes:      likes,
-			TotalReads: reads,
-			TotalLikes: likes,
-		})
+
+		counts := buildReadLikeResponse(postTotals, noteTotals, requestType, legacyCompatible)
+		response.OK(c, counts)
 	})
 
 	rg.GET("/aggregate/count_site_words", func(c *gin.Context) {
 		var totalWords int64
 		var posts []models.PostModel
-		db.Select("text").Where("is_published = ?", true).Find(&posts)
+		db.Select("text").Find(&posts)
 		for _, p := range posts {
 			totalWords += int64(utf8.RuneCountInString(p.Text))
 		}
 		var notes []models.NoteModel
-		db.Select("text").Where("is_published = ?", true).Find(&notes)
+		db.Select("text").Find(&notes)
 		for _, n := range notes {
 			totalWords += int64(utf8.RuneCountInString(n.Text))
 		}
@@ -912,4 +931,130 @@ func beginningOfDay(t time.Time) time.Time {
 
 func shortDateKey(t time.Time) string {
 	return t.Format("1-2-06")
+}
+
+func loadStatCounterFromOptions(db *gorm.DB, names ...string) (int64, bool) {
+	type optionValue struct {
+		Value string
+	}
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		var row optionValue
+		if err := db.Model(&models.OptionModel{}).
+			Select("value").
+			Where("name = ?", trimmed).
+			First(&row).Error; err != nil {
+			continue
+		}
+		if v, ok := parseOptionCounter(row.Value); ok {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+func parseOptionCounter(raw string) (int64, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, false
+	}
+	var asAny interface{}
+	if err := json.Unmarshal([]byte(s), &asAny); err == nil {
+		switch v := asAny.(type) {
+		case float64:
+			return int64(v), true
+		case string:
+			if i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+				return i, true
+			}
+			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+				return int64(f), true
+			}
+		}
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i, true
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f), true
+	}
+	return 0, false
+}
+
+func parseReadLikeType(raw string) int {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return readLikeTypeAll
+	}
+	if parsed, err := strconv.Atoi(trimmed); err == nil {
+		switch parsed {
+		case readLikeTypePost, readLikeTypeNote, readLikeTypeAll:
+			return parsed
+		}
+	}
+
+	switch strings.ToLower(trimmed) {
+	case "post", "posts":
+		return readLikeTypePost
+	case "note", "notes":
+		return readLikeTypeNote
+	default:
+		return readLikeTypeAll
+	}
+}
+
+func loadReadLikeTotal(tx *gorm.DB) (readLikeTotal, error) {
+	var total readLikeTotal
+	if tx == nil {
+		return total, nil
+	}
+	err := tx.Select("COALESCE(SUM(read_count), 0) AS read_total, COALESCE(SUM(like_count), 0) AS like_total").Scan(&total).Error
+	return total, err
+}
+
+func buildReadLikeResponse(postTotals, noteTotals readLikeTotal, requestType int, legacyCompatible bool) readLikeResponse {
+	total := readLikeTotal{}
+	switch requestType {
+	case readLikeTypePost:
+		total = postTotals
+	case readLikeTypeNote:
+		if legacyCompatible {
+			// Keep legacy mx-core behavior: note type aggregates posts.
+			total = postTotals
+		} else {
+			total = noteTotals
+		}
+	default:
+		if legacyCompatible {
+			// Keep legacy mx-core behavior: all = post + note(type) = post * 2.
+			total = readLikeTotal{
+				Reads: postTotals.Reads + postTotals.Reads,
+				Likes: postTotals.Likes + postTotals.Likes,
+			}
+		} else {
+			total = readLikeTotal{
+				Reads: postTotals.Reads + noteTotals.Reads,
+				Likes: postTotals.Likes + noteTotals.Likes,
+			}
+		}
+	}
+
+	return readLikeResponse{
+		Reads:      total.Reads,
+		Likes:      total.Likes,
+		TotalReads: total.Reads,
+		TotalLikes: total.Likes,
+	}
+}
+
+func isTruthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
