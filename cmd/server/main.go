@@ -20,6 +20,13 @@ func main() {
 	configPath := flag.String("config", config.DefaultConfigPath, "Path to YAML config file")
 	flag.Parse()
 
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fallbackLogger, _ := zap.NewProduction()
+		fallbackLogger.Fatal("failed to load config", zap.String("path", *configPath), zap.Error(err))
+	}
+	_ = os.Setenv(nativelog.EnvLogDir, cfg.LogDir())
+
 	logger, err := nativelog.NewZapLogger()
 	if err != nil {
 		logger, _ = zap.NewProduction()
@@ -27,7 +34,7 @@ func main() {
 	}
 	defer logger.Sync()
 
-	application, err := app.New(logger, *configPath)
+	application, err := app.New(logger, cfg)
 	if err != nil {
 		logger.Fatal("failed to initialize app", zap.Error(err))
 	}

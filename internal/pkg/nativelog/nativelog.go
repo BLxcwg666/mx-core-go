@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mx-space/core/internal/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -21,29 +22,9 @@ const (
 // ResolveDir resolves native log directory path.
 func ResolveDir() string {
 	if dir := strings.TrimSpace(os.Getenv(EnvLogDir)); dir != "" {
-		return dir
+		return config.ResolveRuntimePath(dir, "")
 	}
-
-	candidates := make([]string, 0, 4)
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("NODE_ENV")), "development") {
-		candidates = append(candidates, filepath.Join(".", "tmp", "log"))
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		candidates = append(candidates, filepath.Join(home, ".mx-space", "log"))
-	}
-	candidates = append(candidates, filepath.Join(".", "logs"))
-	candidates = append(candidates, filepath.Join(".", "tmp", "log"))
-
-	for _, dir := range candidates {
-		info, err := os.Stat(dir)
-		if err == nil && info.IsDir() {
-			return dir
-		}
-	}
-	if len(candidates) > 0 {
-		return candidates[0]
-	}
-	return filepath.Join(".", "logs")
+	return config.ResolveRuntimePath("", "logs")
 }
 
 // TodayFilename returns daily native log filename.

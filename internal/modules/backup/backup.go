@@ -29,13 +29,13 @@ import (
 	"gorm.io/gorm"
 )
 
-const backupDir = "./backups"
 const backupRootDir = "mx-space-go"
 const backupDBDir = backupRootDir + "/db"
 const backupManifestFile = backupRootDir + "/manifest.json"
 const backupFormat = "mx-core-go-bson"
 const backupFormatVersion = 1
 const defaultS3PathTemplate = "backups/{Y}/{m}/{filename}"
+const EnvBackupDir = "MX_BACKUP_DIR"
 
 var backupTableNames = []string{
 	"users",
@@ -78,6 +78,13 @@ var backupTableNameSet = func() map[string]struct{} {
 	}
 	return set
 }()
+
+func resolveBackupDir() string {
+	if dir := strings.TrimSpace(os.Getenv(EnvBackupDir)); dir != "" {
+		return config.ResolveRuntimePath(dir, "")
+	}
+	return config.ResolveRuntimePath("", "backups")
+}
 
 var restoreTableAliases = map[string]string{
 	"metapresets":        "meta_presets",
@@ -211,6 +218,7 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func listBackups() []backupItem {
+	backupDir := resolveBackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return nil
 	}
@@ -257,6 +265,7 @@ func (h *Handler) createAndDownload(c *gin.Context) {
 		return
 	}
 
+	backupDir := resolveBackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		response.InternalError(c, err)
 		return
@@ -279,6 +288,7 @@ func (h *Handler) download(c *gin.Context) {
 		response.BadRequest(c, "invalid filename")
 		return
 	}
+	backupDir := resolveBackupDir()
 	path := filepath.Join(backupDir, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -331,6 +341,7 @@ func (h *Handler) uploadAndRestore(c *gin.Context) {
 // PATCH /backups/rollback/:filename
 func (h *Handler) rollback(c *gin.Context) {
 	filename := filepath.Base(c.Param("filename"))
+	backupDir := resolveBackupDir()
 	path := filepath.Join(backupDir, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -379,6 +390,7 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 
+	backupDir := resolveBackupDir()
 	filenames := strings.Split(files, ",")
 	for _, name := range filenames {
 		name = strings.TrimSpace(filepath.Base(name))
@@ -396,6 +408,7 @@ func (h *Handler) deleteOne(c *gin.Context) {
 		response.BadRequest(c, "invalid filename")
 		return
 	}
+	backupDir := resolveBackupDir()
 	_ = os.Remove(filepath.Join(backupDir, filename))
 	response.NoContent(c)
 }
@@ -411,6 +424,7 @@ func (h *Handler) createLocalBackupArtifact(now time.Time) (*backupArtifact, err
 	if err != nil {
 		return nil, err
 	}
+	backupDir := resolveBackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return nil, err
 	}

@@ -66,6 +66,7 @@ import (
 	"github.com/mx-space/core/internal/pkg/bark"
 	pkgcron "github.com/mx-space/core/internal/pkg/cron"
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
+	"github.com/mx-space/core/internal/pkg/nativelog"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/taskqueue"
 	"go.uber.org/zap"
@@ -85,11 +86,11 @@ type App struct {
 }
 
 // New initializes the application: config → DB → Redis → routes.
-func New(logger *zap.Logger, configPath string) (*App, error) {
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
+	if cfg == nil {
+		return nil, errors.New("config is nil")
 	}
+	var err error
 	if err := applyRuntimeSettings(cfg, logger); err != nil {
 		return nil, err
 	}
@@ -424,6 +425,9 @@ func (a *App) cfgStartTime() time.Time {
 var processStart = time.Now()
 
 func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
+	_ = os.Setenv(nativelog.EnvLogDir, cfg.LogDir())
+	_ = os.Setenv(backup.EnvBackupDir, cfg.BackupDir())
+
 	if secret := strings.TrimSpace(cfg.JWTSecret); secret != "" {
 		jwtpkg.SetSecret(secret)
 	} else {

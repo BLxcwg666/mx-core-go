@@ -8,6 +8,13 @@ env: development
 # Example: ../mx-admin/dist or ./admin
 mx-admin: ./admin
 
+# Runtime directory paths.
+# Relative paths are resolved from the binary directory.
+# If left empty, defaults are: logs -> <bin>/logs, backups -> <bin>/backups
+paths:
+   logs: ./logs
+   backups: ./backups
+
 # Database startup config (MySQL).
 # If `database_url` or `dsn` is set, it has higher priority than `database.*` fields.
 database:

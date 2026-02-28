@@ -45,6 +45,7 @@ type AppConfig struct {
 	Redis          RedisRuntimeConfig       `yaml:"redis"`
 	Env            string                   `yaml:"env"` // "development" | "production"
 	MXAdmin        string                   `yaml:"mx-admin"`
+	Paths          RuntimePathsConfig       `yaml:"paths"`
 	AllowedOrigins []string                 `yaml:"allowed_origins"`
 	JWTSecret      string                   `yaml:"jwt_secret"`
 	Timezone       string                   `yaml:"timezone"`
@@ -89,6 +90,11 @@ type MeiliSearchRuntimeConfig struct {
 	IndexName string `yaml:"index_name"`
 }
 
+type RuntimePathsConfig struct {
+	Logs    string `yaml:"logs"`
+	Backups string `yaml:"backups"`
+}
+
 type rawAppConfig struct {
 	Port               int                  `yaml:"port"`
 	DSN                string               `yaml:"dsn"`
@@ -114,6 +120,11 @@ type rawAppConfig struct {
 	NodeEnv            string               `yaml:"node_env"`
 	MXAdmin            string               `yaml:"mx-admin"`
 	MXAdminSnake       string               `yaml:"mx_admin"`
+	Paths              rawPathsConfig       `yaml:"paths"`
+	LogDir             string               `yaml:"log_dir"`
+	LogsDir            string               `yaml:"logs_dir"`
+	BackupDir          string               `yaml:"backup_dir"`
+	BackupsDir         string               `yaml:"backups_dir"`
 	AllowedOrigins     []string             `yaml:"allowed_origins"`
 	CORSAllowedOrigins []string             `yaml:"cors_allowed_origins"`
 	JWTSecret          string               `yaml:"jwt_secret"`
@@ -167,6 +178,11 @@ type rawMeiliSearchConfig struct {
 	APIKey    string `yaml:"api_key"`
 	MasterKey string `yaml:"master_key"`
 	IndexName string `yaml:"index_name"`
+}
+
+type rawPathsConfig struct {
+	Logs    string `yaml:"logs"`
+	Backups string `yaml:"backups"`
 }
 
 func Load(configPath string) (*AppConfig, error) {
@@ -259,6 +275,24 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	if v := strings.TrimSpace(raw.MXAdminSnake); v != "" {
 		cfg.MXAdmin = v
 	}
+	if v := strings.TrimSpace(raw.Paths.Logs); v != "" {
+		cfg.Paths.Logs = v
+	}
+	if v := strings.TrimSpace(raw.LogDir); v != "" {
+		cfg.Paths.Logs = v
+	}
+	if v := strings.TrimSpace(raw.LogsDir); v != "" {
+		cfg.Paths.Logs = v
+	}
+	if v := strings.TrimSpace(raw.Paths.Backups); v != "" {
+		cfg.Paths.Backups = v
+	}
+	if v := strings.TrimSpace(raw.BackupDir); v != "" {
+		cfg.Paths.Backups = v
+	}
+	if v := strings.TrimSpace(raw.BackupsDir); v != "" {
+		cfg.Paths.Backups = v
+	}
 
 	switch {
 	case raw.AllowedOrigins != nil:
@@ -332,6 +366,7 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	cfg.DSN = cfg.Database.DSNValue()
 	cfg.RedisURL = cfg.Redis.URLValue()
 	cfg.MXAdmin = normalizeAdminAssetPath(cfg.MXAdmin)
+	cfg.Paths = normalizeRuntimePaths(cfg.Paths)
 
 	cfg.Env = normalizeEnv(cfg.Env)
 }
@@ -780,12 +815,32 @@ func normalizeAdminAssetPath(raw string) string {
 	return trimmed
 }
 
+func normalizeRuntimePaths(paths RuntimePathsConfig) RuntimePathsConfig {
+	paths.Logs = strings.TrimSpace(paths.Logs)
+	paths.Backups = strings.TrimSpace(paths.Backups)
+	return paths
+}
+
 func (c *AppConfig) IsDev() bool {
 	return strings.EqualFold(c.Env, defaultEnv)
 }
 
 func (c *AppConfig) AdminAssetPath() string {
 	return normalizeAdminAssetPath(c.MXAdmin)
+}
+
+func (c *AppConfig) LogDir() string {
+	if c == nil {
+		return ResolveRuntimePath("", "logs")
+	}
+	return ResolveRuntimePath(c.Paths.Logs, "logs")
+}
+
+func (c *AppConfig) BackupDir() string {
+	if c == nil {
+		return ResolveRuntimePath("", "backups")
+	}
+	return ResolveRuntimePath(c.Paths.Backups, "backups")
 }
 
 // FullConfig is the application config stored in the database (options table, key="configs").
