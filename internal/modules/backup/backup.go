@@ -101,6 +101,7 @@ var restoreColumnAliases = map[string]string{
 	"reftype":       "ref_type",
 	"refid":         "ref_id",
 	"ref":           "ref_id",
+	"parent":        "parent_id",
 	"targetid":      "target_id",
 	"commentsindex": "comments_index",
 	"iswhispers":    "is_whispers",
