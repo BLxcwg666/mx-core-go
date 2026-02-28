@@ -99,10 +99,9 @@ func New(logger *zap.Logger, configPath string) (*App, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	var rc *pkgredis.Client
-	rc, err = pkgredis.Connect(cfg.RedisURL)
+	rc, err := pkgredis.Connect(cfg.RedisURL)
 	if err != nil {
-		logger.Warn("redis unavailable, task queue and gateway pub/sub disabled", zap.Error(err))
+		return nil, fmt.Errorf("redis: %w", err)
 	}
 
 	if !cfg.IsDev() {
@@ -239,15 +238,10 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	})
 
 	// Rate limiting and idempotence run on every route (requires Redis).
-	if rc != nil {
-		r.Use(middleware.RateLimit(rc.Raw(), barkSvc))
-		r.Use(middleware.Idempotence(rc.Raw()))
-	}
+	r.Use(middleware.RateLimit(rc.Raw(), barkSvc))
+	r.Use(middleware.Idempotence(rc.Raw()))
 
-	var taskSvc *taskqueue.Service
-	if rc != nil {
-		taskSvc = taskqueue.NewService(rc)
-	}
+	taskSvc := taskqueue.NewService(rc)
 
 	// Root-level endpoints
 	root := r.Group("")
@@ -303,17 +297,15 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 		c.JSON(http.StatusOK, n)
 	})
 	api.POST("/like_this", func(c *gin.Context) {
-		if rc != nil {
-			ip := c.ClientIP()
-			date := time.Now().Format("2006-01-02")
-			key := fmt.Sprintf("mx:like_site:%s:%s", date, ip)
-			set, err := rc.Raw().SetNX(c.Request.Context(), key, 1, 24*time.Hour).Result()
-			if err == nil && !set {
-				c.JSON(http.StatusBadRequest, gin.H{"ok": 0, "code": http.StatusBadRequest, "message": "already liked today"})
-				return
-			}
+		ip := c.ClientIP()
+		date := time.Now().Format("2006-01-02")
+		key := fmt.Sprintf("mx:like_site:%s:%s", date, ip)
+		set, err := rc.Raw().SetNX(c.Request.Context(), key, 1, 24*time.Hour).Result()
+		if err == nil && !set {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": 0, "code": http.StatusBadRequest, "message": "already liked today"})
+			return
 		}
-		err := db.Clauses(clause.OnConflict{
+		err = db.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "name"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"value": gorm.Expr("CAST(value AS UNSIGNED) + 1"),
@@ -336,9 +328,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	api.GET("/clean_cache", authMW, cleanCache)
 	api.GET("/clean_catch", authMW, cleanCache) // legacy typo compatibility
 	api.GET("/clean_redis", authMW, func(c *gin.Context) {
-		if rc != nil {
-			rc.Raw().FlushDB(c.Request.Context())
-		}
+		rc.Raw().FlushDB(c.Request.Context())
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
@@ -422,17 +412,8 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 		})
 	})
 
-	if taskSvc != nil {
-		aiSvc := ai.NewService(db, cfgSvc, taskSvc)
-		ai.NewHandler(aiSvc).RegisterRoutes(api, authMW)
-	} else {
-		api.Group("/ai").Any("/*path", func(c *gin.Context) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"message":     "AI features require Redis",
-				"status_code": http.StatusServiceUnavailable,
-			})
-		})
-	}
+	aiSvc := ai.NewService(db, cfgSvc, taskSvc)
+	ai.NewHandler(aiSvc).RegisterRoutes(api, authMW)
 }
 
 // cfgStartTime keeps runtime uptime stable across hot paths without extra globals.

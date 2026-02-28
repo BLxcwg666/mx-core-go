@@ -562,14 +562,12 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		if hub != nil {
 			stat.Online = int64(hub.ClientCount(gateway.RoomPublic))
 		}
-		if rc != nil {
-			dateKey := shortDateKey(time.Now())
-			if todayMaxOnline, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCount, dateKey).Result(); err == nil && strings.TrimSpace(todayMaxOnline) != "" {
-				stat.TodayMaxOnline = todayMaxOnline
-			}
-			if todayOnlineTotal, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCountTotal, dateKey).Result(); err == nil && strings.TrimSpace(todayOnlineTotal) != "" {
-				stat.TodayOnlineTotal = todayOnlineTotal
-			}
+		dateKey := shortDateKey(time.Now())
+		if todayMaxOnline, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCount, dateKey).Result(); err == nil && strings.TrimSpace(todayMaxOnline) != "" {
+			stat.TodayMaxOnline = todayMaxOnline
+		}
+		if todayOnlineTotal, err := rc.Raw().HGet(c.Request.Context(), redisKeyMaxOnlineCountTotal, dateKey).Result(); err == nil && strings.TrimSpace(todayOnlineTotal) != "" {
+			stat.TodayOnlineTotal = todayOnlineTotal
 		}
 		response.OK(c, stat)
 	})

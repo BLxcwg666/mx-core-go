@@ -34,11 +34,6 @@ type compiledSnippet struct {
 	Code      string
 }
 
-type storageCacheItem struct {
-	Value    interface{}
-	ExpireAt time.Time
-}
-
 type runtimeResponseMeta struct {
 	StatusCode  int
 	ContentType string
@@ -1058,19 +1053,11 @@ func (h *Handler) cacheGet(namespace, key string) interface{} {
 	}
 	cacheKey := serverlessCacheKeyPrefix + namespace + ":" + key
 
-	if h.rc != nil {
-		raw, err := h.rc.Get(context.Background(), cacheKey)
-		if err == nil {
-			if raw != "" {
-				return decodeStorageValue(raw)
-			}
-			// Cache miss in Redis, still try memory fallback.
-			return h.cacheGetInMemory(cacheKey)
-		}
-		// Redis unavailable: fallback to in-memory cache.
+	raw, err := h.rc.Get(context.Background(), cacheKey)
+	if err != nil || raw == "" {
+		return nil
 	}
-
-	return h.cacheGetInMemory(cacheKey)
+	return decodeStorageValue(raw)
 }
 
 func (h *Handler) cacheSet(namespace, key string, value interface{}, ttlSeconds int64) {
@@ -1082,29 +1069,12 @@ func (h *Handler) cacheSet(namespace, key string, value interface{}, ttlSeconds 
 		ttlSeconds = int64((7 * 24 * time.Hour).Seconds())
 	}
 
-	if h.rc != nil {
-		if err := h.rc.Set(
-			context.Background(),
-			cacheKey,
-			encodeStorageValue(value),
-			time.Duration(ttlSeconds)*time.Second,
-		); err == nil {
-			// Redis write succeeded, drop stale local fallback.
-			h.storageMu.Lock()
-			delete(h.storageCache, cacheKey)
-			h.storageMu.Unlock()
-			return
-		}
-		// Redis unavailable: fallback to in-memory cache.
-	}
-
-	expireAt := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-	h.storageMu.Lock()
-	h.storageCache[cacheKey] = storageCacheItem{
-		Value:    value,
-		ExpireAt: expireAt,
-	}
-	h.storageMu.Unlock()
+	_ = h.rc.Set(
+		context.Background(),
+		cacheKey,
+		encodeStorageValue(value),
+		time.Duration(ttlSeconds)*time.Second,
+	)
 }
 
 func (h *Handler) cacheDel(namespace, key string) {
@@ -1113,33 +1083,7 @@ func (h *Handler) cacheDel(namespace, key string) {
 	}
 	cacheKey := serverlessCacheKeyPrefix + namespace + ":" + key
 
-	if h.rc != nil {
-		_ = h.rc.Del(context.Background(), cacheKey)
-	}
-
-	h.storageMu.Lock()
-	delete(h.storageCache, cacheKey)
-	h.storageMu.Unlock()
-}
-
-func (h *Handler) cacheGetInMemory(cacheKey string) interface{} {
-	now := time.Now()
-
-	h.storageMu.RLock()
-	item, ok := h.storageCache[cacheKey]
-	h.storageMu.RUnlock()
-	if !ok {
-		return nil
-	}
-
-	if !item.ExpireAt.IsZero() && now.After(item.ExpireAt) {
-		h.storageMu.Lock()
-		delete(h.storageCache, cacheKey)
-		h.storageMu.Unlock()
-		return nil
-	}
-
-	return item.Value
+	_ = h.rc.Del(context.Background(), cacheKey)
 }
 
 func (h *Handler) storageGet(namespace, key string) interface{} {

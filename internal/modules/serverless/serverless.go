@@ -28,19 +28,15 @@ type Handler struct {
 
 	builtInMu    sync.Mutex
 	builtInReady bool
-
-	storageMu    sync.RWMutex
-	storageCache map[string]storageCacheItem
 }
 
 func NewHandler(db *gorm.DB, hub *gateway.Hub, rc *pkgredis.Client) *Handler {
 	return &Handler{
-		db:           db,
-		hub:          hub,
-		rc:           rc,
-		httpClient:   &http.Client{Timeout: 8 * time.Second},
-		compiled:     map[string]compiledSnippet{},
-		storageCache: map[string]storageCacheItem{},
+		db:         db,
+		hub:        hub,
+		rc:         rc,
+		httpClient: &http.Client{Timeout: 8 * time.Second},
+		compiled:   map[string]compiledSnippet{},
 	}
 }
 

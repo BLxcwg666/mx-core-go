@@ -359,9 +359,7 @@ func (h *Handler) invalidateRuntimeCaches(c *gin.Context) {
 	if h.cfgSvc != nil {
 		h.cfgSvc.Invalidate()
 	}
-	if h.rc != nil {
-		_ = h.rc.Raw().FlushDB(c.Request.Context())
-	}
+	_ = h.rc.Raw().FlushDB(c.Request.Context())
 }
 
 // DELETE /backups

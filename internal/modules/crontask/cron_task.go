@@ -14,7 +14,7 @@ import (
 // Handler wraps the scheduler for HTTP access.
 type Handler struct {
 	sched   *pkgcron.Scheduler
-	taskSvc *taskqueue.Service // may be nil when Redis is unavailable
+	taskSvc *taskqueue.Service
 }
 
 func NewHandler(sched *pkgcron.Scheduler, taskSvc *taskqueue.Service) *Handler {
@@ -60,20 +60,8 @@ func (h *Handler) run(c *gin.Context) {
 	response.OK(c, gin.H{"message": "job triggered"})
 }
 
-func (h *Handler) requireTaskSvc(c *gin.Context) bool {
-	if h.taskSvc == nil {
-		c.JSON(503, gin.H{"ok": 0, "code": 503, "message": "task queue unavailable (Redis not connected)"})
-		c.Abort()
-		return false
-	}
-	return true
-}
-
 // GET /cron-task/tasks
 func (h *Handler) listTasks(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	q := pagination.FromContext(c)
 	taskType := c.Query("type")
 	statusStr := c.Query("status")
@@ -105,9 +93,6 @@ func (h *Handler) listTasks(c *gin.Context) {
 
 // GET /cron-task/tasks/:taskId
 func (h *Handler) getTask(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	task, err := h.taskSvc.GetByID(c.Request.Context(), c.Param("taskId"))
 	if err != nil {
 		response.InternalError(c, err)
@@ -122,9 +107,6 @@ func (h *Handler) getTask(c *gin.Context) {
 
 // POST /cron-task/tasks/:taskId/cancel
 func (h *Handler) cancelTask(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	if err := h.taskSvc.Cancel(c.Request.Context(), c.Param("taskId")); err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -134,9 +116,6 @@ func (h *Handler) cancelTask(c *gin.Context) {
 
 // POST /cron-task/tasks/:taskId/retry
 func (h *Handler) retryTask(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	task, err := h.taskSvc.GetByID(c.Request.Context(), c.Param("taskId"))
 	if err != nil || task == nil {
 		response.NotFound(c)
@@ -158,9 +137,6 @@ func (h *Handler) retryTask(c *gin.Context) {
 
 // DELETE /cron-task/tasks/:taskId
 func (h *Handler) deleteTask(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	if err := h.taskSvc.DeleteByID(c.Request.Context(), c.Param("taskId")); err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -170,9 +146,6 @@ func (h *Handler) deleteTask(c *gin.Context) {
 
 // DELETE /cron-task/tasks?status=...&type=...&before=<unix_ms>
 func (h *Handler) deleteTasks(c *gin.Context) {
-	if !h.requireTaskSvc(c) {
-		return
-	}
 	beforeStr := c.Query("before")
 	var before int64
 	if beforeStr != "" {

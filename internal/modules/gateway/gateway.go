@@ -334,9 +334,7 @@ func (h *Hub) emitNativeLogSnapshot(client *socketio.Socket) {
 
 // Run starts the hub loop and Redis subscriber.
 func (h *Hub) Run(ctx context.Context) {
-	if h.rc != nil {
-		go h.subscribeRedis(ctx)
-	}
+	go h.subscribeRedis(ctx)
 
 	for {
 		select {
@@ -352,19 +350,16 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case msg := <-h.broadcast:
 			h.deliver(msg)
-
-			if h.rc != nil {
-				channel := redisChanPublic
-				if msg.Room == RoomAdmin {
-					channel = redisChanAdmin
-				}
-				data, err := json.Marshal(msg)
-				if err != nil {
-					continue
-				}
-				if err := h.rc.Publish(ctx, channel, string(data)); err != nil && h.logger != nil {
-					h.logger.Warn("gateway publish failed", zap.String("channel", channel), zap.Error(err))
-				}
+			channel := redisChanPublic
+			if msg.Room == RoomAdmin {
+				channel = redisChanAdmin
+			}
+			data, err := json.Marshal(msg)
+			if err != nil {
+				continue
+			}
+			if err := h.rc.Publish(ctx, channel, string(data)); err != nil && h.logger != nil {
+				h.logger.Warn("gateway publish failed", zap.String("channel", channel), zap.Error(err))
 			}
 		}
 	}
@@ -414,7 +409,7 @@ func (h *Hub) unregisterClient(c clientMeta) {
 }
 
 func (h *Hub) updateDailyOnlineStats(currentOnline int) {
-	if h.rc == nil || currentOnline < 0 {
+	if currentOnline < 0 {
 		return
 	}
 
