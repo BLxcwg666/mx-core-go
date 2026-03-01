@@ -10,10 +10,11 @@ mx-admin: ./admin
 
 # Runtime directory paths.
 # Relative paths are resolved from the binary directory.
-# If left empty, defaults are: logs -> <bin>/logs, backups -> <bin>/backups
+# If left empty, defaults are: logs -> <bin>/logs, backups -> <bin>/backups, static -> <bin>/static
 paths:
    logs: ./logs
    backups: ./backups
+   static: ./static
 
 # Native log rotation settings.
 # log_rotate_size_mb: rotate when current log file exceeds this size (MB).

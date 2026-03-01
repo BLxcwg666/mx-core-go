@@ -95,6 +95,7 @@ type MeiliSearchRuntimeConfig struct {
 type RuntimePathsConfig struct {
 	Logs    string `yaml:"logs"`
 	Backups string `yaml:"backups"`
+	Static  string `yaml:"static"`
 }
 
 type rawAppConfig struct {
@@ -129,6 +130,8 @@ type rawAppConfig struct {
 	LogRotateKeep      *int                 `yaml:"log_rotate_keep"`
 	BackupDir          string               `yaml:"backup_dir"`
 	BackupsDir         string               `yaml:"backups_dir"`
+	StaticDir          string               `yaml:"static_dir"`
+	StaticsDir         string               `yaml:"statics_dir"`
 	AllowedOrigins     []string             `yaml:"allowed_origins"`
 	CORSAllowedOrigins []string             `yaml:"cors_allowed_origins"`
 	JWTSecret          string               `yaml:"jwt_secret"`
@@ -187,6 +190,7 @@ type rawMeiliSearchConfig struct {
 type rawPathsConfig struct {
 	Logs    string `yaml:"logs"`
 	Backups string `yaml:"backups"`
+	Static  string `yaml:"static"`
 }
 
 func Load(configPath string) (*AppConfig, error) {
@@ -296,6 +300,15 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	}
 	if v := strings.TrimSpace(raw.BackupsDir); v != "" {
 		cfg.Paths.Backups = v
+	}
+	if v := strings.TrimSpace(raw.Paths.Static); v != "" {
+		cfg.Paths.Static = v
+	}
+	if v := strings.TrimSpace(raw.StaticDir); v != "" {
+		cfg.Paths.Static = v
+	}
+	if v := strings.TrimSpace(raw.StaticsDir); v != "" {
+		cfg.Paths.Static = v
 	}
 	if raw.LogRotateSize != nil {
 		v := *raw.LogRotateSize
@@ -830,6 +843,7 @@ func normalizeAdminAssetPath(raw string) string {
 func normalizeRuntimePaths(paths RuntimePathsConfig) RuntimePathsConfig {
 	paths.Logs = strings.TrimSpace(paths.Logs)
 	paths.Backups = strings.TrimSpace(paths.Backups)
+	paths.Static = strings.TrimSpace(paths.Static)
 	return paths
 }
 
@@ -867,6 +881,13 @@ func (c *AppConfig) BackupDir() string {
 		return ResolveRuntimePath("", "backups")
 	}
 	return ResolveRuntimePath(c.Paths.Backups, "backups")
+}
+
+func (c *AppConfig) StaticDir() string {
+	if c == nil {
+		return ResolveRuntimePath("", "static")
+	}
+	return ResolveRuntimePath(c.Paths.Static, "static")
 }
 
 // FullConfig is the application config stored in the database (options table, key="configs").

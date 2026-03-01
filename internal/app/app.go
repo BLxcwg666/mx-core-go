@@ -505,6 +505,7 @@ func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 		_ = os.Setenv(nativelog.EnvLogRotateKeep, strconv.Itoa(keep))
 	}
 	_ = os.Setenv(backup.EnvBackupDir, cfg.BackupDir())
+	_ = os.Setenv(file.EnvStaticDir, cfg.StaticDir())
 
 	if secret := strings.TrimSpace(cfg.JWTSecret); secret != "" {
 		jwtpkg.SetSecret(secret)

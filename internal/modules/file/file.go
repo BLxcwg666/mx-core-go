@@ -34,6 +34,8 @@ type Handler struct {
 	staticDir string
 }
 
+const EnvStaticDir = "MX_STATIC_DIR"
+
 func NewHandler(db *gorm.DB, cfgSvc ...*appconfigs.Service) *Handler {
 	var service *appconfigs.Service
 	if len(cfgSvc) > 0 {
@@ -42,8 +44,15 @@ func NewHandler(db *gorm.DB, cfgSvc ...*appconfigs.Service) *Handler {
 	return &Handler{
 		db:        db,
 		cfgSvc:    service,
-		staticDir: filepath.Join(".", "static"),
+		staticDir: resolveStaticDir(),
 	}
+}
+
+func resolveStaticDir() string {
+	if dir := strings.TrimSpace(os.Getenv(EnvStaticDir)); dir != "" {
+		return appcfg.ResolveRuntimePath(dir, "")
+	}
+	return appcfg.ResolveRuntimePath("", "static")
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
