@@ -45,11 +45,9 @@ func Run(logger *zap.Logger, opts Options, workerMain func() error) error {
 func runMaster(logger *zap.Logger, requestedWorkers int) error {
 	workerCount := normalizedWorkers(requestedWorkers)
 	if logger != nil {
-		logger.Info("cluster mode enabled",
-			zap.Int("master_pid", os.Getpid()),
-			zap.Int("workers", workerCount),
-			zap.Int("cpu", runtime.NumCPU()),
-		)
+		logger.Info(fmt.Sprintf("Primary server started on %d", os.Getpid()))
+		logger.Info(fmt.Sprintf("CPU:%d", runtime.NumCPU()))
+		logger.Info("cluster mode enabled", zap.Int("workers", workerCount))
 	}
 
 	exitCh := make(chan workerExit, workerCount*2)
@@ -63,7 +61,7 @@ func runMaster(logger *zap.Logger, requestedWorkers int) error {
 		workers[id] = cmd
 
 		if logger != nil {
-			logger.Info("worker started", zap.Int("worker_id", id), zap.Int("pid", cmd.Process.Pid))
+			logger.Info(fmt.Sprintf("Worker %d is online", cmd.Process.Pid), zap.Int("worker_id", id))
 		}
 
 		go func(workerID int, processID int, c *exec.Cmd) {
@@ -100,7 +98,7 @@ func runMaster(logger *zap.Logger, requestedWorkers int) error {
 			}
 			stopping = true
 			if logger != nil {
-				logger.Info("cluster shutting down", zap.String("signal", sig.String()))
+				logger.Info("Cluster shutting down...", zap.String("signal", sig.String()))
 			}
 			interruptAllWorkers(workers, logger)
 			killTimer = time.After(8 * time.Second)
@@ -119,12 +117,8 @@ func runMaster(logger *zap.Logger, requestedWorkers int) error {
 			}
 			delete(workers, ex.id)
 
-			if logger != nil {
-				if ex.code == 0 {
-					logger.Info("worker exited", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
-				} else {
-					logger.Warn("worker exited", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
-				}
+			if logger != nil && ex.code != 0 {
+				logger.Warn("worker exited with non-zero code", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
 			}
 
 			if stopping {
@@ -133,7 +127,7 @@ func runMaster(logger *zap.Logger, requestedWorkers int) error {
 
 			if ex.code != 0 {
 				if logger != nil {
-					logger.Warn("worker crashed, restarting", zap.Int("worker_id", ex.id))
+					logger.Warn(fmt.Sprintf("Worker %d died. Restarting", ex.pid), zap.Int("worker_id", ex.id))
 				}
 				if err := startWorker(ex.id); err != nil {
 					return err
@@ -143,7 +137,7 @@ func runMaster(logger *zap.Logger, requestedWorkers int) error {
 	}
 
 	if logger != nil {
-		logger.Info("cluster master exited")
+		logger.Info("Primary server exited")
 	}
 	return nil
 }

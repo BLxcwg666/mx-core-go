@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +24,8 @@ import (
 )
 
 func main() {
+	bootStartedAt := time.Now()
+
 	configPath := flag.String("config", config.DefaultConfigPath, "Path to YAML config file")
 	clusterEnabled := flag.Bool("cluster", boolEnv("CLUSTER", false), "Enable cluster mode")
 	clusterWorkers := flag.Int("cluster_workers", intEnv("CLUSTER_WORKERS", 0), "Cluster worker count")
@@ -81,13 +84,13 @@ func main() {
 		ListenAddr: ":" + strconv.Itoa(cfg.Port),
 	}
 	if err := cluster.Run(logger, opts, func() error {
-		return runHTTPServer(logger, cfg, *clusterEnabled)
+		return runHTTPServer(logger, cfg, *clusterEnabled, bootStartedAt)
 	}); err != nil {
 		logger.Fatal("server exited with error", zap.Error(err))
 	}
 }
 
-func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled bool) error {
+func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled bool, bootStartedAt time.Time) error {
 	application, err := app.New(logger, cfg)
 	if err != nil {
 		return fmt.Errorf("initialize app: %w", err)
@@ -112,9 +115,14 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 	}
 
 	if cluster.ShouldLogBootstrap() {
-		logger.Info("server starting", zap.String("addr", srv.Addr))
-		logger.Info("admin local dashboard", zap.String("url", "http://localhost"+srv.Addr+application.AdminProxyPath()))
-		logger.Info("admin dev dashboard proxy", zap.String("url", "http://localhost"+srv.Addr+application.AdminProxyDevPath()))
+		prefix := processLogPrefix()
+		serverURL := resolveServerURL(srv.Addr)
+		logger.Info("ENV: " + resolveRuntimeEnv(cfg.Env))
+		logger.Info(prefix + " Server listen on: " + serverURL)
+		logger.Info(prefix + " Admin Local Dashboard: " + serverURL + application.AdminProxyPath())
+		logger.Info(prefix + " If you want to debug local dev dashboard on production environment with https domain, you can go to: https://<your-prod-domain>" + application.AdminProxyDevPath())
+		logger.Info(prefix + " If you want to debug local dev dashboard on dev environment with same site domain, you can go to: http://localhost:2333" + application.AdminProxyDevPath())
+		logger.Info(fmt.Sprintf("Server is up. +%dms", time.Since(bootStartedAt).Milliseconds()))
 	}
 
 	serveErrCh := make(chan error, 1)
@@ -150,6 +158,44 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 		}
 		return nil
 	}
+}
+
+func processLogPrefix() string {
+	if cluster.IsWorker() {
+		return "[W" + strconv.Itoa(os.Getpid()) + "]"
+	}
+	return "[P" + strconv.Itoa(os.Getpid()) + "]"
+}
+
+func resolveRuntimeEnv(fallbackEnv string) string {
+	env := strings.TrimSpace(os.Getenv("NODE_ENV"))
+	if env == "" {
+		env = strings.TrimSpace(fallbackEnv)
+	}
+	if env == "" {
+		env = "development"
+	}
+	return env
+}
+
+func resolveServerURL(addr string) string {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return "http://localhost"
+	}
+	if strings.HasPrefix(trimmed, ":") {
+		return "http://localhost" + trimmed
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return "http://" + trimmed
+	}
+	host = strings.TrimSpace(host)
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func resolveRole(clusterEnabled bool) string {

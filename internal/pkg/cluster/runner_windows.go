@@ -66,12 +66,9 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 
 	workerCount := normalizedWorkers(requestedWorkers)
 	if logger != nil {
-		logger.Info("cluster mode enabled",
-			zap.Int("master_pid", os.Getpid()),
-			zap.Int("workers", workerCount),
-			zap.Int("cpu", runtime.NumCPU()),
-			zap.String("addr", listenAddr),
-		)
+		logger.Info(fmt.Sprintf("Primary server started on %d", os.Getpid()))
+		logger.Info(fmt.Sprintf("CPU:%d", runtime.NumCPU()))
+		logger.Info("cluster mode enabled", zap.Int("workers", workerCount), zap.String("addr", listenAddr))
 	}
 
 	exitCh := make(chan workerExit, workerCount*2)
@@ -88,7 +85,7 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 		workerTargets[id] = "http://" + addr
 
 		if logger != nil {
-			logger.Info("worker started", zap.Int("worker_id", id), zap.Int("pid", cmd.Process.Pid), zap.String("addr", addr))
+			logger.Info(fmt.Sprintf("Worker %d is online", cmd.Process.Pid), zap.Int("worker_id", id), zap.String("addr", addr))
 		}
 
 		go func(workerID int, processID int, c *exec.Cmd) {
@@ -163,7 +160,7 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 			}
 			stopping = true
 			if logger != nil {
-				logger.Info("cluster shutting down", zap.String("signal", sig.String()))
+				logger.Info("Cluster shutting down...", zap.String("signal", sig.String()))
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			_ = srv.Shutdown(ctx)
@@ -187,12 +184,8 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 			delete(workerTargets, ex.id)
 			targetPicker.Reset(workerTargets)
 
-			if logger != nil {
-				if ex.code == 0 {
-					logger.Info("worker exited", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
-				} else {
-					logger.Warn("worker exited", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
-				}
+			if logger != nil && ex.code != 0 {
+				logger.Warn("worker exited with non-zero code", zap.Int("worker_id", ex.id), zap.Int("pid", ex.pid), zap.Int("code", ex.code))
 			}
 
 			if stopping {
@@ -201,7 +194,7 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 
 			if ex.code != 0 {
 				if logger != nil {
-					logger.Warn("worker crashed, restarting", zap.Int("worker_id", ex.id))
+					logger.Warn(fmt.Sprintf("Worker %d died. Restarting", ex.pid), zap.Int("worker_id", ex.id))
 				}
 				if err := startWorker(ex.id); err != nil {
 					return err
@@ -212,7 +205,7 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 	}
 
 	if logger != nil {
-		logger.Info("cluster master exited")
+		logger.Info("Primary server exited")
 	}
 	return nil
 }

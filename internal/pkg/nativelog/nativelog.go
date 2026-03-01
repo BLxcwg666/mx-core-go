@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,12 @@ const (
 	defaultLogDirPerm  = 0o755
 	defaultRotateSize  = 16 * 1024 * 1024
 	defaultRotateKeep  = 10
+	ansiReset          = "\x1b[0m"
+	ansiRed            = "\x1b[31m"
+	ansiYellow         = "\x1b[33m"
+	ansiMagenta        = "\x1b[35m"
+	ansiCyan           = "\x1b[36m"
+	ansiGray           = "\x1b[90m"
 )
 
 var sessionStartedAt = time.Now()
@@ -368,16 +375,104 @@ func NewZapLogger() (*zap.Logger, error) {
 	}
 
 	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
+	colorEnabled := isColorConsole()
 
-	encoder := zapcore.NewConsoleEncoder(encoderConfig)
+	stdoutEncoderConfig := zap.NewProductionEncoderConfig()
+	stdoutEncoderConfig.CallerKey = ""
+	stdoutEncoderConfig.EncodeTime = consoleTimeEncoder(colorEnabled)
+	stdoutEncoderConfig.EncodeLevel = consoleLevelEncoder(colorEnabled)
+	stdoutEncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
+	stdoutEncoderConfig.ConsoleSeparator = " "
+
+	fileEncoderConfig := zap.NewProductionEncoderConfig()
+	fileEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
+	fileEncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
+	fileEncoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
+	fileEncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	fileEncoderConfig.ConsoleSeparator = " | "
+
 	core := zapcore.NewTee(
-		zapcore.NewCore(encoder, zapcore.Lock(os.Stdout), level),
-		zapcore.NewCore(encoder, zapcore.AddSync(writer), level),
+		zapcore.NewCore(zapcore.NewConsoleEncoder(stdoutEncoderConfig), zapcore.Lock(os.Stdout), level),
+		zapcore.NewCore(zapcore.NewConsoleEncoder(fileEncoderConfig), zapcore.AddSync(writer), level),
 	)
 
 	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 	_ = zap.RedirectStdLog(logger)
 	return logger, nil
+}
+
+func consoleTimeEncoder(colorEnabled bool) zapcore.TimeEncoder {
+	return func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		timestamp := "[" + t.Format("15:04:05") + "]"
+		enc.AppendString(colorize(timestamp, ansiGray, colorEnabled))
+	}
+}
+
+func consoleLevelEncoder(colorEnabled bool) zapcore.LevelEncoder {
+	return func(level zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+		icon, colorCode := consoleLevelIcon(level)
+		enc.AppendString(colorize(icon, colorCode, colorEnabled))
+	}
+}
+
+func consoleLevelIcon(level zapcore.Level) (string, string) {
+	switch level {
+	case zapcore.DebugLevel:
+		return "⚙", ansiMagenta
+	case zapcore.InfoLevel:
+		return "ℹ", ansiCyan
+	case zapcore.WarnLevel:
+		return "⚠", ansiYellow
+	case zapcore.ErrorLevel, zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
+		return "✖", ansiRed
+	default:
+		return strings.ToUpper(level.String()), ansiGray
+	}
+}
+
+func colorize(text, colorCode string, enabled bool) string {
+	if !enabled || colorCode == "" {
+		return text
+	}
+	return colorCode + text + ansiReset
+}
+
+func isColorConsole() bool {
+	isDisabled := hasEnv("NO_COLOR") || hasArg("--no-color")
+	isForced := hasEnv("FORCE_COLOR") || hasArg("--color")
+	isWindows := runtime.GOOS == "windows"
+	term := strings.TrimSpace(os.Getenv("TERM"))
+	isDumbTerminal := strings.EqualFold(term, "dumb")
+	isCompatibleTerminal := isTerminal(os.Stdout) && term != "" && !isDumbTerminal
+	isCI := hasEnv("CI") && (hasEnv("GITHUB_ACTIONS") || hasEnv("GITLAB_CI") || hasEnv("CIRCLECI"))
+
+	if isDisabled {
+		return false
+	}
+	return isForced || (isWindows && !isDumbTerminal) || isCompatibleTerminal || isCI
+}
+
+func hasEnv(key string) bool {
+	_, ok := os.LookupEnv(key)
+	return ok
+}
+
+func hasArg(flag string) bool {
+	for _, arg := range os.Args {
+		if strings.TrimSpace(arg) == flag {
+			return true
+		}
+	}
+	return false
+}
+
+func isTerminal(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
