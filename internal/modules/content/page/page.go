@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/modules/system/util/slugtracker"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -185,9 +186,18 @@ func (s *Service) Reorder(id string, order int) {
 	s.db.Model(&models.PageModel{}).Where("id = ?", id).Update("order_num", order)
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc      *Service
+	macroSvc *textmacro.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, macroSvc ...*textmacro.Service) *Handler {
+	h := &Handler{svc: svc}
+	if len(macroSvc) > 0 {
+		h.macroSvc = macroSvc[0]
+	}
+	return h
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/pages")
@@ -227,7 +237,9 @@ func (h *Handler) getBySlug(c *gin.Context) {
 		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
-	response.OK(c, toResponse(p))
+	resp := toResponse(p)
+	h.applyMacros(&resp, middleware.IsAuthenticated(c))
+	response.OK(c, resp)
 }
 
 func (h *Handler) getByIdentifier(c *gin.Context) {
@@ -240,7 +252,9 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
-	response.OK(c, toResponse(p))
+	resp := toResponse(p)
+	h.applyMacros(&resp, middleware.IsAuthenticated(c))
+	response.OK(c, resp)
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -307,4 +321,22 @@ func (h *Handler) reorder(c *gin.Context) {
 		h.svc.Reorder(id, i)
 	}
 	response.NoContent(c)
+}
+
+// applyMacros processes text macros in the page response if the macro service is available.
+func (h *Handler) applyMacros(resp *pageResponse, isAuthenticated bool) {
+	if h.macroSvc == nil {
+		return
+	}
+	fields := textmacro.Fields{
+		"title":            resp.Title,
+		"slug":             resp.Slug,
+		"subtitle":         resp.Subtitle,
+		"id":               resp.ID,
+		"created":          resp.Created,
+		"modified":         resp.Modified,
+		"order":            resp.Order,
+		"_isAuthenticated": isAuthenticated,
+	}
+	resp.Text = h.macroSvc.Process(resp.Text, fields)
 }

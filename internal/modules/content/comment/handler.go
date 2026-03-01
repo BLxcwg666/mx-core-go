@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/notify"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -18,14 +19,16 @@ import (
 )
 
 type Handler struct {
-	svc    *Service
-	cfgSvc *appconfigs.Service
+	svc       *Service
+	cfgSvc    *appconfigs.Service
+	notifySvc *notify.Service
 }
 
-func NewHandler(svc *Service) *Handler {
+func NewHandler(svc *Service, notifySvc *notify.Service) *Handler {
 	return &Handler{
-		svc:    svc,
-		cfgSvc: appconfigs.NewService(svc.db),
+		svc:       svc,
+		cfgSvc:    appconfigs.NewService(svc.db),
+		notifySvc: notifySvc,
 	}
 }
 
@@ -78,6 +81,26 @@ func (h *Handler) ensureCommentEnabled(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+// checkSpamAndMark checks anti-spam rules and marks the comment as junk when
+// matched. It returns true when the comment is detected as spam.
+func (h *Handler) checkSpamAndMark(cm *models.CommentModel) bool {
+	cfg, err := h.cfgSvc.Get()
+	if err != nil || cfg == nil {
+		return false
+	}
+
+	var user models.UserModel
+	masterName := ""
+	if err := h.svc.db.Select("name").First(&user).Error; err == nil {
+		masterName = user.Name
+	}
+	if checkSpam(cm, &cfg.CommentOptions, masterName) {
+		_, _ = h.svc.UpdateState(cm.ID, models.CommentJunk)
+		return true
+	}
+	return false
 }
 
 func (h *Handler) ensureCommentAllowed(c *gin.Context, refType models.RefType, refID string) bool {
@@ -492,6 +515,10 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 	h.fillAvatarForComment(cm)
+	isSpam := h.checkSpamAndMark(cm)
+	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+		go h.notifySvc.OnCommentCreate(cm)
+	}
 	response.Created(c, toResponse(cm, false))
 }
 
@@ -617,6 +644,10 @@ func (h *Handler) reply(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	isSpam := h.checkSpamAndMark(cm)
+	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+		go h.notifySvc.OnCommentCreate(cm)
+	}
 	payload, err := h.buildReplyPayload(cm.ID, false)
 	if err != nil {
 		response.InternalError(c, err)
@@ -669,6 +700,13 @@ func (h *Handler) masterReply(c *gin.Context) {
 		return
 	}
 	_, _ = h.svc.UpdateState(cm.ID, models.CommentRead)
+	if h.notifySvc != nil {
+		parentID := c.Param("id")
+		var parent models.CommentModel
+		if err := h.svc.db.First(&parent, "id = ?", parentID).Error; err == nil {
+			go h.notifySvc.OnMasterReply(cm, &parent)
+		}
+	}
 	payload, err := h.buildReplyPayload(cm.ID, true)
 	if err != nil {
 		response.InternalError(c, err)
@@ -775,5 +813,9 @@ func (h *Handler) createOnRef(c *gin.Context) {
 		return
 	}
 	h.fillAvatarForComment(cm)
+	isSpam := h.checkSpamAndMark(cm)
+	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+		go h.notifySvc.OnCommentCreate(cm)
+	}
 	response.Created(c, toResponse(cm, false))
 }

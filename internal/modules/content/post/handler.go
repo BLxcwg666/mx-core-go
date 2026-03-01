@@ -3,17 +3,21 @@ package post
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
+	"github.com/mx-space/core/internal/modules/gateway/notify"
+	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
 // Handler handles post HTTP requests.
 type Handler struct {
-	svc *Service
+	svc       *Service
+	notifySvc *notify.Service
+	macroSvc  *textmacro.Service
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc}
 }
 
 // RegisterRoutes mounts post routes onto the given router group.
@@ -75,7 +79,9 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 
 	go func() { _ = h.svc.IncrementReadCount(post.ID) }()
 
-	response.OK(c, toResponse(post))
+	resp := toResponse(post)
+	h.applyMacros(&resp, isAdmin)
+	response.OK(c, resp)
 }
 
 // getURLBySlug GET /posts/get-url/:slug
@@ -119,7 +125,9 @@ func (h *Handler) getByCategoryAndSlug(c *gin.Context) {
 
 	go func() { _ = h.svc.IncrementReadCount(post.ID) }()
 
-	response.OK(c, toResponse(post))
+	resp := toResponse(post)
+	h.applyMacros(&resp, isAdmin)
+	response.OK(c, resp)
 }
 
 // latest GET /posts/latest
@@ -166,6 +174,10 @@ func (h *Handler) create(c *gin.Context) {
 		}
 		response.InternalError(c, err)
 		return
+	}
+
+	if h.notifySvc != nil && post.IsPublished {
+		go h.notifySvc.OnPostCreate(post)
 	}
 
 	response.Created(c, toResponse(post))
@@ -226,4 +238,22 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
+}
+
+// applyMacros processes text macros in the post response if the macro service is available.
+func (h *Handler) applyMacros(resp *postResponse, isAuthenticated bool) {
+	if h.macroSvc == nil {
+		return
+	}
+	fields := textmacro.Fields{
+		"title":            resp.Title,
+		"slug":             resp.Slug,
+		"summary":          resp.Summary,
+		"id":               resp.ID,
+		"created":          resp.Created,
+		"modified":         resp.Modified,
+		"isPublished":      resp.IsPublished,
+		"_isAuthenticated": isAuthenticated,
+	}
+	resp.Text = h.macroSvc.Process(resp.Text, fields)
 }

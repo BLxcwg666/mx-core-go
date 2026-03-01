@@ -1,20 +1,25 @@
 package note
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
+	"github.com/mx-space/core/internal/modules/gateway/notify"
+	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
 type Handler struct {
-	svc *Service
+	svc       *Service
+	notifySvc *notify.Service
+	macroSvc  *textmacro.Service
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -67,7 +72,9 @@ func (h *Handler) getByNID(c *gin.Context) {
 		return
 	}
 	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
-	response.OK(c, toResponse(note))
+	resp := toResponse(note)
+	h.applyMacros(&resp, isAdmin)
+	response.OK(c, resp)
 }
 
 func (h *Handler) getByID(c *gin.Context) {
@@ -85,7 +92,9 @@ func (h *Handler) getByID(c *gin.Context) {
 		return
 	}
 	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
-	response.OK(c, toResponse(note))
+	resp := toResponse(note)
+	h.applyMacros(&resp, middleware.IsAuthenticated(c))
+	response.OK(c, resp)
 }
 
 func (h *Handler) latest(c *gin.Context) {
@@ -179,6 +188,9 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.notifySvc != nil && note.IsPublished {
+		go h.notifySvc.OnNoteCreate(note)
+	}
 	response.Created(c, toResponse(note))
 }
 
@@ -206,4 +218,22 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
+}
+
+// applyMacros processes text macros in the note response if the macro service is available.
+func (h *Handler) applyMacros(resp *noteResponse, isAuthenticated bool) {
+	if h.macroSvc == nil {
+		return
+	}
+	fields := textmacro.Fields{
+		"title":            resp.Title,
+		"nid":              resp.NID,
+		"id":               resp.ID,
+		"created":          resp.Created,
+		"modified":         resp.Modified,
+		"isPublished":      resp.IsPublished,
+		"_isAuthenticated": isAuthenticated,
+		"nid_str":          fmt.Sprintf("%d", resp.NID),
+	}
+	resp.Text = h.macroSvc.Process(resp.Text, fields)
 }

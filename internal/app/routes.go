@@ -26,18 +26,21 @@ import (
 	"github.com/mx-space/core/internal/modules/content/snippet"
 	"github.com/mx-space/core/internal/modules/content/topic"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/notify"
 	"github.com/mx-space/core/internal/modules/gateway/pageproxy"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/processing/ai"
 	"github.com/mx-space/core/internal/modules/processing/markdown"
 	"github.com/mx-space/core/internal/modules/processing/render"
 	"github.com/mx-space/core/internal/modules/processing/say"
+	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/modules/serverless"
 	"github.com/mx-space/core/internal/modules/stats/aggregate"
 	"github.com/mx-space/core/internal/modules/stats/analyze"
 	"github.com/mx-space/core/internal/modules/stats/recently"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	"github.com/mx-space/core/internal/modules/storage/file"
+	"github.com/mx-space/core/internal/modules/storage/imagesync"
 	"github.com/mx-space/core/internal/modules/syndication/feed"
 	"github.com/mx-space/core/internal/modules/syndication/reader"
 	"github.com/mx-space/core/internal/modules/syndication/sitemap"
@@ -107,6 +110,22 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	r.Use(middleware.Idempotence(rc.Raw()))
 
 	taskSvc := taskqueue.NewService(rc)
+
+	// Webhook service (used by notify).
+	webhookSvc := webhook.NewService(db)
+
+	// Subscribe service (used by notify).
+	subscribeSvc := subscribe.NewService(db)
+
+	// Notification service (email, bark push, webhook, newsletter).
+	notifySvc := notify.New(db, cfgSvc, webhookSvc, barkSvc, subscribeSvc)
+
+	// Image sync service.
+	imageSyncSvc := imagesync.NewService(db, cfgSvc)
+	notifySvc.SetImageSync(imageSyncSvc.SyncContentImages)
+
+	// Text macro service.
+	macroSvc := textmacro.NewService(cfgSvc)
 
 	// Root-level endpoints
 	root := r.Group("")
@@ -230,9 +249,9 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	postSvc.SetSlugTracker(slugTrackerSvc)
 	pageSvc.SetSlugTracker(slugTrackerSvc)
 
-	post.NewHandler(postSvc).RegisterRoutes(api, authMW)
-	note.NewHandler(note.NewService(db)).RegisterRoutes(api, authMW)
-	page.NewHandler(pageSvc).RegisterRoutes(api, authMW)
+	post.NewHandler(postSvc, notifySvc, macroSvc).RegisterRoutes(api, authMW)
+	note.NewHandler(note.NewService(db), notifySvc, macroSvc).RegisterRoutes(api, authMW)
+	page.NewHandler(pageSvc, macroSvc).RegisterRoutes(api, authMW)
 	recently.NewHandler(recently.NewService(db)).RegisterRoutes(api, authMW)
 	draft.NewHandler(draft.NewService(db)).RegisterRoutes(api, authMW)
 
@@ -241,12 +260,12 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	topic.NewHandler(topic.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Comments
-	comment.NewHandler(comment.NewService(db)).RegisterRoutes(api, authMW)
+	comment.NewHandler(comment.NewService(db), notifySvc).RegisterRoutes(api, authMW)
 
 	// Extras
 	say.NewHandler(say.NewService(db)).RegisterRoutes(api, authMW)
 	link.NewHandler(link.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
-	subscribe.NewHandler(subscribe.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
+	subscribe.NewHandler(subscribeSvc, cfgSvc).RegisterRoutes(api, authMW)
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
@@ -259,7 +278,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	pty.NewHandler().RegisterRoutes(api, authMW)
 
 	// Webhooks
-	webhook.NewHandler(webhook.NewService(db)).RegisterRoutes(api, authMW)
+	webhook.NewHandler(webhookSvc).RegisterRoutes(api, authMW)
 
 	// Markdown import/export
 	markdown.NewHandler(db).RegisterRoutes(api, authMW)
