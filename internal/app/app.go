@@ -68,6 +68,7 @@ import (
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/nativelog"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
+	"github.com/mx-space/core/internal/pkg/response"
 	"github.com/mx-space/core/internal/pkg/taskqueue"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -109,6 +110,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()
+	router.HandleMethodNotAllowed = true
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger(logger))
 
@@ -235,6 +237,13 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	r := a.router
 	db := a.db
 	authMW := middleware.Auth(db)
+
+	r.NoRoute(func(c *gin.Context) {
+		response.NotFound(c)
+	})
+	r.NoMethod(func(c *gin.Context) {
+		response.MethodNotAllowed(c)
+	})
 
 	appInfo := gin.H{
 		"name":     "mx-space-core",

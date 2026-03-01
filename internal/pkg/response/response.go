@@ -27,6 +27,23 @@ var notFoundMessages = []string{
 	"这里是空的，但你的好奇心不是 (ฅ´ω`ฅ)",
 }
 
+var methodNotAllowedMessages = []string{
+	"这个姿势不太对哦，换个方式试试？(๑•̀ㅂ•́)و✧",
+	"方法不被允许，但你的勇气值得肯定 (｀・ω・´)",
+	"服务器：这个我不能做啦 (´･_･`)",
+	"请求方式不合规，已被协议警察拦下 (҂‾ ▵‾)︻デ═一",
+	"这个接口不吃这套，请换种喂法 |_・)",
+	"姿势错了，再来一次！(ง •̀_•́)ง",
+	"Method 不对，世界线拒绝响应",
+	"你敲错门啦，这扇门不认这种敲法 (,,#ﾟДﾟ)",
+	"这个请求方式，被服务器无情驳回 ( ´•︵•` )",
+	"换个姿势，也许它就愿意了呢 ( •̀ ω •́ )✧",
+	"操作方式超出本接口技能树 ｜д•´)!!",
+	"你用了不存在的操作，服务器选择装死",
+	"方法不被允许，但错误信息被允许出现 Ｃ：。ミ",
+	"协议表示：不可以哦 ( >﹏<。)",
+}
+
 // Pagination metadata returned with paginated responses.
 type Pagination struct {
 	Total       int64 `json:"total"`
@@ -104,6 +121,19 @@ func NotFound(c *gin.Context) {
 // NotFoundMsg sends a 404 error with a custom message.
 func NotFoundMsg(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"ok": 0, "code": http.StatusNotFound, "message": message})
+}
+
+// MethodNotAllowed sends a 405 error response.
+func MethodNotAllowed(c *gin.Context) {
+	msg := "Method Not Allowed"
+	if len(methodNotAllowedMessages) > 0 {
+		msg = methodNotAllowedMessages[rand.IntN(len(methodNotAllowedMessages))]
+	}
+	c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{
+		"ok":      0,
+		"code":    http.StatusMethodNotAllowed,
+		"message": msg,
+	})
 }
 
 // InternalError sends a 500 error response.
