@@ -46,6 +46,8 @@ type AppConfig struct {
 	Env            string                   `yaml:"env"` // "development" | "production"
 	MXAdmin        string                   `yaml:"mx-admin"`
 	Paths          RuntimePathsConfig       `yaml:"paths"`
+	LogRotateSize  *int                     `yaml:"log_rotate_size_mb"`
+	LogRotateKeep  *int                     `yaml:"log_rotate_keep"`
 	AllowedOrigins []string                 `yaml:"allowed_origins"`
 	JWTSecret      string                   `yaml:"jwt_secret"`
 	Timezone       string                   `yaml:"timezone"`
@@ -123,6 +125,8 @@ type rawAppConfig struct {
 	Paths              rawPathsConfig       `yaml:"paths"`
 	LogDir             string               `yaml:"log_dir"`
 	LogsDir            string               `yaml:"logs_dir"`
+	LogRotateSize      *int                 `yaml:"log_rotate_size_mb"`
+	LogRotateKeep      *int                 `yaml:"log_rotate_keep"`
 	BackupDir          string               `yaml:"backup_dir"`
 	BackupsDir         string               `yaml:"backups_dir"`
 	AllowedOrigins     []string             `yaml:"allowed_origins"`
@@ -292,6 +296,14 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	}
 	if v := strings.TrimSpace(raw.BackupsDir); v != "" {
 		cfg.Paths.Backups = v
+	}
+	if raw.LogRotateSize != nil {
+		v := *raw.LogRotateSize
+		cfg.LogRotateSize = &v
+	}
+	if raw.LogRotateKeep != nil {
+		v := *raw.LogRotateKeep
+		cfg.LogRotateKeep = &v
 	}
 
 	switch {
@@ -834,6 +846,20 @@ func (c *AppConfig) LogDir() string {
 		return ResolveRuntimePath("", "logs")
 	}
 	return ResolveRuntimePath(c.Paths.Logs, "logs")
+}
+
+func (c *AppConfig) LogRotateSizeMB() (int, bool) {
+	if c == nil || c.LogRotateSize == nil {
+		return 0, false
+	}
+	return *c.LogRotateSize, true
+}
+
+func (c *AppConfig) LogRotateKeepCount() (int, bool) {
+	if c == nil || c.LogRotateKeep == nil {
+		return 0, false
+	}
+	return *c.LogRotateKeep, true
 }
 
 func (c *AppConfig) BackupDir() string {

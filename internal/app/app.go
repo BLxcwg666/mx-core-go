@@ -426,6 +426,12 @@ var processStart = time.Now()
 
 func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 	_ = os.Setenv(nativelog.EnvLogDir, cfg.LogDir())
+	if sizeMB, ok := cfg.LogRotateSizeMB(); ok {
+		_ = os.Setenv(nativelog.EnvLogRotateSizeMB, strconv.Itoa(sizeMB))
+	}
+	if keep, ok := cfg.LogRotateKeepCount(); ok {
+		_ = os.Setenv(nativelog.EnvLogRotateKeep, strconv.Itoa(keep))
+	}
 	_ = os.Setenv(backup.EnvBackupDir, cfg.BackupDir())
 
 	if secret := strings.TrimSpace(cfg.JWTSecret); secret != "" {

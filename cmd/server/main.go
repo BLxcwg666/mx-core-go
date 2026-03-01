@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,6 +27,12 @@ func main() {
 		fallbackLogger.Fatal("failed to load config", zap.String("path", *configPath), zap.Error(err))
 	}
 	_ = os.Setenv(nativelog.EnvLogDir, cfg.LogDir())
+	if sizeMB, ok := cfg.LogRotateSizeMB(); ok {
+		_ = os.Setenv(nativelog.EnvLogRotateSizeMB, strconv.Itoa(sizeMB))
+	}
+	if keep, ok := cfg.LogRotateKeepCount(); ok {
+		_ = os.Setenv(nativelog.EnvLogRotateKeep, strconv.Itoa(keep))
+	}
 
 	logger, err := nativelog.NewZapLogger()
 	if err != nil {

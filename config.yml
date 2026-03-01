@@ -15,6 +15,12 @@ paths:
    logs: ./logs
    backups: ./backups
 
+# Native log rotation settings.
+# log_rotate_size_mb: rotate when current log file exceeds this size (MB).
+# log_rotate_keep: keep N rotated files (0 means truncate without keeping history).
+log_rotate_size_mb: 16
+log_rotate_keep: 10
+
 # Database startup config (MySQL).
 # If `database_url` or `dsn` is set, it has higher priority than `database.*` fields.
 database:
