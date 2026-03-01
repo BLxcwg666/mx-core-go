@@ -3,6 +3,9 @@ package app
 import (
 	"errors"
 	"fmt"
+	search2 "github.com/mx-space/core/internal/modules/content/search"
+	"github.com/mx-space/core/internal/modules/processing/render"
+	"github.com/mx-space/core/internal/modules/serverless"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,13 +32,10 @@ import (
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/processing/ai"
 	"github.com/mx-space/core/internal/modules/processing/markdown"
-	"github.com/mx-space/core/internal/modules/processing/render"
 	"github.com/mx-space/core/internal/modules/processing/say"
-	"github.com/mx-space/core/internal/modules/serverless/serverless"
 	"github.com/mx-space/core/internal/modules/stats/aggregate"
 	"github.com/mx-space/core/internal/modules/stats/analyze"
 	"github.com/mx-space/core/internal/modules/stats/recently"
-	"github.com/mx-space/core/internal/modules/stats/search"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	"github.com/mx-space/core/internal/modules/storage/file"
 	"github.com/mx-space/core/internal/modules/syndication/feed"
@@ -91,7 +91,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Shared services
 	cfgSvc := appconfigs.NewService(db)
-	searchSvc := search.NewService(db, cfgSvc, a.cfg)
+	searchSvc := search2.NewService(db, cfgSvc, a.cfg)
 
 	// Bark push service for rate-limit alerts.
 	barkSvc := bark.New(func() (key, serverURL, siteTitle string) {
@@ -281,7 +281,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	crontask.NewHandler(a.sched, taskSvc).RegisterRoutes(api, authMW)
 
 	// Search
-	search.NewHandler(searchSvc).RegisterRoutes(api, authMW)
+	search2.NewHandler(searchSvc).RegisterRoutes(api, authMW)
 
 	// WebSocket gateway
 	gateway.RegisterRoutes(root, a.hub)

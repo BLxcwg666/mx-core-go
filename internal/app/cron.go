@@ -2,12 +2,12 @@ package app
 
 import (
 	"context"
+	"github.com/mx-space/core/internal/modules/content/search"
 	"time"
 
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/content/link"
-	"github.com/mx-space/core/internal/modules/stats/search"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgcron "github.com/mx-space/core/internal/pkg/cron"
