@@ -142,7 +142,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	go hub.Run(ctx)
 
 	sched := pkgcron.New()
-	registerCronJobs(sched, db)
+	registerCronJobs(sched, db, cfg)
 	go sched.Start(ctx)
 
 	app := &App{cfg: cfg, router: router, db: db, hub: hub, logger: logger, cancel: cancel, sched: sched}
@@ -152,7 +152,10 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 }
 
 // registerCronJobs registers all scheduled background jobs.
-func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB) {
+func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.AppConfig) {
+	cfgSvc := appconfigs.NewService(db)
+	searchSvc := search.NewService(db, cfgSvc, runtimeCfg)
+
 	sched.Register(pkgcron.Job{
 		Name:        "cleanup_analytics",
 		Description: "清理 90 天以上的访问记录",
@@ -187,6 +190,26 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB) {
 		Interval:    24 * time.Hour,
 		Fn: func(ctx context.Context) error {
 			return backup.CreateLocalBackup(db)
+		},
+	})
+
+	sched.Register(pkgcron.Job{
+		Name:        "sync_meilisearch_index",
+		Description: "全量推送搜索索引到 MeiliSearch",
+		Interval:    24 * time.Hour,
+		Fn: func(ctx context.Context) error {
+			cfg, err := cfgSvc.Get()
+			if err != nil {
+				return err
+			}
+			enable := cfg.MeiliSearchOptions.Enable
+			if runtimeCfg != nil && runtimeCfg.MeiliSearch.HasEnable {
+				enable = runtimeCfg.MeiliSearch.Enable
+			}
+			if !enable {
+				return nil
+			}
+			return searchSvc.IndexAll()
 		},
 	})
 }
