@@ -1,11 +1,14 @@
 package pageproxy
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	appcfg "github.com/mx-space/core/internal/config"
@@ -310,4 +313,48 @@ func (h *Handler) adminProxyBasePath() string {
 
 func (h *Handler) adminProxyAssetBasePath() string {
 	return h.adminProxyBasePath() + "/assets"
+}
+
+// newGitHubAPIRequest creates an HTTP request for the GitHub API, adding an
+// Authorization header if a GitHubToken is configured in ThirdPartyServiceIntegration.
+func (h *Handler) newGitHubAPIRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	cfg, err := h.cfgSvc.Get()
+	if err == nil && cfg != nil {
+		token := strings.TrimSpace(cfg.ThirdPartyServiceIntegration.GitHubToken)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+	return req, nil
+}
+
+// CheckAdminLatestVersion queries the GitHub API for the latest release tag
+// of the admin dashboard (mx-space/mx-admin). Returns the tag name or empty
+// string on error.
+func (h *Handler) CheckAdminLatestVersion() (string, error) {
+	req, err := h.newGitHubAPIRequest("GET", "https://api.github.com/repos/mx-space/mx-admin/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github api returned %d", resp.StatusCode)
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+	return release.TagName, nil
 }
