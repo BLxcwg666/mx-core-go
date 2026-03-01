@@ -5,10 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	appconfigs "github.com/mx-space/core/internal/modules/configs"
+	pkgmail "github.com/mx-space/core/internal/pkg/mail"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -122,9 +125,14 @@ func (s *Service) GetSubscribers(bit int) ([]models.SubscribeModel, error) {
 	return subs, err
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc    *Service
+	cfgSvc *appconfigs.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service) *Handler {
+	return &Handler{svc: svc, cfgSvc: cfgSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/subscribe")
@@ -152,11 +160,81 @@ func (h *Handler) subscribe(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	// TODO: In a real system: send verification email here
+	if err := h.sendVerifyEmail(sub.Email, sub.CancelToken); err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	response.Created(c, gin.H{
 		"email":        sub.Email,
 		"cancel_token": sub.CancelToken, // return for dev/testing
 	})
+}
+
+func (h *Handler) sendVerifyEmail(to, token string) error {
+	if h.cfgSvc == nil {
+		return nil
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return err
+	}
+	if cfg == nil || !cfg.MailOptions.Enable {
+		return nil
+	}
+
+	baseURL := firstNonEmpty(cfg.URL.ServerURL, cfg.URL.WebURL)
+	verifyURL, err := buildVerifyURL(baseURL, token)
+	if err != nil {
+		return err
+	}
+
+	mailCfg := pkgmail.Config{
+		Enable: cfg.MailOptions.Enable,
+		From:   cfg.MailOptions.From,
+	}
+	if cfg.MailOptions.SMTP != nil {
+		mailCfg.Host = cfg.MailOptions.SMTP.Options.Host
+		mailCfg.Port = cfg.MailOptions.SMTP.Options.Port
+		mailCfg.User = cfg.MailOptions.SMTP.User
+		mailCfg.Pass = cfg.MailOptions.SMTP.Pass
+	}
+	if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" {
+		mailCfg.UseResend = true
+		mailCfg.ResendKey = cfg.MailOptions.Resend.APIKey
+	}
+
+	sender := pkgmail.New(mailCfg)
+	return sender.SendSubscribeVerify(to, pkgmail.SubscribeVerifyData{
+		VerifyURL: verifyURL,
+	})
+}
+
+func buildVerifyURL(baseURL, token string) (string, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("subscribe verify url is not configured")
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid subscribe verify base url")
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/v2/subscribe/verify"
+	q := u.Query()
+	q.Set("token", token)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (h *Handler) verify(c *gin.Context) {

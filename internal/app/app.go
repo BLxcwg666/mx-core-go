@@ -405,7 +405,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	// Extras
 	say.NewHandler(say.NewService(db)).RegisterRoutes(api, authMW)
 	link.NewHandler(link.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
-	subscribe.NewHandler(subscribe.NewService(db)).RegisterRoutes(api, authMW)
+	subscribe.NewHandler(subscribe.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
