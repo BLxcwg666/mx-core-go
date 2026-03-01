@@ -15,6 +15,7 @@ import (
 	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/storage/backup"
+	"github.com/mx-space/core/internal/modules/storage/imagesync"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -23,9 +24,10 @@ import (
 
 // Handler manages file upload, retrieval, deletion, and orphan cleanup.
 type Handler struct {
-	db        *gorm.DB
-	cfgSvc    *appconfigs.Service
-	staticDir string
+	db           *gorm.DB
+	cfgSvc       *appconfigs.Service
+	staticDir    string
+	imageSyncSvc *imagesync.Service
 }
 
 func NewHandler(db *gorm.DB, cfgSvc ...*appconfigs.Service) *Handler {
@@ -33,11 +35,15 @@ func NewHandler(db *gorm.DB, cfgSvc ...*appconfigs.Service) *Handler {
 	if len(cfgSvc) > 0 {
 		service = cfgSvc[0]
 	}
-	return &Handler{
+	h := &Handler{
 		db:        db,
 		cfgSvc:    service,
 		staticDir: resolveStaticDir(),
 	}
+	if service != nil {
+		h.imageSyncSvc = imagesync.NewService(db, service)
+	}
+	return h
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -130,7 +136,7 @@ func (h *Handler) upload(c *gin.Context) {
 		return
 	}
 
-	if isImageType(typ) {
+	if typ == "photo" {
 		cfg, err := h.loadConfig()
 		if err != nil {
 			response.InternalError(c, err)
@@ -193,7 +199,7 @@ func (h *Handler) upload(c *gin.Context) {
 	root := detectRoot(c.Request.URL.Path)
 	fileURL := h.resolveURL(c, root, typ, filename)
 
-	if typ == "image" || typ == "photo" {
+	if typ == "image" {
 		_ = h.db.Create(&models.FileReferenceModel{
 			FileURL:  fileURL,
 			FileName: filename,
@@ -298,13 +304,48 @@ func (h *Handler) batchUploadToS3(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	results := make([]gin.H, 0, len(dto.URLs))
-	for _, u := range dto.URLs {
-		results = append(results, gin.H{
-			"originalUrl": u,
-			"s3Url":       nil,
-			"error":       "S3 sync is not supported in mx-core-go",
-		})
+	if h.imageSyncSvc == nil {
+		results := make([]gin.H, 0, len(dto.URLs))
+		for _, u := range dto.URLs {
+			results = append(results, gin.H{
+				"originalUrl": u,
+				"s3Url":       nil,
+				"error":       "image storage service not configured",
+			})
+		}
+		response.OK(c, gin.H{"results": results})
+		return
+	}
+	cfg, err := h.loadConfig()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if cfg == nil || !cfg.ImageStorageOptions.Enable || !cfg.ImageStorageOptions.SyncOnPublish {
+		results := make([]gin.H, 0, len(dto.URLs))
+		for _, u := range dto.URLs {
+			results = append(results, gin.H{
+				"originalUrl": u,
+				"s3Url":       nil,
+				"error":       "image storage sync is disabled",
+			})
+		}
+		response.OK(c, gin.H{"results": results})
+		return
+	}
+	syncResults := h.imageSyncSvc.SyncURLs(dto.URLs)
+	results := make([]gin.H, 0, len(syncResults))
+	for _, r := range syncResults {
+		item := gin.H{"originalUrl": r.OriginalURL}
+		if r.S3URL != "" {
+			item["s3Url"] = r.S3URL
+		} else {
+			item["s3Url"] = nil
+		}
+		if r.Error != "" {
+			item["error"] = r.Error
+		}
+		results = append(results, item)
 	}
 	response.OK(c, gin.H{"results": results})
 }
