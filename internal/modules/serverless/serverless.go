@@ -80,7 +80,7 @@ func (h *Handler) reset(c *gin.Context) {
 
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "函数不存在")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handler) reset(c *gin.Context) {
 	err := h.db.First(&snippet, "id = ?", id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "函数不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -120,7 +120,7 @@ func (h *Handler) run(c *gin.Context) {
 	reference := strings.TrimSpace(c.Param("reference"))
 	name := strings.TrimSpace(c.Param("name"))
 	if reference == "" || name == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "函数不存在")
 		return
 	}
 
@@ -133,7 +133,7 @@ func (h *Handler) run(c *gin.Context) {
 		First(&snippet).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			response.NotFoundMsg(c, fmt.Sprintf("serverless function not found: %s/%s", reference, name))
+			response.NotFoundMsg(c, fmt.Sprintf("函数不存在: %s/%s", reference, name))
 			return
 		}
 		response.InternalError(c, err)
@@ -141,7 +141,7 @@ func (h *Handler) run(c *gin.Context) {
 	}
 
 	if !snippet.Enable {
-		response.BadRequest(c, "serverless function is disabled")
+		response.BadRequest(c, "函数已被禁用")
 		return
 	}
 	if snippet.Private && !hasFunctionAccess(c) {

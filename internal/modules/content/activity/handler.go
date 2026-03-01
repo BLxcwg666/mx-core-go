@@ -71,7 +71,7 @@ func (h *Handler) like(c *gin.Context) {
 		return
 	}
 	if tx.RowsAffected == 0 {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 

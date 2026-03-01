@@ -194,7 +194,7 @@ func (h *Handler) auditReason(c *gin.Context) {
 	id := c.Param("id")
 	l, err := h.svc.GetByID(id)
 	if err != nil || l == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "友链不存在")
 		return
 	}
 
@@ -250,7 +250,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if l == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "友链不存在")
 		return
 	}
 	response.OK(c, toResponse(l, true))

@@ -142,7 +142,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if t == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "主题不存在")
 		return
 	}
 	response.OK(c, t)
@@ -155,7 +155,7 @@ func (h *Handler) getBySlug(c *gin.Context) {
 		return
 	}
 	if t == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "主题不存在")
 		return
 	}
 	response.OK(c, t)
@@ -191,7 +191,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if t == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "主题不存在")
 		return
 	}
 	response.OK(c, t)

@@ -79,7 +79,7 @@ func (h *Handler) download(c *gin.Context) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文件不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -132,7 +132,7 @@ func (h *Handler) rollback(c *gin.Context) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文件不存在")
 			return
 		}
 		response.InternalError(c, err)

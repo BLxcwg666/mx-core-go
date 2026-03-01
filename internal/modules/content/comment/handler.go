@@ -107,7 +107,7 @@ func (h *Handler) handleCreateError(c *gin.Context, err error) bool {
 
 func (h *Handler) handleReplyError(c *gin.Context, err error) bool {
 	if errors.Is(err, errCommentParentNotFound) {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "评论不存在")
 		return true
 	}
 	if errors.Is(err, errCommentTooDeep) {
@@ -464,7 +464,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if cm == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "评论不存在")
 		return
 	}
 	h.fillAvatarTree(cm)
@@ -507,7 +507,7 @@ func (h *Handler) updateState(c *gin.Context) {
 		return
 	}
 	if cm == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "评论不存在")
 		return
 	}
 	response.OK(c, toResponse(cm, true))

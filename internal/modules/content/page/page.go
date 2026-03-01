@@ -224,7 +224,7 @@ func (h *Handler) getBySlug(c *gin.Context) {
 		return
 	}
 	if p == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
 	response.OK(c, toResponse(p))
@@ -237,7 +237,7 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		return
 	}
 	if p == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
 	response.OK(c, toResponse(p))
@@ -278,7 +278,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if p == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
 	response.OK(c, toResponse(p))

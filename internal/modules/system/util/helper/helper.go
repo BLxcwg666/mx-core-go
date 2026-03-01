@@ -42,7 +42,7 @@ func (h *Handler) urlBuilderByID(c *gin.Context) {
 	shouldRedirect := redirect == "1" || strings.EqualFold(redirect, "true")
 	if shouldRedirect {
 		if !canRedirect || url == "" {
-			response.NotFoundMsg(c, "not found or this type can not redirect to")
+			response.NotFoundMsg(c, "内容不存在或该类型无法跳转")
 			return
 		}
 		c.Redirect(301, url)

@@ -69,7 +69,7 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		return
 	}
 	if post == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *Handler) getURLBySlug(c *gin.Context) {
 		return
 	}
 	if post == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 	categorySlug := post.Category.Slug
@@ -113,7 +113,7 @@ func (h *Handler) getByCategoryAndSlug(c *gin.Context) {
 		return
 	}
 	if post == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) latest(c *gin.Context) {
 		return
 	}
 	if post == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 	response.OK(c, toResponse(post))
@@ -191,7 +191,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if post == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 

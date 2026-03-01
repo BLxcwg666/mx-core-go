@@ -65,7 +65,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if w == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "Webhook 不存在")
 		return
 	}
 	response.OK(c, toResponse(w))
@@ -112,7 +112,7 @@ func (h *Handler) listEventsByHook(c *gin.Context) {
 func (h *Handler) redispatch(c *gin.Context) {
 	if err := h.svc.Redispatch(c.Param("id")); err != nil {
 		if err.Error() == "event not found" || err.Error() == "hook not found" {
-			response.NotFoundMsg(c, err.Error())
+			response.NotFoundMsg(c, "Webhook 事件不存在")
 			return
 		}
 		response.InternalError(c, err)

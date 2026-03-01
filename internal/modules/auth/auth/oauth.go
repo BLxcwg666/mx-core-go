@@ -74,7 +74,7 @@ func (h *OAuthHandler) redirectToProvider(c *gin.Context) {
 		return
 	}
 	if provider == nil {
-		response.NotFoundMsg(c, "OAuth provider not found or not configured")
+		response.NotFoundMsg(c, "OAuth 提供商未找到或未配置")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *OAuthHandler) signInSocial(c *gin.Context) {
 		return
 	}
 	if provider == nil {
-		response.NotFoundMsg(c, "OAuth provider not found or not configured")
+		response.NotFoundMsg(c, "OAuth 提供商未找到或未配置")
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 		}
 	}
 	if clientID == "" {
-		response.NotFoundMsg(c, "provider not configured")
+		response.NotFoundMsg(c, "OAuth 提供商未配置")
 		return
 	}
 

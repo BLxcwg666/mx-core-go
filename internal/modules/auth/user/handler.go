@@ -153,7 +153,7 @@ func (h *Handler) getMasterInfo(c *gin.Context) {
 		return
 	}
 	if u == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "我还没有主人")
 		return
 	}
 	if !middleware.IsAuthenticated(c) {
@@ -176,7 +176,7 @@ func (h *Handler) updateProfile(c *gin.Context) {
 		return
 	}
 	if u == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "用户不存在")
 		return
 	}
 	response.OK(c, toResponse(u))
@@ -217,7 +217,7 @@ func (h *Handler) changePassword(c *gin.Context) {
 	}
 	if err := h.svc.ChangePassword(userID, dto.OldPassword, dto.NewPassword); err != nil {
 		if errors.Is(err, errWrongPassword) {
-			response.BadRequest(c, "密码不正确")
+			response.ForbiddenMsg(c, "密码不正确")
 			return
 		}
 		if errors.Is(err, errPasswordSameAsOld) {

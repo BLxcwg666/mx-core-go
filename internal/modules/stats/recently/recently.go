@@ -245,7 +245,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if r == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, toResponse(r))
@@ -271,7 +271,7 @@ func (h *Handler) latest(c *gin.Context) {
 		return
 	}
 	if r == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, toResponse(r))
@@ -333,7 +333,7 @@ func (h *Handler) create(c *gin.Context) {
 func (h *Handler) delete(c *gin.Context) {
 	if err := h.svc.Delete(c.Param("id")); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "内容不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -354,7 +354,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if r == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, toResponse(r))

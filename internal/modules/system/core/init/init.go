@@ -49,7 +49,7 @@ func (h *Handler) checkInit(c *gin.Context) {
 // GET /init/configs/default — returns default configs
 func (h *Handler) defaultConfigs(c *gin.Context) {
 	if isInitialized(h.db) {
-		response.ForbiddenMsg(c, "system is already initialized")
+		response.ForbiddenMsg(c, "默认设置在完成注册之后不可见")
 		return
 	}
 	defaults := config.DefaultFullConfig()
@@ -59,7 +59,7 @@ func (h *Handler) defaultConfigs(c *gin.Context) {
 // PATCH /init/configs/:key — update config section unauthenticated
 func (h *Handler) patchConfigKey(c *gin.Context) {
 	if isInitialized(h.db) {
-		response.ForbiddenMsg(c, "system is already initialized")
+		response.ForbiddenMsg(c, "已经完成初始化，请登录后进行设置")
 		return
 	}
 	key := c.Param("key")

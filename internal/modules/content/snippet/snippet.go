@@ -247,8 +247,12 @@ func (h *Handler) getByRef(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	if item == nil || item.Private {
-		response.NotFound(c)
+	if item == nil {
+		response.NotFoundMsg(c, "Snippet 不存在")
+		return
+	}
+	if item.Private {
+		response.ForbiddenMsg(c, "Snippet 是私有的")
 		return
 	}
 	response.OK(c, toResponse(item))
@@ -263,7 +267,7 @@ func (h *Handler) create(c *gin.Context) {
 	item, err := h.svc.Create(&dto)
 	if err != nil {
 		if err.Error() == "snippet already exists" {
-			response.Conflict(c, err.Error())
+			response.Conflict(c, "Snippet 已存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -279,7 +283,7 @@ func (h *Handler) getByID(c *gin.Context) {
 		return
 	}
 	if item == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "Snippet 不存在")
 		return
 	}
 	response.OK(c, toResponse(item))
@@ -297,7 +301,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if item == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "Snippet 不存在")
 		return
 	}
 	response.OK(c, toResponse(item))

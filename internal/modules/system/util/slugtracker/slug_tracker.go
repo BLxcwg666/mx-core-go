@@ -67,7 +67,7 @@ func (h *Handler) redirect(c *gin.Context) {
 		return
 	}
 	if targetID == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, gin.H{"target_id": targetID, "type": refType, "slug": slug})
@@ -83,7 +83,7 @@ func (h *Handler) lookup(c *gin.Context) {
 		return
 	}
 	if targetID == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, gin.H{"target_id": targetID, "type": refType, "slug": slug})

@@ -38,14 +38,14 @@ func (h *Handler) renderArticle(c *gin.Context) {
 	start := time.Now()
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 
 	doc, err := h.loadRenderableByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文章不存在")
 			return
 		}
 		response.InternalError(c, err)

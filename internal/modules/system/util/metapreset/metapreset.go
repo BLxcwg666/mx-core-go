@@ -224,7 +224,7 @@ func (h *Handler) getByID(c *gin.Context) {
 	var item models.MetaPresetModel
 	if err := h.db.First(&item, "id = ?", c.Param("id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "预设字段不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -255,7 +255,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 	if count > 0 {
-		response.Conflict(c, "preset key already exists")
+		response.Conflict(c, "预设字段 key 已存在")
 		return
 	}
 
@@ -307,7 +307,7 @@ func (h *Handler) update(c *gin.Context) {
 	var item models.MetaPresetModel
 	if err := h.db.First(&item, "id = ?", c.Param("id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "预设字段不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -342,7 +342,7 @@ func (h *Handler) update(c *gin.Context) {
 					return
 				}
 				if count > 0 {
-					response.Conflict(c, "preset key already exists")
+					response.Conflict(c, "预设字段 key 已存在")
 					return
 				}
 			}
@@ -405,7 +405,7 @@ func (h *Handler) delete(c *gin.Context) {
 	var item models.MetaPresetModel
 	if err := h.db.First(&item, "id = ?", c.Param("id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "预设字段不存在")
 			return
 		}
 		response.InternalError(c, err)

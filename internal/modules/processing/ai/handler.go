@@ -73,14 +73,14 @@ func (h *Handler) getSummary(c *gin.Context) {
 		return
 	}
 	if onlyDb {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "翻译不存在")
 		return
 	}
 
 	task, err := h.svc.EnqueueSummary(c.Request.Context(), articleID, "", "", lang)
 	if err != nil {
 		if errors.Is(err, errSummaryArticleNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文章不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -109,7 +109,7 @@ func (h *Handler) generateSummary(c *gin.Context) {
 	summary, err := h.generateSummaryNow(c.Request.Context(), dto.RefID, dto.Lang)
 	if err != nil {
 		if errors.Is(err, errSummaryArticleNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文章不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -146,7 +146,7 @@ func (h *Handler) getSummariesByRefID(c *gin.Context) {
 		return
 	}
 	if !ok {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *Handler) updateSummary(c *gin.Context) {
 	var item models.AISummaryModel
 	if err := h.svc.db.First(&item, "id = ?", c.Param("id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "翻译不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -196,7 +196,7 @@ func (h *Handler) deleteSummary(c *gin.Context) {
 		return
 	}
 	if result.RowsAffected == 0 {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "翻译不存在")
 		return
 	}
 	response.NoContent(c)
@@ -393,7 +393,7 @@ func (h *Handler) getModelsForProvider(c *gin.Context) {
 			return
 		}
 	}
-	response.NotFoundMsg(c, "provider not found")
+	response.NotFoundMsg(c, "AI Provider 不存在")
 }
 
 // POST /ai/models/list  [auth]
@@ -525,7 +525,7 @@ func (h *Handler) getDeepReading(c *gin.Context) {
 		return
 	}
 	if dr == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, dr)
@@ -572,13 +572,13 @@ func (h *Handler) testCommentReview(c *gin.Context) {
 		return
 	}
 	if cfg == nil || !cfg.CommentOptions.AIReview {
-		response.BadRequest(c, "AI review is not enabled")
+		response.BadRequest(c, "AI 评论审核未开启")
 		return
 	}
 
 	provider := selectAIProvider(cfg.AI, cfg.AI.CommentReviewModel)
 	if provider == nil || strings.TrimSpace(provider.APIKey) == "" {
-		response.BadRequest(c, "no enabled AI provider")
+		response.BadRequest(c, "没有配置启用的 AI Provider")
 		return
 	}
 

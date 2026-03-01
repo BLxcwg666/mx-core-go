@@ -41,7 +41,7 @@ func (h *Handler) getByQuery(c *gin.Context) {
 		return
 	}
 	if cat == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "分类不存在")
 		return
 	}
 	response.OK(c, cat)
@@ -77,7 +77,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if cat == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "分类不存在")
 		return
 	}
 	response.OK(c, cat)

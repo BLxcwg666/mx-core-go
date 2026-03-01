@@ -103,13 +103,13 @@ func (h *Handler) get(c *gin.Context) {
 	typ := normalizeType(c.Param("type"))
 	name := safeName(c.Param("name"))
 	if typ == "" || name == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文件不存在")
 		return
 	}
 
 	path := filepath.Join(h.staticDir, typ, name)
 	if _, err := os.Stat(path); err != nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文件不存在")
 		return
 	}
 

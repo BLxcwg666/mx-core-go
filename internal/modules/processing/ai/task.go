@@ -54,7 +54,7 @@ func (h *Handler) getTask(c *gin.Context) {
 		return
 	}
 	if task == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "AI 任务不存在")
 		return
 	}
 	response.OK(c, task)
@@ -93,7 +93,7 @@ func (h *Handler) cancelTask(c *gin.Context) {
 		return
 	}
 	if task == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "AI 任务不存在")
 		return
 	}
 	if task.Status == taskqueue.TaskCompleted ||
@@ -121,7 +121,7 @@ func (h *Handler) cancelTask(c *gin.Context) {
 func (h *Handler) retryTask(c *gin.Context) {
 	task, err := h.svc.taskSvc.GetByID(c.Request.Context(), c.Param("id"))
 	if err != nil || task == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "AI 任务不存在")
 		return
 	}
 	if task.Status != taskqueue.TaskFailed && task.Status != taskqueue.TaskCancelled {
@@ -163,7 +163,7 @@ func (h *Handler) createSummaryTask(c *gin.Context) {
 	task, err := h.svc.EnqueueSummary(c.Request.Context(), refID, "", "", strings.TrimSpace(dto.Lang))
 	if err != nil {
 		if errors.Is(err, errSummaryArticleNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文章不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -196,7 +196,7 @@ func (h *Handler) getSummaryTask(c *gin.Context) {
 			return
 		}
 	}
-	response.NotFound(c)
+	response.NotFoundMsg(c, "AI 任务不存在")
 }
 
 func strPtr(s string) *string { return &s }

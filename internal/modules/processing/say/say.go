@@ -170,7 +170,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if item == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, toResponse(item))
@@ -202,7 +202,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if item == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
 	response.OK(c, toResponse(item))

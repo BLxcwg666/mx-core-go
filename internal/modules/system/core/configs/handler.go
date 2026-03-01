@@ -98,7 +98,7 @@ func (h *Handler) getOption(c *gin.Context) {
 		response.OK(c, convertMapKeys(result, snakeToCamelKey))
 		return
 	}
-	response.NotFound(c)
+	response.NotFoundMsg(c, "设置不存在")
 }
 
 // patchOption merges an update into a specific top-level config key (e.g. PATCH /options/oauth).

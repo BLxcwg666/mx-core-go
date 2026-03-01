@@ -45,7 +45,7 @@ func (h *Handler) list(c *gin.Context) {
 func (h *Handler) get(c *gin.Context) {
 	result, err := h.sched.GetTask(c.Param("name"))
 	if err != nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "定时任务不存在")
 		return
 	}
 	response.OK(c, result)
@@ -54,7 +54,7 @@ func (h *Handler) get(c *gin.Context) {
 // POST /cron-task/:name/run — manually trigger a job
 func (h *Handler) run(c *gin.Context) {
 	if err := h.sched.Run(c.Request.Context(), c.Param("name")); err != nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "定时任务不存在")
 		return
 	}
 	response.OK(c, gin.H{"message": "job triggered"})
@@ -99,7 +99,7 @@ func (h *Handler) getTask(c *gin.Context) {
 		return
 	}
 	if task == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "任务不存在")
 		return
 	}
 	response.OK(c, task)
@@ -118,7 +118,7 @@ func (h *Handler) cancelTask(c *gin.Context) {
 func (h *Handler) retryTask(c *gin.Context) {
 	task, err := h.taskSvc.GetByID(c.Request.Context(), c.Param("taskId"))
 	if err != nil || task == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "任务不存在")
 		return
 	}
 	// Re-enqueue with same type + payload, clearing dedupKey

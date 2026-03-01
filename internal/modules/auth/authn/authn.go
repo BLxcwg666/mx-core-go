@@ -44,7 +44,7 @@ func (h *Handler) registerOptions(c *gin.Context) {
 
 	var user models.UserModel
 	if err := h.db.Select("id, username, name").First(&user, "id = ?", userID).Error; err != nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "用户不存在")
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *Handler) registerVerify(c *gin.Context) {
 	}
 	expectedChallenge := authnChallenges.get("registration:" + userID)
 	if expectedChallenge == "" || challenge != expectedChallenge {
-		response.BadRequest(c, "invalid challenge")
+		response.BadRequest(c, "Challenge 不存在")
 		return
 	}
 
@@ -201,7 +201,7 @@ func (h *Handler) authenticationVerify(c *gin.Context) {
 	}
 	expectedChallenge := authnChallenges.get("authentication")
 	if expectedChallenge == "" || challenge != expectedChallenge {
-		response.BadRequest(c, "invalid challenge")
+		response.BadRequest(c, "Challenge 不存在")
 		return
 	}
 
@@ -224,7 +224,7 @@ func (h *Handler) authenticationVerify(c *gin.Context) {
 		return
 	}
 	if count == 0 {
-		response.BadRequest(c, "credential not found")
+		response.BadRequest(c, "认证失败")
 		return
 	}
 

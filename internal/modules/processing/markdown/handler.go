@@ -33,14 +33,14 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 func (h *Handler) renderStructure(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
 
 	article, err := h.loadArticleByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "文章不存在")
 			return
 		}
 		response.InternalError(c, err)

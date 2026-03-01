@@ -320,7 +320,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if d == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "草稿不存在")
 		return
 	}
 	response.OK(c, toResponse(d))
@@ -332,7 +332,7 @@ func (h *Handler) getByRef(c *gin.Context) {
 	d, err := h.svc.GetByRef(refType, refID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "草稿不存在")
 			return
 		}
 		response.InternalError(c, err)
@@ -384,7 +384,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if d == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "草稿不存在")
 		return
 	}
 	response.OK(c, toResponse(d))
@@ -429,7 +429,7 @@ func (h *Handler) historyVersion(c *gin.Context) {
 		return
 	}
 	if snapshot == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "历史版本不存在")
 		return
 	}
 	response.OK(c, gin.H{

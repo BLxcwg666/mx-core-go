@@ -63,7 +63,7 @@ func (h *Handler) getByNID(c *gin.Context) {
 		return
 	}
 	if note == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
 	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
@@ -77,11 +77,11 @@ func (h *Handler) getByID(c *gin.Context) {
 		return
 	}
 	if note == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
 	if !middleware.IsAuthenticated(c) && !note.IsPublished {
-		response.NotFound(c)
+		response.ForbiddenMsg(c, "不要偷看人家的小心思啦~")
 		return
 	}
 	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
@@ -95,7 +95,7 @@ func (h *Handler) latest(c *gin.Context) {
 		return
 	}
 	if note == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
 	response.OK(c, toResponse(note))
@@ -194,7 +194,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if note == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
 	response.OK(c, toResponse(note))

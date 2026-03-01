@@ -195,7 +195,7 @@ func (h *Handler) get(c *gin.Context) {
 		return
 	}
 	if p == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "项目不存在")
 		return
 	}
 	response.OK(c, toResponse(p))
@@ -231,7 +231,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if p == nil {
-		response.NotFound(c)
+		response.NotFoundMsg(c, "项目不存在")
 		return
 	}
 	response.OK(c, toResponse(p))

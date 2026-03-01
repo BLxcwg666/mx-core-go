@@ -38,7 +38,7 @@ func (h *Handler) get(c *gin.Context) {
 	var opt models.OptionModel
 	if err := h.db.Where("name = ?", key).First(&opt).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "设置不存在")
 			return
 		}
 		response.InternalError(c, err)

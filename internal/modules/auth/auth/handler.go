@@ -151,7 +151,7 @@ func (h *Handler) listTokens(c *gin.Context) {
 			return
 		}
 		if t == nil {
-			response.NotFound(c)
+			response.NotFoundMsg(c, "Token 不存在")
 			return
 		}
 		response.OK(c, tokenResponse{
@@ -437,7 +437,7 @@ func (h *Handler) asOwner(c *gin.Context) {
 		return
 	}
 	if res.RowsAffected == 0 {
-		response.NotFoundMsg(c, "reader not found")
+		response.NotFoundMsg(c, "读者不存在")
 		return
 	}
 	response.OK(c, gin.H{"status": true})
