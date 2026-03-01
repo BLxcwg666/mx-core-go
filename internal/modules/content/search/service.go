@@ -8,6 +8,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -17,10 +18,27 @@ type Service struct {
 	cfgSvc  *configs.Service
 	runtime *appcfg.AppConfig
 	meili   *meiliClient
+	logger  *zap.Logger
 }
 
-func NewService(db *gorm.DB, cfgSvc *configs.Service, runtime *appcfg.AppConfig) *Service {
-	return &Service{db: db, cfgSvc: cfgSvc, runtime: runtime}
+func NewService(db *gorm.DB, cfgSvc *configs.Service, runtime *appcfg.AppConfig, opts ...ServiceOption) *Service {
+	s := &Service{db: db, cfgSvc: cfgSvc, runtime: runtime, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// ServiceOption configures a search Service.
+type ServiceOption func(*Service)
+
+// WithLogger sets the logger for the search service.
+func WithLogger(l *zap.Logger) ServiceOption {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l.Named("SearchService")
+		}
+	}
 }
 
 func (s *Service) ensureClient() (*meiliClient, error) {
@@ -61,7 +79,10 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 func (s *Service) Search(q string) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
 		if results, err := client.Search(q); err == nil {
+			s.logger.Debug(fmt.Sprintf("MeiliSearch 搜索命中 %d 条结果", len(results)))
 			return results, servedByMeili, nil
+		} else {
+			s.logger.Debug("MeiliSearch 搜索失败，回退到 MySQL", zap.Error(err))
 		}
 	}
 	results, err := s.mysqlSearch(q)
@@ -276,7 +297,13 @@ func (s *Service) IndexAll() error {
 		})
 	}
 
-	return client.AddDocuments(docs)
+	s.logger.Info(fmt.Sprintf("推送 %d 条文档到 MeiliSearch 索引...", len(docs)))
+	if err := client.AddDocuments(docs); err != nil {
+		s.logger.Warn("MeiliSearch 索引推送失败", zap.Error(err))
+		return err
+	}
+	s.logger.Info("MeiliSearch 索引推送完成")
+	return nil
 }
 
 // IndexDocument upserts one document into MeiliSearch (call after create/update).

@@ -93,8 +93,8 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	apiPrefix := "/api/v2"
 
 	// Shared services
-	cfgSvc := appconfigs.NewService(db)
-	searchSvc := search2.NewService(db, cfgSvc, a.cfg)
+	cfgSvc := appconfigs.NewService(db, appconfigs.WithLogger(a.logger))
+	searchSvc := search2.NewService(db, cfgSvc, a.cfg, search2.WithLogger(a.logger))
 
 	// Bark push service for rate-limit alerts.
 	barkSvc := bark.New(func() (key, serverURL, siteTitle string) {
@@ -260,7 +260,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	topic.NewHandler(topic.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Comments
-	comment.NewHandler(comment.NewService(db), notifySvc).RegisterRoutes(api, authMW)
+	comment.NewHandler(comment.NewService(db), notifySvc, comment.WithLogger(a.logger)).RegisterRoutes(api, authMW)
 
 	// Extras
 	say.NewHandler(say.NewService(db)).RegisterRoutes(api, authMW)
@@ -285,7 +285,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	file.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 
 	// Backups
-	backup.NewHandler(db, cfgSvc, rc).RegisterRoutes(api, authMW)
+	backup.NewHandler(db, cfgSvc, rc, backup.WithLogger(a.logger)).RegisterRoutes(api, authMW)
 
 	// Analytics (admin)
 	analyze.NewHandler(db).RegisterRoutes(api, authMW)

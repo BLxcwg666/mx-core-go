@@ -9,6 +9,8 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Config holds mail provider settings (matches FullConfig.Mail).
@@ -34,11 +36,28 @@ type Message struct {
 
 // Sender sends emails via SMTP or Resend.
 type Sender struct {
-	cfg Config
+	cfg    Config
+	logger *zap.Logger
 }
 
-func New(cfg Config) *Sender {
-	return &Sender{cfg: cfg}
+func New(cfg Config, opts ...SenderOption) *Sender {
+	s := &Sender{cfg: cfg, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// SenderOption configures a mail Sender.
+type SenderOption func(*Sender)
+
+// WithLogger sets the logger for the mail sender.
+func WithLogger(l *zap.Logger) SenderOption {
+	return func(s *Sender) {
+		if l != nil {
+			s.logger = l.Named("MailService")
+		}
+	}
 }
 
 // Send dispatches an email. Uses Resend if configured, otherwise SMTP.
@@ -46,10 +65,16 @@ func (s *Sender) Send(msg Message) error {
 	if !s.cfg.Enable {
 		return nil
 	}
+	var err error
 	if s.cfg.UseResend && s.cfg.ResendKey != "" {
-		return s.sendResend(msg)
+		err = s.sendResend(msg)
+	} else {
+		err = s.sendSMTP(msg)
 	}
-	return s.sendSMTP(msg)
+	if err != nil {
+		s.logger.Warn("邮件发送失败", zap.Strings("to", msg.To), zap.String("subject", msg.Subject), zap.Error(err))
+	}
+	return err
 }
 
 // sendSMTP sends via net/smtp.

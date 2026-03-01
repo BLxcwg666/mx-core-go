@@ -10,12 +10,39 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-type Service struct{ db *gorm.DB }
+type Service struct {
+	db     *gorm.DB
+	logger *zap.Logger
+}
 
-func NewService(db *gorm.DB) *Service { return &Service{db: db} }
+func NewService(db *gorm.DB, opts ...ServiceOption) *Service {
+	return &Service{db: db, logger: zap.NewNop()}
+}
+
+// ServiceOption configures a link Service.
+type ServiceOption func(*Service)
+
+// WithLogger sets the logger for the link service.
+func WithLogger(l *zap.Logger) ServiceOption {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l.Named("LinkService")
+		}
+	}
+}
+
+// NewServiceWithLogger creates a link Service with a logger.
+func NewServiceWithLogger(db *gorm.DB, logger *zap.Logger) *Service {
+	s := &Service{db: db, logger: zap.NewNop()}
+	if logger != nil {
+		s.logger = logger.Named("LinkService")
+	}
+	return s
+}
 
 func (s *Service) List(q pagination.Query, state *models.LinkState) ([]models.LinkModel, response.Pagination, error) {
 	tx := s.db.Model(&models.LinkModel{}).Order("created_at DESC")
@@ -183,21 +210,25 @@ func (s *Service) HealthCheck() map[string]HealthResult {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	for _, l := range links {
+		s.logger.Debug(fmt.Sprintf("检查友链 %s 的健康状态：GET -> %s", l.Name, l.URL))
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
 		cancel()
 		if err != nil {
+			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
 			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
 			continue
 		}
 		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Mix-Space Friend Link Checker; +https://github.com/BLxcwg666/mx-core-go)")
 		resp, err := client.Do(req)
 		if err != nil {
+			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
 			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
 			continue
 		}
 		resp.Body.Close()
 		if resp.StatusCode >= 400 {
+			s.logger.Debug(fmt.Sprintf("友链 %s 不可用：HTTP %d", l.Name, resp.StatusCode))
 			result[l.ID] = HealthResult{ID: l.ID, Status: resp.StatusCode,
 				Message: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 		} else {

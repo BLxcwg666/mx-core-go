@@ -15,11 +15,28 @@ import (
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-func NewHandler(db *gorm.DB, cfgSvc *configs.Service, rc *pkgredis.Client) *Handler {
-	return &Handler{db: db, cfgSvc: cfgSvc, rc: rc}
+func NewHandler(db *gorm.DB, cfgSvc *configs.Service, rc *pkgredis.Client, opts ...HandlerOption) *Handler {
+	h := &Handler{db: db, cfgSvc: cfgSvc, rc: rc, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// HandlerOption configures a backup Handler.
+type HandlerOption func(*Handler)
+
+// WithLogger sets the logger for the backup handler.
+func WithLogger(l *zap.Logger) HandlerOption {
+	return func(h *Handler) {
+		if l != nil {
+			h.logger = l.Named("BackupService")
+		}
+	}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -45,8 +62,10 @@ func (h *Handler) list(c *gin.Context) {
 
 // GET /backups/new
 func (h *Handler) createAndDownload(c *gin.Context) {
+	h.logger.Info("备份数据库中...")
 	buf, err := h.createBackupZip()
 	if err != nil {
+		h.logger.Warn("备份失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
 	}
@@ -65,6 +84,7 @@ func (h *Handler) createAndDownload(c *gin.Context) {
 
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	c.Data(http.StatusOK, "application/zip", buf.Bytes())
+	h.logger.Info(fmt.Sprintf("备份成功：%s", filename))
 }
 
 // GET /backups/:filename
@@ -117,10 +137,12 @@ func (h *Handler) uploadAndRestore(c *gin.Context) {
 	}
 
 	if err := RestoreFromZip(h.db, zr); err != nil {
+		h.logger.Warn("数据恢复失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
 	}
 	h.invalidateRuntimeCaches(c)
+	h.logger.Info("数据恢复成功（上传文件）")
 	response.OK(c, gin.H{"message": "restore successful"})
 }
 
@@ -145,11 +167,14 @@ func (h *Handler) rollback(c *gin.Context) {
 		return
 	}
 
+	h.logger.Info(fmt.Sprintf("回滚备份：%s", filename))
 	if err := RestoreFromZip(h.db, zr); err != nil {
+		h.logger.Warn("回滚失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
 	}
 	h.invalidateRuntimeCaches(c)
+	h.logger.Info("回滚成功")
 	response.OK(c, gin.H{"message": "rollback successful"})
 }
 
@@ -235,10 +260,13 @@ func (h *Handler) uploadToS3(c *gin.Context) {
 	}
 
 	key := renderBackupObjectKey(cfg.BackupOptions.Path, artifact.Filename, now)
+	h.logger.Info(fmt.Sprintf("上传备份到 S3：%s", key))
 	if _, err := uploader.Upload(c.Request.Context(), key, artifact.Buffer.Bytes(), "application/zip"); err != nil {
+		h.logger.Warn("S3 上传失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
 	}
 
+	h.logger.Info("S3 上传成功")
 	response.NoContent(c)
 }

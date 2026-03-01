@@ -7,6 +7,7 @@ import (
 
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -143,6 +144,7 @@ type Handler struct {
 	db     *gorm.DB
 	cfgSvc *configs.Service
 	rc     *pkgredis.Client
+	logger *zap.Logger
 }
 
 type backupManifest struct {

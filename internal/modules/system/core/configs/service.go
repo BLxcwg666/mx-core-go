@@ -8,19 +8,37 @@ import (
 
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // Service manages the persisted FullConfig.
 type Service struct {
-	db  *gorm.DB
-	mu  sync.RWMutex
-	cfg *config.FullConfig
+	db     *gorm.DB
+	mu     sync.RWMutex
+	cfg    *config.FullConfig
+	logger *zap.Logger
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+func NewService(db *gorm.DB, opts ...Option) *Service {
+	s := &Service{db: db, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// Option configures a Service.
+type Option func(*Service)
+
+// WithLogger sets the logger for the configs service.
+func WithLogger(l *zap.Logger) Option {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l.Named("ConfigsService")
+		}
+	}
 }
 
 // Get returns the current config, loading from DB if not cached.
@@ -45,17 +63,21 @@ func (s *Service) load() (*config.FullConfig, error) {
 		defaults := config.DefaultFullConfig()
 		s.cfg = &defaults
 		_ = s.persist(&defaults)
+		s.logger.Info("Config 已经加载完毕！（使用默认配置）")
 		return s.cfg, nil
 	}
 	if err != nil {
+		s.logger.Warn("获取配置失败", zap.Error(err))
 		return nil, err
 	}
 
 	cfg := config.DefaultFullConfig()
 	if err := json.Unmarshal([]byte(opt.Value), &cfg); err != nil {
+		s.logger.Warn("获取配置失败", zap.Error(err))
 		return nil, err
 	}
 	s.cfg = &cfg
+	s.logger.Info("Config 已经加载完毕！")
 	return s.cfg, nil
 }
 

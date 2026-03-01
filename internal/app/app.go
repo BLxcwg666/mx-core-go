@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -15,6 +16,7 @@ import (
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/pkg/cluster"
 	pkgcron "github.com/mx-space/core/internal/pkg/cron"
+	"github.com/mx-space/core/internal/pkg/prettylog"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -41,14 +43,42 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, err
 	}
 
+	if cluster.ShouldLogBootstrap() {
+		sysLogger := logger.Named("System")
+		logDir := cfg.LogDir()
+		backupDir := cfg.BackupDir()
+		staticDir := cfg.StaticDir()
+		sysLogger.Info(prettylog.Blue(fmt.Sprintf("日志目录已经建好：%s", logDir)))
+		sysLogger.Info(prettylog.Blue(fmt.Sprintf("备份目录已经建好：%s", backupDir)))
+		sysLogger.Info(prettylog.Blue(fmt.Sprintf("文件存放目录已经建好：%s", staticDir)))
+	}
+
+	dbLogger := logger.Named("MySQL")
+	if cluster.ShouldLogBootstrap() {
+		dbLogger.Info(prettylog.Green("connecting..."))
+	}
+
 	db, err := database.Connect(cfg, false)
 	if err != nil {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
+	if cluster.ShouldLogBootstrap() {
+		dbLogger.Info(prettylog.Green("readied!"))
+	}
+
+	redisLogger := logger.Named("Redis")
+	if cluster.ShouldLogBootstrap() {
+		redisLogger.Info(prettylog.Green("connecting..."))
+	}
+
 	rc, err := pkgredis.Connect(cfg.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("redis: %w", err)
+	}
+
+	if cluster.ShouldLogBootstrap() {
+		redisLogger.Info(prettylog.Green("readied!"))
 	}
 
 	if cfg.IsDev() {
@@ -60,6 +90,10 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
+
+	gin.DefaultWriter = devNullWriter{}
+	gin.DefaultErrorWriter = os.Stderr
+
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 	router.Use(gin.Recovery())
@@ -96,7 +130,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 
 	sched := pkgcron.New()
 	if cluster.ShouldRunCron() {
-		registerCronJobs(sched, db, cfg)
+		registerCronJobs(sched, db, cfg, logger)
 		go sched.Start(ctx)
 	}
 
@@ -129,3 +163,8 @@ func (a *App) cfgStartTime() time.Time {
 }
 
 var processStart = time.Now()
+
+// devNullWriter discards all writes (used to suppress Gin's debug output).
+type devNullWriter struct{}
+
+func (devNullWriter) Write(p []byte) (int, error) { return len(p), nil }

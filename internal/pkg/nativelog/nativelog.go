@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/pkg/prettylog"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -361,23 +362,24 @@ func parseSessionFileIndex(todayName, fileName string) (int, bool) {
 }
 
 // NewZapLogger creates a zap logger with native log file output and realtime stream.
+// Console output uses the pretty encoder (with colors); file output uses plain text.
 func NewZapLogger() (*zap.Logger, error) {
 	writer, err := NewWriter()
 	if err != nil {
 		return nil, err
 	}
 
-	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
+	level := zap.NewAtomicLevelAt(zap.DebugLevel)
 
-	encoder := zapcore.NewConsoleEncoder(encoderConfig)
+	consoleEncoder := prettylog.NewEncoder(prettylog.ShouldColor())
+	fileEncoder := prettylog.NewEncoder(false)
+
 	core := zapcore.NewTee(
-		zapcore.NewCore(encoder, zapcore.Lock(os.Stdout), level),
-		zapcore.NewCore(encoder, zapcore.AddSync(writer), level),
+		zapcore.NewCore(consoleEncoder, zapcore.Lock(os.Stdout), level),
+		zapcore.NewCore(fileEncoder, zapcore.AddSync(writer), level),
 	)
 
-	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	logger := zap.New(core)
 	_ = zap.RedirectStdLog(logger)
 	return logger, nil
 }

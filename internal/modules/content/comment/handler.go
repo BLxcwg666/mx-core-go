@@ -15,6 +15,7 @@ import (
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -22,13 +23,31 @@ type Handler struct {
 	svc       *Service
 	cfgSvc    *appconfigs.Service
 	notifySvc *notify.Service
+	logger    *zap.Logger
 }
 
-func NewHandler(svc *Service, notifySvc *notify.Service) *Handler {
-	return &Handler{
+func NewHandler(svc *Service, notifySvc *notify.Service, opts ...HandlerOption) *Handler {
+	h := &Handler{
 		svc:       svc,
 		cfgSvc:    appconfigs.NewService(svc.db),
 		notifySvc: notifySvc,
+		logger:    zap.NewNop(),
+	}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// HandlerOption configures a comment Handler.
+type HandlerOption func(*Handler)
+
+// WithLogger sets the logger for the comment handler.
+func WithLogger(l *zap.Logger) HandlerOption {
+	return func(h *Handler) {
+		if l != nil {
+			h.logger = l.Named("CommentService")
+		}
 	}
 }
 
@@ -97,6 +116,7 @@ func (h *Handler) checkSpamAndMark(cm *models.CommentModel) bool {
 		masterName = user.Name
 	}
 	if checkSpam(cm, &cfg.CommentOptions, masterName) {
+		h.logger.Warn("检测到垃圾评论", zap.String("author", cm.Author), zap.String("ip", cm.IP))
 		_, _ = h.svc.UpdateState(cm.ID, models.CommentJunk)
 		return true
 	}

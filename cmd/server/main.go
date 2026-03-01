@@ -18,6 +18,7 @@ import (
 	"github.com/mx-space/core/internal/database"
 	"github.com/mx-space/core/internal/pkg/cluster"
 	"github.com/mx-space/core/internal/pkg/nativelog"
+	"github.com/mx-space/core/internal/pkg/prettylog"
 	"github.com/mx-space/core/internal/pkg/proctitle"
 	"go.uber.org/zap"
 )
@@ -66,13 +67,9 @@ func main() {
 	role := resolveRole(*clusterEnabled)
 	setProcessTitle(role, cfg.Env)
 
+	// Match mx-core: log ENV on startup.
 	if cluster.ShouldLogBootstrap() {
-		logger.Info("runtime mode",
-			zap.String("role", role),
-			zap.Bool("cluster", *clusterEnabled),
-			zap.Int("cluster_workers", *clusterWorkers),
-			zap.Int("worker_id", cluster.WorkerID()),
-		)
+		logger.Info("ENV: " + resolveEnv(cfg.Env))
 	}
 
 	opts := cluster.Options{
@@ -112,9 +109,25 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 	}
 
 	if cluster.ShouldLogBootstrap() {
-		logger.Info("server starting", zap.String("addr", srv.Addr))
-		logger.Info("admin local dashboard", zap.String("url", "http://localhost"+srv.Addr+application.AdminProxyPath()))
-		logger.Info("admin dev dashboard proxy", zap.String("url", "http://localhost"+srv.Addr+application.AdminProxyDevPath()))
+		pid := os.Getpid()
+		prefix := "P"
+		if cluster.IsWorker() {
+			prefix = "W"
+		}
+		url := "http://localhost" + srv.Addr
+
+		logger.Info(
+			fmt.Sprintf("[%s%d] Server listen on: %s", prefix, pid, url),
+			prettylog.SuccessField(),
+		)
+		logger.Info(
+			fmt.Sprintf("[%s%d] Admin Local Dashboard: %s%s", prefix, pid, url, application.AdminProxyPath()),
+			prettylog.SuccessField(),
+		)
+		logger.Info(
+			fmt.Sprintf("[%s%d] Admin Dev Dashboard Proxy: %s%s", prefix, pid, url, application.AdminProxyDevPath()),
+		)
+		logger.Info(fmt.Sprintf("Server is up. %s", prettylog.Yellow(fmt.Sprintf("+%dms", prettylog.UptimeMs()))))
 	}
 
 	serveErrCh := make(chan error, 1)
@@ -162,7 +175,7 @@ func resolveRole(clusterEnabled bool) string {
 	return "single"
 }
 
-func setProcessTitle(role string, fallbackEnv string) {
+func resolveEnv(fallbackEnv string) string {
 	env := strings.TrimSpace(os.Getenv("NODE_ENV"))
 	if env == "" {
 		env = strings.TrimSpace(fallbackEnv)
@@ -170,6 +183,11 @@ func setProcessTitle(role string, fallbackEnv string) {
 	if env == "" {
 		env = "development"
 	}
+	return env
+}
+
+func setProcessTitle(role string, fallbackEnv string) {
+	env := resolveEnv(fallbackEnv)
 
 	clusterRole := "master"
 	if role == cluster.RoleWorker {
