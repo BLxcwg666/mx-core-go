@@ -41,6 +41,9 @@ func Load(configPath string) (*AppConfig, error) {
 	if cfg.Redis.DB < 0 {
 		return nil, fmt.Errorf("invalid redis.db %d in %q, expected >= 0", cfg.Redis.DB, path)
 	}
+	if cfg.ClusterWorkers < 0 {
+		return nil, fmt.Errorf("invalid cluster_workers %d in %q, expected >= 0", cfg.ClusterWorkers, path)
+	}
 	if cfg.MeiliSearch.Port < 1 || cfg.MeiliSearch.Port > 65535 {
 		return nil, fmt.Errorf("invalid meilisearch.port %d in %q, expected 1-65535", cfg.MeiliSearch.Port, path)
 	}
@@ -92,6 +95,12 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	}
 	if v := strings.TrimSpace(raw.NodeEnv); v != "" {
 		cfg.Env = v
+	}
+	if raw.Cluster != nil {
+		cfg.Cluster = *raw.Cluster
+	}
+	if raw.ClusterWorkers != 0 {
+		cfg.ClusterWorkers = raw.ClusterWorkers
 	}
 	if v := strings.TrimSpace(raw.MXAdmin); v != "" {
 		cfg.MXAdmin = v

@@ -29,6 +29,7 @@
 我懒得写 go test file，所以没有 test 环节  
 - 启动：`go run ./cmd/server`
 - 指定配置文件：`go run ./cmd/server --config ./config.yml`（若未指定则使用二进制同级目录的`config.yml`）
+- 集群模式：`go run ./cmd/server --cluster --cluster_workers 2`
 
 # 许可
 

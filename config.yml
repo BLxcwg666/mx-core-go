@@ -4,6 +4,12 @@
 port: 2333
 env: development
 
+# Cluster mode (compatible with mx-core style flags/env).
+# - CLI: --cluster --cluster_workers 2
+# - ENV: CLUSTER=true CLUSTER_WORKERS=2
+cluster: false
+cluster_workers: 0
+
 # Admin dashboard build output path (served by API at /proxy/qaqdmin).
 # Example: ../mx-admin/dist or ./admin
 mx-admin: ./admin

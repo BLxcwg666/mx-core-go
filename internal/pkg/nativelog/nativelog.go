@@ -82,30 +82,36 @@ func (w *Writer) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	path := filepath.Join(w.dir, TodayFilename(time.Now()))
-	if err := w.rotateIfNeeded(path, int64(len(p))); err != nil {
-		return 0, err
-	}
+	n := 0
+	lockErr := withProcessLogLock(func() error {
+		path := filepath.Join(w.dir, TodayFilename(time.Now()))
+		if err := w.rotateIfNeeded(path, int64(len(p))); err != nil {
+			return err
+		}
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, defaultLogFilePerm)
-	if err != nil {
-		return 0, err
-	}
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, defaultLogFilePerm)
+		if err != nil {
+			return err
+		}
 
-	n, writeErr := file.Write(p)
-	closeErr := file.Close()
+		wrote, writeErr := file.Write(p)
+		n = wrote
+		closeErr := file.Close()
+
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		return nil
+	})
 
 	if n > 0 {
 		Publish(string(p[:n]))
 	}
 
-	if writeErr != nil {
-		return n, writeErr
-	}
-	if closeErr != nil {
-		return n, closeErr
-	}
-	return n, nil
+	return n, lockErr
 }
 
 func (w *Writer) Sync() error {
@@ -113,24 +119,26 @@ func (w *Writer) Sync() error {
 }
 
 func (w *Writer) prepareTodayFile() error {
-	path := filepath.Join(w.dir, TodayFilename(time.Now()))
-	info, err := os.Stat(path)
-	switch {
-	case err == nil:
-		if info.Size() > 0 {
-			if err := w.rotate(path); err != nil {
-				return err
+	return withProcessLogLock(func() error {
+		path := filepath.Join(w.dir, TodayFilename(time.Now()))
+		info, err := os.Stat(path)
+		switch {
+		case err == nil:
+			if info.Size() > 0 {
+				if err := w.rotate(path); err != nil {
+					return err
+				}
 			}
+		case !errors.Is(err, os.ErrNotExist):
+			return err
 		}
-	case !errors.Is(err, os.ErrNotExist):
-		return err
-	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, defaultLogFilePerm)
-	if err != nil {
-		return err
-	}
-	return file.Close()
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, defaultLogFilePerm)
+		if err != nil {
+			return err
+		}
+		return file.Close()
+	})
 }
 
 func (w *Writer) rotateIfNeeded(path string, incoming int64) error {

@@ -10,6 +10,7 @@ import (
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	"github.com/mx-space/core/internal/modules/storage/file"
+	"github.com/mx-space/core/internal/pkg/cluster"
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/nativelog"
 	"go.uber.org/zap"
@@ -29,7 +30,9 @@ func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 	if secret := strings.TrimSpace(cfg.JWTSecret); secret != "" {
 		jwtpkg.SetSecret(secret)
 	} else {
-		logger.Warn("jwt_secret is empty, using built-in default secret")
+		if cluster.ShouldLogBootstrap() {
+			logger.Warn("jwt_secret is empty, using built-in default secret")
+		}
 	}
 
 	tz := strings.TrimSpace(cfg.Timezone)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/pkg/cluster"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -13,13 +14,55 @@ import (
 // DB is the global database instance.
 var DB *gorm.DB
 
-// Connect opens a MySQL connection and runs auto-migration.
-func Connect(cfg *config.AppConfig) (*gorm.DB, error) {
-	logLevel := logger.Warn
-	if cfg.IsDev() {
-		logLevel = logger.Info
+// Connect opens a MySQL connection and optionally runs auto-migration.
+func Connect(cfg *config.AppConfig, autoMigrate bool) (*gorm.DB, error) {
+	db, err := openDB(cfg, resolveLogLevel(cfg))
+	if err != nil {
+		return nil, err
 	}
 
+	if autoMigrate {
+		if err := migrate(db); err != nil {
+			return nil, fmt.Errorf("migration failed: %w", err)
+		}
+	}
+
+	DB = db
+	return db, nil
+}
+
+// EnsureSchema applies database migration in a short-lived setup connection.
+func EnsureSchema(cfg *config.AppConfig) error {
+	db, err := openDB(cfg, resolveLogLevel(cfg))
+	if err != nil {
+		return err
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("resolve sql db: %w", err)
+	}
+	defer sqlDB.Close()
+
+	if err := migrate(db); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+	return nil
+}
+
+func resolveLogLevel(cfg *config.AppConfig) logger.LogLevel {
+	logLevel := logger.Warn
+	if cfg.IsDev() {
+		if cluster.ShouldLogDevDiagnostics() {
+			logLevel = logger.Info
+		} else {
+			logLevel = logger.Silent
+		}
+	}
+	return logLevel
+}
+
+func openDB(cfg *config.AppConfig, logLevel logger.LogLevel) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.New(mysql.Config{
 		DSN:               cfg.DSN,
 		DefaultStringSize: 191,
@@ -29,12 +72,6 @@ func Connect(cfg *config.AppConfig) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database connection failed: %w", err)
 	}
-
-	if err := migrate(db); err != nil {
-		return nil, fmt.Errorf("migration failed: %w", err)
-	}
-
-	DB = db
 	return db, nil
 }
 

@@ -8,6 +8,8 @@ type AppConfig struct {
 	Database       DatabaseRuntimeConfig    `yaml:"database"`
 	Redis          RedisRuntimeConfig       `yaml:"redis"`
 	Env            string                   `yaml:"env"` // "development" | "production"
+	Cluster        bool                     `yaml:"cluster"`
+	ClusterWorkers int                      `yaml:"cluster_workers"`
 	MXAdmin        string                   `yaml:"mx-admin"`
 	Paths          RuntimePathsConfig       `yaml:"paths"`
 	LogRotateSize  *int                     `yaml:"log_rotate_size_mb"`
@@ -85,6 +87,8 @@ type rawAppConfig struct {
 	RedisTLS           *bool                `yaml:"redis_tls"`
 	Env                string               `yaml:"env"`
 	NodeEnv            string               `yaml:"node_env"`
+	Cluster            *bool                `yaml:"cluster"`
+	ClusterWorkers     int                  `yaml:"cluster_workers"`
 	MXAdmin            string               `yaml:"mx-admin"`
 	MXAdminSnake       string               `yaml:"mx_admin"`
 	Paths              rawPathsConfig       `yaml:"paths"`

@@ -13,6 +13,7 @@ import (
 	"github.com/mx-space/core/internal/database"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/pkg/cluster"
 	pkgcron "github.com/mx-space/core/internal/pkg/cron"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"go.uber.org/zap"
@@ -40,7 +41,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, err
 	}
 
-	db, err := database.Connect(cfg)
+	db, err := database.Connect(cfg, false)
 	if err != nil {
 		return nil, fmt.Errorf("database: %w", err)
 	}
@@ -50,7 +51,13 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("redis: %w", err)
 	}
 
-	if !cfg.IsDev() {
+	if cfg.IsDev() {
+		gin.SetMode(gin.DebugMode)
+		if !cluster.ShouldLogDevDiagnostics() {
+			gin.DebugPrintRouteFunc = func(string, string, string, int) {}
+			gin.DebugPrintFunc = func(string, ...interface{}) {}
+		}
+	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()
@@ -88,8 +95,10 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	go hub.Run(ctx)
 
 	sched := pkgcron.New()
-	registerCronJobs(sched, db, cfg)
-	go sched.Start(ctx)
+	if cluster.ShouldRunCron() {
+		registerCronJobs(sched, db, cfg)
+		go sched.Start(ctx)
+	}
 
 	app := &App{cfg: cfg, router: router, db: db, hub: hub, logger: logger, cancel: cancel, sched: sched}
 	app.registerRoutes(rc)
