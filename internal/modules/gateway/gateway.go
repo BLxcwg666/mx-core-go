@@ -309,26 +309,40 @@ func (h *Hub) unsubscribeStdout(sid string) {
 }
 
 func (h *Hub) emitNativeLogSnapshot(client *socketio.Socket) {
-	path := nativelog.TodayFilePath(time.Now())
-	file, err := os.Open(path)
+	paths, err := nativelog.SnapshotFilesSinceStartup(time.Now())
 	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("gateway log snapshot resolve failed", zap.Error(err))
+		}
 		return
 	}
-	defer file.Close()
+	if len(paths) == 0 {
+		return
+	}
 
 	buf := make([]byte, nativeLogSnapshotChunkSize)
-	for {
-		n, readErr := file.Read(buf)
-		if n > 0 {
-			_ = client.Emit("message", h.gatewayMessageFormat("STDOUT", string(buf[:n]), nil))
-		}
-		if readErr == nil {
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			if h.logger != nil {
+				h.logger.Warn("gateway log snapshot open failed", zap.String("path", path), zap.Error(err))
+			}
 			continue
 		}
-		if !errors.Is(readErr, io.EOF) && h.logger != nil {
-			h.logger.Warn("gateway log snapshot read failed", zap.String("path", path), zap.Error(readErr))
+		for {
+			n, readErr := file.Read(buf)
+			if n > 0 {
+				_ = client.Emit("message", h.gatewayMessageFormat("STDOUT", string(buf[:n]), nil))
+			}
+			if readErr == nil {
+				continue
+			}
+			if !errors.Is(readErr, io.EOF) && h.logger != nil {
+				h.logger.Warn("gateway log snapshot read failed", zap.String("path", path), zap.Error(readErr))
+			}
+			break
 		}
-		break
+		_ = file.Close()
 	}
 }
 
