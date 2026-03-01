@@ -1,10 +1,17 @@
 package file
 
 import (
+	"crypto/md5"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,7 +19,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/backup"
+	appconfigs "github.com/mx-space/core/internal/modules/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -20,12 +30,18 @@ import (
 
 type Handler struct {
 	db        *gorm.DB
+	cfgSvc    *appconfigs.Service
 	staticDir string
 }
 
-func NewHandler(db *gorm.DB) *Handler {
+func NewHandler(db *gorm.DB, cfgSvc ...*appconfigs.Service) *Handler {
+	var service *appconfigs.Service
+	if len(cfgSvc) > 0 {
+		service = cfgSvc[0]
+	}
 	return &Handler{
 		db:        db,
+		cfgSvc:    service,
 		staticDir: filepath.Join(".", "static"),
 	}
 }
@@ -120,6 +136,54 @@ func (h *Handler) upload(c *gin.Context) {
 		return
 	}
 
+	if isImageType(typ) {
+		cfg, err := h.loadConfig()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if cfg != nil && cfg.ImageBedOptions.Enable {
+			if err := validateImageBedFile(fileHeader.Filename, fileHeader.Size, cfg.ImageBedOptions.AllowedFormats, cfg.ImageBedOptions.MaxSizeMB); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			file, err := fileHeader.Open()
+			if err != nil {
+				response.InternalError(c, err)
+				return
+			}
+			defer file.Close()
+			payload, err := io.ReadAll(file)
+			if err != nil {
+				response.InternalError(c, err)
+				return
+			}
+			if err := validateImageBedFile(fileHeader.Filename, int64(len(payload)), cfg.ImageBedOptions.AllowedFormats, cfg.ImageBedOptions.MaxSizeMB); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			uploader, err := backup.NewS3Uploader(cfg.S3Options)
+			if err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			now := time.Now()
+			objectKey := renderImageBedObjectKey(cfg.ImageBedOptions.Path, fileHeader.Filename, payload, now)
+			contentType := detectContentType(fileHeader.Filename, payload, fileHeader.Header.Get("Content-Type"))
+			s3URL, err := uploader.Upload(c.Request.Context(), objectKey, payload, contentType)
+			if err != nil {
+				response.InternalError(c, err)
+				return
+			}
+			response.OK(c, gin.H{
+				"url":     s3URL,
+				"name":    filepath.Base(objectKey),
+				"storage": "s3",
+			})
+			return
+		}
+	}
+
 	filename := buildFileName(fileHeader.Filename)
 	dir := filepath.Join(h.staticDir, typ)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -148,6 +212,13 @@ func (h *Handler) upload(c *gin.Context) {
 		"name":    filename,
 		"storage": "local",
 	})
+}
+
+func (h *Handler) loadConfig() (*appcfg.FullConfig, error) {
+	if h.cfgSvc == nil {
+		return nil, nil
+	}
+	return h.cfgSvc.Get()
 }
 
 func (h *Handler) delete(c *gin.Context) {
@@ -325,6 +396,137 @@ func buildFileName(original string) string {
 		ext = ".dat"
 	}
 	return strings.ReplaceAll(uuid.NewString(), "-", "")[:18] + ext
+}
+
+var strTokenPattern = regexp.MustCompile(`\{str-(\d+)\}`)
+
+func renderImageBedObjectKey(template, originalName string, payload []byte, now time.Time) string {
+	tpl := strings.TrimSpace(template)
+	if tpl == "" {
+		tpl = "images/{Y}/{m}/{uuid}.{ext}"
+	}
+
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(originalName)), ".")
+	if ext == "" {
+		ext = "dat"
+	}
+
+	filename := strings.TrimSuffix(filepath.Base(strings.TrimSpace(originalName)), filepath.Ext(strings.TrimSpace(originalName)))
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		filename = "file"
+	}
+
+	sum := md5.Sum(payload)
+	md5Hex := hex.EncodeToString(sum[:])
+	uuidValue := strings.ReplaceAll(uuid.NewString(), "-", "")
+
+	replacer := strings.NewReplacer(
+		"{Y}", now.Format("2006"),
+		"{y}", now.Format("06"),
+		"{m}", now.Format("01"),
+		"{d}", now.Format("02"),
+		"{h}", now.Format("15"),
+		"{i}", now.Format("04"),
+		"{s}", now.Format("05"),
+		"{timestamp}", strconv.FormatInt(now.Unix(), 10),
+		"{uuid}", uuidValue,
+		"{md5}", md5Hex,
+		"{md5-16}", md5Hex[:16],
+		"{filename}", filename,
+		"{ext}", ext,
+	)
+
+	key := replacer.Replace(tpl)
+	key = strTokenPattern.ReplaceAllStringFunc(key, func(token string) string {
+		matches := strTokenPattern.FindStringSubmatch(token)
+		if len(matches) != 2 {
+			return token
+		}
+		n, err := strconv.Atoi(matches[1])
+		if err != nil || n <= 0 {
+			return token
+		}
+		if n > 128 {
+			n = 128
+		}
+		return randomString(n)
+	})
+
+	key = strings.ReplaceAll(key, "\\", "/")
+	key = strings.TrimSpace(strings.TrimPrefix(key, "/"))
+	for strings.Contains(key, "//") {
+		key = strings.ReplaceAll(key, "//", "/")
+	}
+	if key == "" {
+		return fmt.Sprintf("images/%s/%s/%s.%s", now.Format("2006"), now.Format("01"), uuidValue, ext)
+	}
+	return key
+}
+
+func validateImageBedFile(filename string, size int64, allowedFormats string, maxSizeMB int) error {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(strings.TrimSpace(filename))), ".")
+	if ext == "" {
+		return fmt.Errorf("image format is required")
+	}
+	if maxSizeMB > 0 && size > int64(maxSizeMB)*1024*1024 {
+		return fmt.Errorf("image size exceeds %dMB", maxSizeMB)
+	}
+
+	allowSet := make(map[string]struct{})
+	for _, item := range strings.Split(allowedFormats, ",") {
+		item = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(item)), ".")
+		if item == "" {
+			continue
+		}
+		allowSet[item] = struct{}{}
+	}
+	if len(allowSet) == 0 {
+		return nil
+	}
+	if _, ok := allowSet[ext]; !ok {
+		return fmt.Errorf("image format .%s is not allowed", ext)
+	}
+	return nil
+}
+
+func detectContentType(filename string, payload []byte, fallback string) string {
+	contentType := strings.TrimSpace(fallback)
+	if contentType != "" {
+		return contentType
+	}
+	if ext := strings.ToLower(filepath.Ext(strings.TrimSpace(filename))); ext != "" {
+		if guessed := mime.TypeByExtension(ext); guessed != "" {
+			return guessed
+		}
+	}
+	if len(payload) > 0 {
+		return http.DetectContentType(payload)
+	}
+	return "application/octet-stream"
+}
+
+func randomString(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	if n <= 0 {
+		return ""
+	}
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		fallback := strings.ReplaceAll(uuid.NewString(), "-", "")
+		for len(fallback) < n {
+			fallback += strings.ReplaceAll(uuid.NewString(), "-", "")
+		}
+		return fallback[:n]
+	}
+	for i := range buf {
+		buf[i] = letters[int(buf[i])%len(letters)]
+	}
+	return string(buf)
+}
+
+func isImageType(typ string) bool {
+	return typ == "image" || typ == "photo"
 }
 
 func normalizeType(raw string) string {

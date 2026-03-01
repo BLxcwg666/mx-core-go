@@ -422,7 +422,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Markdown import/export
 	markdown.NewHandler(db).RegisterRoutes(api, authMW)
-	file.NewHandler(db).RegisterRoutes(api, authMW)
+	file.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 
 	// Backups
 	backup.NewHandler(db, cfgSvc, rc).RegisterRoutes(api, authMW)

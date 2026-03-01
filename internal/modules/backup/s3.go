@@ -3,18 +3,15 @@ package backup
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	appcfg "github.com/mx-space/core/internal/config"
 )
 
@@ -22,11 +19,19 @@ type s3Uploader struct {
 	endpoint     *url.URL
 	bucket       string
 	region       string
-	accessKey    string
-	secretKey    string
 	customDomain string
 	pathStyle    bool
-	client       *http.Client
+	client       *s3.Client
+}
+
+// S3Uploader uploads binary payloads to S3-compatible object storage.
+type S3Uploader interface {
+	Upload(ctx context.Context, objectKey string, payload []byte, contentType string) (string, error)
+}
+
+// NewS3Uploader creates an uploader from runtime S3 options.
+func NewS3Uploader(opts appcfg.S3Options) (S3Uploader, error) {
+	return newS3Uploader(opts)
 }
 
 func newS3Uploader(opts appcfg.S3Options) (*s3Uploader, error) {
@@ -38,18 +43,18 @@ func newS3Uploader(opts appcfg.S3Options) (*s3Uploader, error) {
 		return nil, fmt.Errorf("incomplete s3 config: bucket/region/access_key_id/secret_access_key are required")
 	}
 
-	endpoint := strings.TrimSpace(opts.Endpoint)
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("https://s3.%s.amazonaws.com", region)
-	}
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		endpoint = "https://" + endpoint
-	}
-	endpoint = strings.TrimSuffix(endpoint, "/")
-
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid s3 endpoint: %s", endpoint)
+	endpointText := strings.TrimSpace(opts.Endpoint)
+	var endpointURL *url.URL
+	if endpointText != "" {
+		if !strings.HasPrefix(endpointText, "http://") && !strings.HasPrefix(endpointText, "https://") {
+			endpointText = "https://" + endpointText
+		}
+		endpointText = strings.TrimSuffix(endpointText, "/")
+		parsed, err := url.Parse(endpointText)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, fmt.Errorf("invalid s3 endpoint: %s", endpointText)
+		}
+		endpointURL = parsed
 	}
 
 	pathStyle := opts.PathStyleAccess
@@ -57,15 +62,25 @@ func newS3Uploader(opts appcfg.S3Options) (*s3Uploader, error) {
 		pathStyle = true
 	}
 
+	awsCfg := aws.Config{
+		Region:      region,
+		HTTPClient:  &http.Client{Timeout: 45 * time.Second},
+		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
+	}
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.UsePathStyle = pathStyle
+		if endpointURL != nil {
+			o.BaseEndpoint = aws.String(endpointURL.String())
+		}
+	})
+
 	return &s3Uploader{
-		endpoint:     parsed,
+		endpoint:     endpointURL,
 		bucket:       bucket,
 		region:       region,
-		accessKey:    accessKey,
-		secretKey:    secretKey,
 		customDomain: strings.TrimRight(strings.TrimSpace(opts.CustomDomain), "/"),
 		pathStyle:    pathStyle,
-		client:       &http.Client{Timeout: 45 * time.Second},
+		client:       client,
 	}, nil
 }
 
@@ -78,115 +93,53 @@ func (u *s3Uploader) Upload(ctx context.Context, objectKey string, payload []byt
 		contentType = "application/octet-stream"
 	}
 
-	requestURL, canonicalURI, host, err := u.buildTarget(key)
+	_, err := u.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(u.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(payload),
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(int64(len(payload))),
+	})
 	if err != nil {
-		return "", err
-	}
-
-	now := time.Now().UTC()
-	xAmzDate := now.Format("20060102T150405Z")
-	dateStamp := now.Format("20060102")
-	payloadHash := sha256Hex(payload)
-
-	headers := map[string]string{
-		"content-length":       strconv.Itoa(len(payload)),
-		"content-type":         contentType,
-		"host":                 host,
-		"x-amz-content-sha256": payloadHash,
-		"x-amz-date":           xAmzDate,
-	}
-
-	sortedKeys := make([]string, 0, len(headers))
-	for k := range headers {
-		sortedKeys = append(sortedKeys, k)
-	}
-	sort.Strings(sortedKeys)
-
-	canonicalHeaderLines := make([]string, 0, len(sortedKeys))
-	signedHeaders := make([]string, 0, len(sortedKeys))
-	for _, k := range sortedKeys {
-		canonicalHeaderLines = append(canonicalHeaderLines, k+":"+strings.TrimSpace(headers[k]))
-		signedHeaders = append(signedHeaders, k)
-	}
-	canonicalHeaders := strings.Join(canonicalHeaderLines, "\n")
-	signedHeadersStr := strings.Join(signedHeaders, ";")
-
-	canonicalRequest := strings.Join([]string{
-		http.MethodPut,
-		canonicalURI,
-		"",
-		canonicalHeaders + "\n",
-		signedHeadersStr,
-		payloadHash,
-	}, "\n")
-
-	credentialScope := dateStamp + "/" + u.region + "/s3/aws4_request"
-	stringToSign := strings.Join([]string{
-		"AWS4-HMAC-SHA256",
-		xAmzDate,
-		credentialScope,
-		sha256Hex([]byte(canonicalRequest)),
-	}, "\n")
-
-	signingKey := deriveSigningKey(u.secretKey, dateStamp, u.region, "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-	authorization := "AWS4-HMAC-SHA256 Credential=" + u.accessKey + "/" + credentialScope +
-		", SignedHeaders=" + signedHeadersStr +
-		", Signature=" + signature
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, requestURL, bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Host = host
-	for _, k := range sortedKeys {
-		req.Header.Set(k, headers[k])
-	}
-	req.Header.Set("Authorization", authorization)
-
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-		return "", fmt.Errorf("s3 upload failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("s3 upload failed: %w", err)
 	}
 
 	return u.publicURL(key), nil
 }
 
-func (u *s3Uploader) buildTarget(objectKey string) (requestURL, canonicalURI, host string, err error) {
+func (u *s3Uploader) publicURL(objectKey string) string {
 	encodedKey := encodeObjectKey(objectKey)
-	basePath := strings.TrimSuffix(u.endpoint.Path, "/")
+	if u.customDomain != "" {
+		return u.customDomain + "/" + encodedKey
+	}
+
+	if u.endpoint != nil {
+		endpoint := *u.endpoint
+		endpoint.RawQuery = ""
+		endpoint.Fragment = ""
+
+		if u.pathStyle {
+			endpoint.Path = joinURLPath(endpoint.Path, u.bucket, encodedKey)
+			return endpoint.String()
+		}
+
+		host := endpoint.Hostname()
+		if !strings.HasPrefix(strings.ToLower(host), strings.ToLower(u.bucket)+".") {
+			host = u.bucket + "." + host
+		}
+		if port := endpoint.Port(); port != "" {
+			endpoint.Host = host + ":" + port
+		} else {
+			endpoint.Host = host
+		}
+		endpoint.Path = joinURLPath(endpoint.Path, encodedKey)
+		return endpoint.String()
+	}
 
 	if u.pathStyle {
-		canonicalURI = joinURLPath(basePath, u.bucket, encodedKey)
-		host = u.endpoint.Host
-		requestURL = u.endpoint.Scheme + "://" + host + canonicalURI
-		return requestURL, canonicalURI, host, nil
+		return fmt.Sprintf("https://s3.%s.amazonaws.com/%s/%s", u.region, u.bucket, encodedKey)
 	}
-
-	host = u.endpoint.Host
-	if !strings.HasPrefix(strings.ToLower(host), strings.ToLower(u.bucket)+".") {
-		host = u.bucket + "." + host
-	}
-	canonicalURI = joinURLPath(basePath, encodedKey)
-	requestURL = u.endpoint.Scheme + "://" + host + canonicalURI
-	return requestURL, canonicalURI, host, nil
-}
-
-func (u *s3Uploader) publicURL(objectKey string) string {
-	if u.customDomain != "" {
-		return u.customDomain + "/" + objectKey
-	}
-	requestURL, _, _, err := u.buildTarget(objectKey)
-	if err != nil {
-		return ""
-	}
-	return requestURL
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", u.bucket, u.region, encodedKey)
 }
 
 func normalizeObjectKey(key string) string {
@@ -226,22 +179,4 @@ func joinURLPath(parts ...string) string {
 		return "/"
 	}
 	return "/" + strings.Join(segments, "/")
-}
-
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func hmacSHA256(key []byte, data string) []byte {
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(data))
-	return mac.Sum(nil)
-}
-
-func deriveSigningKey(secretKey, dateStamp, region, service string) []byte {
-	kDate := hmacSHA256([]byte("AWS4"+secretKey), dateStamp)
-	kRegion := hmacSHA256(kDate, region)
-	kService := hmacSHA256(kRegion, service)
-	return hmacSHA256(kService, "aws4_request")
 }
