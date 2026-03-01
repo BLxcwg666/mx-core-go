@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,10 @@ const (
 func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodGet {
+			c.Next()
+			return
+		}
+		if shouldSkipIdempotence(c.Request.Method, c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -71,6 +76,26 @@ func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
+func shouldSkipIdempotence(method, path string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut:
+	default:
+		return false
+	}
+
+	p := strings.TrimSpace(strings.ToLower(path))
+	p = strings.TrimRight(p, "/")
+	switch p {
+	case "/api/v2/master/login",
+		"/api/v2/user/login",
+		"/api/v2/owner/login",
+		"/api/v2/auth/login":
+		return true
+	default:
+		return false
+	}
+}
+
 // resolveIdempotenceKey returns the idempotence key for the current request.
 func resolveIdempotenceKey(c *gin.Context) (string, error) {
 	if hdr := c.GetHeader(idempotenceHeader); hdr != "" {
@@ -85,12 +110,30 @@ func resolveIdempotenceKey(c *gin.Context) (string, error) {
 
 	ua := c.Request.UserAgent()
 	ip := c.ClientIP()
+	authToken := resolveIdempotenceAuthToken(c)
 
-	if len(body) == 0 && ua == "" && ip == "" {
+	if len(body) == 0 && ua == "" && ip == "" && authToken == "" {
 		return "", nil
 	}
 
-	raw := c.Request.Method + "|" + c.Request.URL.String() + "|" + string(body) + "|" + ua + "|" + ip
+	raw := c.Request.Method + "|" + c.Request.URL.String() + "|" + string(body) + "|" + ua + "|" + ip + "|" + authToken
 	h := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(h[:]), nil
+}
+
+func resolveIdempotenceAuthToken(c *gin.Context) string {
+	if token := NormalizeToken(c.GetHeader("Authorization")); token != "" {
+		return token
+	}
+	if token := NormalizeToken(c.Query("token")); token != "" {
+		return token
+	}
+	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
+		if raw, err := c.Cookie(cookieKey); err == nil {
+			if token := NormalizeToken(raw); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
 }
