@@ -2,6 +2,7 @@ package recently
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,8 @@ import (
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
+
+var errRecentlyRefModelNotFound = errors.New("ref model not found")
 
 type CreateRecentlyDTO struct {
 	Content      string          `json:"content"       binding:"required"`
@@ -91,8 +94,25 @@ func (s *Service) GetLatest() (*models.RecentlyModel, error) {
 }
 
 func (s *Service) Create(dto *CreateRecentlyDTO) (*models.RecentlyModel, error) {
+	var refID *string
+	var refType *models.RefType
+	if dto.RefID != nil {
+		trimmedRefID := strings.TrimSpace(*dto.RefID)
+		if trimmedRefID != "" {
+			detectedRefType, err := s.resolveRefTypeByID(trimmedRefID)
+			if err != nil {
+				return nil, err
+			}
+			if detectedRefType == nil {
+				return nil, errRecentlyRefModelNotFound
+			}
+			refID = &trimmedRefID
+			refType = detectedRefType
+		}
+	}
+
 	r := models.RecentlyModel{
-		Content: dto.Content, RefType: dto.RefType, RefID: dto.RefID,
+		Content: dto.Content, RefType: refType, RefID: refID,
 		AllowComment: true,
 	}
 	if dto.AllowComment != nil {
@@ -102,7 +122,14 @@ func (s *Service) Create(dto *CreateRecentlyDTO) (*models.RecentlyModel, error) 
 }
 
 func (s *Service) Delete(id string) error {
-	return s.db.Delete(&models.RecentlyModel{}, "id = ?", id).Error
+	result := s.db.Delete(&models.RecentlyModel{}, "id = ?", id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (s *Service) Update(id string, dto *UpdateRecentlyDTO) (*models.RecentlyModel, error) {
@@ -136,6 +163,43 @@ func (s *Service) Vote(id string, up bool) error {
 	}
 	return s.db.Model(&models.RecentlyModel{}).Where("id = ?", id).
 		UpdateColumn(col, gorm.Expr(col+" + 1")).Error
+}
+
+func (s *Service) resolveRefTypeByID(refID string) (*models.RefType, error) {
+	refID = strings.TrimSpace(refID)
+	if refID == "" {
+		return nil, nil
+	}
+	check := func(model interface{}, refType models.RefType) (*models.RefType, error) {
+		var count int64
+		if err := s.db.Model(model).Where("id = ?", refID).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			detected := refType
+			return &detected, nil
+		}
+		return nil, nil
+	}
+
+	for _, item := range []struct {
+		model   interface{}
+		refType models.RefType
+	}{
+		{model: &models.PostModel{}, refType: models.RefTypePost},
+		{model: &models.NoteModel{}, refType: models.RefTypeNote},
+		{model: &models.PageModel{}, refType: models.RefTypePage},
+		{model: &models.RecentlyModel{}, refType: models.RefTypeRecently},
+	} {
+		refType, err := check(item.model, item.refType)
+		if err != nil {
+			return nil, err
+		}
+		if refType != nil {
+			return refType, nil
+		}
+	}
+	return nil, nil
 }
 
 type Handler struct{ svc *Service }
@@ -256,6 +320,10 @@ func (h *Handler) create(c *gin.Context) {
 	}
 	r, err := h.svc.Create(&dto)
 	if err != nil {
+		if errors.Is(err, errRecentlyRefModelNotFound) {
+			response.NotFoundMsg(c, "引用模型不存在")
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -264,6 +332,10 @@ func (h *Handler) create(c *gin.Context) {
 
 func (h *Handler) delete(c *gin.Context) {
 	if err := h.svc.Delete(c.Param("id")); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.NotFound(c)
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}

@@ -22,6 +22,8 @@ import (
 
 const configKey = "configs"
 
+var errAIReviewProviderNotEnabled = errors.New("no enabled ai provider for comment ai review")
+
 //go:embed form_schema.template.json
 var formSchemaTemplateRaw []byte
 
@@ -138,6 +140,11 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 	if err := json.Unmarshal(mergedJSON, &updated); err != nil {
 		return nil, err
 	}
+	if shouldEnableCommentAIReview(partial) &&
+		updated.CommentOptions.AIReview &&
+		!hasEnabledAIProvider(updated.AI.Providers) {
+		return nil, errAIReviewProviderNotEnabled
+	}
 
 	s.mu.Lock()
 	s.cfg = &updated
@@ -170,6 +177,75 @@ func deepMergeJSON(oldVal, newVal interface{}) interface{} {
 	}
 
 	return newVal
+}
+
+func shouldEnableCommentAIReview(partial map[string]json.RawMessage) bool {
+	for _, sectionKey := range []string{"comment_options", "commentOptions"} {
+		raw, ok := partial[sectionKey]
+		if !ok || len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			continue
+		}
+		for _, field := range []string{"ai_review", "aiReview"} {
+			enabled, ok := parseBoolFromAny(payload[field])
+			if ok && enabled {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasEnabledAIProvider(providers []config.AIProvider) bool {
+	for _, provider := range providers {
+		if provider.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func parseBoolFromAny(v interface{}) (bool, bool) {
+	switch value := v.(type) {
+	case bool:
+		return value, true
+	case string:
+		trimmed := strings.TrimSpace(strings.ToLower(value))
+		switch trimmed {
+		case "1", "true", "yes", "on":
+			return true, true
+		case "0", "false", "no", "off":
+			return false, true
+		}
+	case float64:
+		return value != 0, true
+	case float32:
+		return value != 0, true
+	case int:
+		return value != 0, true
+	case int8:
+		return value != 0, true
+	case int16:
+		return value != 0, true
+	case int32:
+		return value != 0, true
+	case int64:
+		return value != 0, true
+	case uint:
+		return value != 0, true
+	case uint8:
+		return value != 0, true
+	case uint16:
+		return value != 0, true
+	case uint32:
+		return value != 0, true
+	case uint64:
+		return value != 0, true
+	}
+	return false, false
 }
 
 func normalizeConfigSection(key string, v interface{}) interface{} {
@@ -416,6 +492,10 @@ func (h *Handler) patch(c *gin.Context) {
 	}
 	updated, err := h.svc.Patch(partial)
 	if err != nil {
+		if errors.Is(err, errAIReviewProviderNotEnabled) {
+			response.BadRequest(c, "没有配置启用的 AI Provider，无法启用 AI 评论审核")
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -458,6 +538,10 @@ func (h *Handler) patchOption(c *gin.Context) {
 	}
 	updated, err := h.svc.Patch(map[string]json.RawMessage{key: normalizedBody})
 	if err != nil {
+		if errors.Is(err, errAIReviewProviderNotEnabled) {
+			response.BadRequest(c, "没有配置启用的 AI Provider，无法启用 AI 评论审核")
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}

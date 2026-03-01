@@ -169,6 +169,11 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 	} else {
 		post.IsPublished = true
 	}
+	if dto.AllowComment != nil {
+		post.AllowComment = *dto.AllowComment
+	} else {
+		post.AllowComment = true
+	}
 	if dto.Pin != nil {
 		post.Pin = *dto.Pin
 	}
@@ -230,6 +235,9 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 	}
 	if dto.IsPublished != nil {
 		updates["is_published"] = *dto.IsPublished
+	}
+	if dto.AllowComment != nil {
+		updates["allow_comment"] = *dto.AllowComment
 	}
 	if dto.Tags != nil {
 		updates["tags"] = dto.Tags

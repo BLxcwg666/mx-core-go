@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	appconfigs "github.com/mx-space/core/internal/modules/configs"
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	sessionpkg "github.com/mx-space/core/internal/pkg/session"
@@ -47,6 +48,12 @@ type tokenResponse struct {
 	Created time.Time  `json:"created"`
 }
 
+var (
+	errAuthUserNotFound       = errors.New("auth user not found")
+	errAuthWrongPassword      = errors.New("auth wrong password")
+	errOwnerAlreadyRegistered = errors.New("owner already registered")
+)
+
 type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
@@ -57,13 +64,13 @@ func (s *Service) Login(username, password, ip, ua string) (string, error) {
 		Where("username = ?", username).First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			time.Sleep(3 * time.Second)
-			return "", fmt.Errorf("user not found")
+			return "", errAuthUserNotFound
 		}
 		return "", err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
 		time.Sleep(3 * time.Second)
-		return "", fmt.Errorf("wrong password")
+		return "", errAuthWrongPassword
 	}
 	token, _, err := sessionpkg.Issue(s.db, u.ID, ip, ua, sessionpkg.DefaultTTL)
 	return token, err
@@ -73,7 +80,7 @@ func (s *Service) Register(dto *RegisterDTO) (*models.UserModel, error) {
 	var count int64
 	s.db.Model(&models.UserModel{}).Count(&count)
 	if count > 0 {
-		return nil, fmt.Errorf("owner already registered")
+		return nil, errOwnerAlreadyRegistered
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(dto.Password), bcrypt.DefaultCost)
@@ -143,9 +150,17 @@ func (s *Service) DeleteToken(userID, tokenID string) error {
 	return result.Error
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc    *Service
+	cfgSvc *appconfigs.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service) *Handler {
+	return &Handler{
+		svc:    svc,
+		cfgSvc: appconfigs.NewService(svc.db),
+	}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a := rg.Group("/auth")
@@ -175,9 +190,26 @@ func (h *Handler) login(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	disabled, err := h.isPasswordLoginDisabled()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if disabled {
+		response.BadRequest(c, "密码登录已禁用")
+		return
+	}
 	token, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		response.UnprocessableEntity(c, err.Error())
+		if errors.Is(err, errAuthUserNotFound) {
+			response.ForbiddenMsg(c, "用户名不正确")
+			return
+		}
+		if errors.Is(err, errAuthWrongPassword) {
+			response.ForbiddenMsg(c, "密码不正确")
+			return
+		}
+		response.InternalError(c, err)
 		return
 	}
 	setAuthTokenCookie(c, token)
@@ -190,9 +222,26 @@ func (h *Handler) signInUsername(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	disabled, err := h.isPasswordLoginDisabled()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if disabled {
+		response.BadRequest(c, "密码登录已禁用")
+		return
+	}
 	token, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		response.UnprocessableEntity(c, err.Error())
+		if errors.Is(err, errAuthUserNotFound) {
+			response.ForbiddenMsg(c, "用户名不正确")
+			return
+		}
+		if errors.Is(err, errAuthWrongPassword) {
+			response.ForbiddenMsg(c, "密码不正确")
+			return
+		}
+		response.InternalError(c, err)
 		return
 	}
 	setAuthTokenCookie(c, token)
@@ -210,8 +259,8 @@ func (h *Handler) register(c *gin.Context) {
 	}
 	u, err := h.svc.Register(&dto)
 	if err != nil {
-		if err.Error() == "owner already registered" {
-			response.Forbidden(c)
+		if errors.Is(err, errOwnerAlreadyRegistered) {
+			response.BadRequest(c, "我已经有一个主人了哦")
 			return
 		}
 		response.InternalError(c, err)
@@ -597,4 +646,18 @@ func displayName(name, fallback string) string {
 		return name
 	}
 	return fallback
+}
+
+func (h *Handler) isPasswordLoginDisabled() (bool, error) {
+	if h.cfgSvc == nil {
+		return false, nil
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return false, err
+	}
+	if cfg == nil {
+		return false, nil
+	}
+	return cfg.AuthSecurity.DisablePasswordLogin, nil
 }

@@ -75,6 +75,12 @@ type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
+var (
+	errDuplicateLink      = errors.New("duplicate link")
+	errLinkDisabled       = errors.New("link disabled")
+	errSubpathLinkDisable = errors.New("subpath link disabled")
+)
+
 func (s *Service) List(q pagination.Query, state *models.LinkState) ([]models.LinkModel, response.Pagination, error) {
 	tx := s.db.Model(&models.LinkModel{}).Order("created_at DESC")
 	if state != nil {
@@ -108,10 +114,29 @@ func (s *Service) GetByID(id string) (*models.LinkModel, error) {
 
 // Apply creates a link (Audit state for public, optionally Pass for admin).
 func (s *Service) Apply(dto *ApplyLinkDTO, isAdmin bool) (*models.LinkModel, error) {
-	var count int64
-	s.db.Model(&models.LinkModel{}).Where("url = ?", dto.URL).Count(&count)
-	if count > 0 {
-		return nil, fmt.Errorf("url already exists")
+	var existed models.LinkModel
+	err := s.db.Where("url = ? OR name = ?", dto.URL, dto.Name).First(&existed).Error
+	if err == nil {
+		if isAdmin {
+			return nil, errDuplicateLink
+		}
+		switch existed.State {
+		case models.LinkPass, models.LinkAudit:
+			return nil, errDuplicateLink
+		case models.LinkBanned:
+			return nil, errLinkDisabled
+		case models.LinkReject, models.LinkOutdate:
+			if updateErr := s.db.Model(&existed).Update("state", models.LinkAudit).Error; updateErr != nil {
+				return nil, updateErr
+			}
+			existed.State = models.LinkAudit
+			return &existed, nil
+		default:
+			return nil, errDuplicateLink
+		}
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	linkType := models.LinkTypeFriend
@@ -283,7 +308,18 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 // GET /links/audit
 func (h *Handler) canApply(c *gin.Context) {
-	response.OK(c, gin.H{"can": true})
+	canApply := true
+	if h.cfgSvc != nil {
+		cfg, err := h.cfgSvc.Get()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if cfg != nil {
+			canApply = cfg.FriendLinkOptions.AllowApply
+		}
+	}
+	response.OK(c, gin.H{"can": canApply})
 }
 
 // GET /links?state=N
@@ -345,10 +381,45 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 	isAdmin := middleware.IsAuthenticated(c)
+	if !isAdmin && h.cfgSvc != nil {
+		cfg, err := h.cfgSvc.Get()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if cfg != nil {
+			if !cfg.FriendLinkOptions.AllowApply {
+				response.ForbiddenMsg(c, "主人目前不允许申请友链了！")
+				return
+			}
+			normalizedURL, normalizeErr := normalizeApplyLinkURL(dto.URL, cfg.FriendLinkOptions.AllowSubPath)
+			if normalizeErr != nil {
+				if errors.Is(normalizeErr, errSubpathLinkDisable) {
+					response.UnprocessableEntity(c, "管理员当前禁用了子路径友链申请")
+					return
+				}
+				response.BadRequest(c, normalizeErr.Error())
+				return
+			}
+			dto.URL = normalizedURL
+		}
+	}
 	l, err := h.svc.Apply(&dto, isAdmin)
 	if err != nil {
-		if err.Error() == "url already exists" {
-			response.Conflict(c, err.Error())
+		if errors.Is(err, errDuplicateLink) {
+			if isAdmin {
+				response.Conflict(c, "url already exists")
+				return
+			}
+			response.BadRequest(c, "请不要重复申请友链哦")
+			return
+		}
+		if errors.Is(err, errLinkDisabled) {
+			response.BadRequest(c, "您的友链已被禁用，请联系管理员")
+			return
+		}
+		if errors.Is(err, errSubpathLinkDisable) {
+			response.UnprocessableEntity(c, "管理员当前禁用了子路径友链申请")
 			return
 		}
 		response.InternalError(c, err)
@@ -529,4 +600,23 @@ func extractDomain(rawURL string) string {
 	host := u.Hostname()
 	host = strings.TrimPrefix(host, "www.")
 	return host
+}
+
+func normalizeApplyLinkURL(raw string, allowSubPath bool) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("invalid url")
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if path != "/" && !allowSubPath {
+		return "", errSubpathLinkDisable
+	}
+	if allowSubPath {
+		return origin + path, nil
+	}
+	return origin, nil
 }

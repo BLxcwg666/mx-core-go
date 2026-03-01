@@ -151,8 +151,22 @@ func (h *Handler) subscribe(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if normalizeSubscribe(&dto) <= 0 {
-		response.BadRequest(c, "subscribe or types is required")
+	enabled, err := h.isSubscribeEnabled()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if !enabled {
+		response.BadRequest(c, "订阅功能未开启")
+		return
+	}
+	mask, hasInvalidType := normalizeSubscribeWithValidation(&dto)
+	if hasInvalidType {
+		response.BadRequest(c, "订阅类型无效")
+		return
+	}
+	if mask <= 0 {
+		response.BadRequest(c, "订阅类型不能为空")
 		return
 	}
 	sub, err := h.svc.Subscribe(&dto)
@@ -290,12 +304,17 @@ func (h *Handler) status(c *gin.Context) {
 		"recently_c": SubscribeRecentCreateBit,
 		"all":        SubscribeAllBit,
 	}
-	allowTypes := []string{"post_c", "note_c", "say_c", "recently_c"}
+	allowTypes := []string{"note_c", "post_c"}
+	enabled, err := h.isSubscribeEnabled()
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	response.OK(c, gin.H{
-		"enable":      true,
+		"enable":      enabled,
 		"bit_map":     bitMap,
 		"allow_types": allowTypes,
-		"allow_bits":  []int{SubscribePostCreateBit, SubscribeNoteCreateBit, SubscribeSayCreateBit, SubscribeRecentCreateBit},
+		"allow_bits":  []int{SubscribeNoteCreateBit, SubscribePostCreateBit},
 	})
 }
 
@@ -317,18 +336,41 @@ func (h *Handler) unsubscribeBatch(c *gin.Context) {
 }
 
 func normalizeSubscribe(dto *SubscribeDTO) int {
+	mask, _ := normalizeSubscribeWithValidation(dto)
+	return mask
+}
+
+func normalizeSubscribeWithValidation(dto *SubscribeDTO) (mask int, hasInvalidType bool) {
 	if dto == nil {
-		return 0
+		return 0, false
 	}
 	if dto.Subscribe != nil && *dto.Subscribe > 0 {
-		return *dto.Subscribe
+		return *dto.Subscribe, false
 	}
-	mask := 0
 	for _, t := range dto.Types {
 		key := strings.ToLower(strings.TrimSpace(t))
+		if key == "" {
+			continue
+		}
 		if bit, ok := subscribeTypeToBitMap[key]; ok {
 			mask |= bit
+		} else {
+			hasInvalidType = true
 		}
 	}
-	return mask
+	return mask, hasInvalidType
+}
+
+func (h *Handler) isSubscribeEnabled() (bool, error) {
+	if h.cfgSvc == nil {
+		return true, nil
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return false, err
+	}
+	if cfg == nil {
+		return true, nil
+	}
+	return cfg.FeatureList.EmailSubscribe && cfg.MailOptions.Enable, nil
 }

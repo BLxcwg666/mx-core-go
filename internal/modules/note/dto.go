@@ -7,53 +7,56 @@ import (
 )
 
 type CreateNoteDTO struct {
-	Title       string           `json:"title"       binding:"required"`
-	Text        string           `json:"text"        binding:"required"`
-	IsPublished *bool            `json:"isPublished"`
-	Password    string           `json:"password"`
-	PublicAt    *time.Time       `json:"publicAt"`
-	Mood        string           `json:"mood"`
-	Weather     string           `json:"weather"`
-	Bookmark    *bool            `json:"bookmark"`
-	Coordinates *models.GeoPoint `json:"coordinates"`
-	Location    string           `json:"location"`
-	TopicID     *string          `json:"topicId"`
-	Images      []models.Image   `json:"images"`
+	Title        string           `json:"title"       binding:"required"`
+	Text         string           `json:"text"        binding:"required"`
+	IsPublished  *bool            `json:"isPublished"`
+	AllowComment *bool            `json:"allowComment"`
+	Password     string           `json:"password"`
+	PublicAt     *time.Time       `json:"publicAt"`
+	Mood         string           `json:"mood"`
+	Weather      string           `json:"weather"`
+	Bookmark     *bool            `json:"bookmark"`
+	Coordinates  *models.GeoPoint `json:"coordinates"`
+	Location     string           `json:"location"`
+	TopicID      *string          `json:"topicId"`
+	Images       []models.Image   `json:"images"`
 }
 
 type UpdateNoteDTO struct {
-	Title       *string          `json:"title"`
-	Text        *string          `json:"text"`
-	IsPublished *bool            `json:"isPublished"`
-	Password    *string          `json:"password"`
-	PublicAt    *time.Time       `json:"publicAt"`
-	Mood        *string          `json:"mood"`
-	Weather     *string          `json:"weather"`
-	Bookmark    *bool            `json:"bookmark"`
-	Coordinates *models.GeoPoint `json:"coordinates"`
-	Location    *string          `json:"location"`
-	TopicID     *string          `json:"topicId"`
-	Images      []models.Image   `json:"images"`
+	Title        *string          `json:"title"`
+	Text         *string          `json:"text"`
+	IsPublished  *bool            `json:"isPublished"`
+	AllowComment *bool            `json:"allowComment"`
+	Password     *string          `json:"password"`
+	PublicAt     *time.Time       `json:"publicAt"`
+	Mood         *string          `json:"mood"`
+	Weather      *string          `json:"weather"`
+	Bookmark     *bool            `json:"bookmark"`
+	Coordinates  *models.GeoPoint `json:"coordinates"`
+	Location     *string          `json:"location"`
+	TopicID      *string          `json:"topicId"`
+	Images       []models.Image   `json:"images"`
 }
 
 type noteResponse struct {
-	ID          string           `json:"id"`
-	NID         int              `json:"nid"`
-	Title       string           `json:"title"`
-	Text        string           `json:"text"`
-	IsPublished bool             `json:"isPublished"`
-	PublicAt    *time.Time       `json:"publicAt"`
-	Mood        string           `json:"mood"`
-	Weather     string           `json:"weather"`
-	Bookmark    bool             `json:"bookmark"`
-	Coordinates *models.GeoPoint `json:"coordinates"`
-	Location    string           `json:"location"`
-	Count       models.Count     `json:"count"`
-	TopicID     *string          `json:"topicId"`
-	Topic       *noteTopic       `json:"topic"`
-	Images      []models.Image   `json:"images"`
-	Created     time.Time        `json:"created"`
-	Modified    *time.Time       `json:"modified"`
+	ID           string           `json:"id"`
+	NID          int              `json:"nid"`
+	Title        string           `json:"title"`
+	Text         string           `json:"text"`
+	IsPublished  bool             `json:"isPublished"`
+	AllowComment bool             `json:"allowComment"`
+	PublicAt     *time.Time       `json:"publicAt"`
+	Mood         string           `json:"mood"`
+	Weather      string           `json:"weather"`
+	Bookmark     bool             `json:"bookmark"`
+	Coordinates  *models.GeoPoint `json:"coordinates"`
+	Location     string           `json:"location"`
+	Count        models.Count     `json:"count"`
+	TopicID      *string          `json:"topicId"`
+	Topic        *noteTopic       `json:"topic"`
+	Images       []models.Image   `json:"images"`
+	Created      time.Time        `json:"created"`
+	Modified     *time.Time       `json:"modified"`
 }
 
 type noteTopic struct {
@@ -95,22 +98,23 @@ func toResponse(n *models.NoteModel) noteResponse {
 		}
 	}
 	return noteResponse{
-		ID:          n.ID,
-		NID:         n.NID,
-		Title:       n.Title,
-		Text:        n.Text,
-		IsPublished: n.IsPublished,
-		PublicAt:    n.PublicAt,
-		Mood:        n.Mood,
-		Weather:     n.Weather,
-		Bookmark:    n.Bookmark,
-		Coordinates: n.Coordinates,
-		Location:    n.Location,
-		Count:       models.Count{Read: n.ReadCount, Like: n.LikeCount},
-		TopicID:     n.TopicID,
-		Topic:       topic,
-		Images:      images,
-		Created:     n.CreatedAt,
-		Modified:    modified,
+		ID:           n.ID,
+		NID:          n.NID,
+		Title:        n.Title,
+		Text:         n.Text,
+		IsPublished:  n.IsPublished,
+		AllowComment: n.AllowComment,
+		PublicAt:     n.PublicAt,
+		Mood:         n.Mood,
+		Weather:      n.Weather,
+		Bookmark:     n.Bookmark,
+		Coordinates:  n.Coordinates,
+		Location:     n.Location,
+		Count:        models.Count{Read: n.ReadCount, Like: n.LikeCount},
+		TopicID:      n.TopicID,
+		Topic:        topic,
+		Images:       images,
+		Created:      n.CreatedAt,
+		Modified:     modified,
 	}
 }

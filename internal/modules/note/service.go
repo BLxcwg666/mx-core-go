@@ -186,6 +186,11 @@ func (s *Service) Create(dto *CreateNoteDTO) (*models.NoteModel, error) {
 		if dto.IsPublished != nil {
 			note.IsPublished = *dto.IsPublished
 		}
+		if dto.AllowComment != nil {
+			note.AllowComment = *dto.AllowComment
+		} else {
+			note.AllowComment = true
+		}
 		if dto.Bookmark != nil {
 			note.Bookmark = *dto.Bookmark
 		}
@@ -238,6 +243,9 @@ func (s *Service) Update(id string, dto *UpdateNoteDTO) (*models.NoteModel, erro
 	}
 	if dto.IsPublished != nil {
 		updates["is_published"] = *dto.IsPublished
+	}
+	if dto.AllowComment != nil {
+		updates["allow_comment"] = *dto.AllowComment
 	}
 	if dto.Mood != nil {
 		updates["mood"] = *dto.Mood

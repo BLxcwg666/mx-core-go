@@ -3,7 +3,6 @@ package user
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -72,6 +71,13 @@ type loginResponse struct {
 	User  *userResponse `json:"user,omitempty"`
 }
 
+var (
+	errUserNotFound       = errors.New("user not found")
+	errWrongPassword      = errors.New("wrong password")
+	errOwnerAlreadyExists = errors.New("owner already registered")
+	errPasswordSameAsOld  = errors.New("password same as old")
+)
+
 func toResponse(u *models.UserModel) *userResponse {
 	return &userResponse{
 		ID: u.ID, Username: u.Username, Name: u.Name,
@@ -121,12 +127,12 @@ func (s *Service) Login(username, password, ip, ua string) (string, *models.User
 		Where("username = ?", username).First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			time.Sleep(3 * time.Second)
-			return "", nil, fmt.Errorf("user not found")
+			return "", nil, errUserNotFound
 		}
 		return "", nil, err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
-		return "", nil, fmt.Errorf("wrong password")
+		return "", nil, errWrongPassword
 	}
 	now := time.Now()
 	s.db.Model(&u).Updates(map[string]interface{}{
@@ -144,7 +150,7 @@ func (s *Service) Register(dto *RegisterDTO) (*models.UserModel, error) {
 	var count int64
 	s.db.Model(&models.UserModel{}).Count(&count)
 	if count > 0 {
-		return nil, fmt.Errorf("owner already registered")
+		return nil, errOwnerAlreadyExists
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(dto.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -211,7 +217,10 @@ func (s *Service) ChangePassword(id, oldPwd, newPwd string) error {
 		return err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(oldPwd)); err != nil {
-		return fmt.Errorf("wrong password")
+		return errWrongPassword
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(newPwd)); err == nil {
+		return errPasswordSameAsOld
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
@@ -307,9 +316,28 @@ func (h *Handler) login(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if h.cfgSvc != nil {
+		cfg, err := h.cfgSvc.Get()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if cfg != nil && cfg.AuthSecurity.DisablePasswordLogin {
+			response.BadRequest(c, "密码登录已禁用")
+			return
+		}
+	}
 	token, u, err := h.svc.Login(dto.Username, dto.Password, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		response.UnprocessableEntity(c, err.Error())
+		if errors.Is(err, errUserNotFound) {
+			response.ForbiddenMsg(c, "用户名不正确")
+			return
+		}
+		if errors.Is(err, errWrongPassword) {
+			response.ForbiddenMsg(c, "密码不正确")
+			return
+		}
+		response.InternalError(c, err)
 		return
 	}
 	response.OK(c, loginResponse{Token: token, User: toResponse(u)})
@@ -323,8 +351,8 @@ func (h *Handler) register(c *gin.Context) {
 	}
 	u, err := h.svc.Register(&dto)
 	if err != nil {
-		if err.Error() == "owner already registered" {
-			response.Forbidden(c)
+		if errors.Is(err, errOwnerAlreadyExists) {
+			response.BadRequest(c, "我已经有一个主人了哦")
 			return
 		}
 		response.InternalError(c, err)
@@ -403,8 +431,12 @@ func (h *Handler) changePassword(c *gin.Context) {
 		return
 	}
 	if err := h.svc.ChangePassword(userID, dto.OldPassword, dto.NewPassword); err != nil {
-		if err.Error() == "wrong password" {
-			response.BadRequest(c, err.Error())
+		if errors.Is(err, errWrongPassword) {
+			response.BadRequest(c, "密码不正确")
+			return
+		}
+		if errors.Is(err, errPasswordSameAsOld) {
+			response.UnprocessableEntity(c, "密码可不能和原来的一样哦")
 			return
 		}
 		response.InternalError(c, err)

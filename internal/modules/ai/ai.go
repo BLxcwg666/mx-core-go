@@ -1886,7 +1886,30 @@ func (h *Handler) batchDeleteTasks(c *gin.Context) {
 
 // POST /ai/tasks/:id/cancel  [auth]
 func (h *Handler) cancelTask(c *gin.Context) {
-	if err := h.svc.taskSvc.Cancel(c.Request.Context(), c.Param("id")); err != nil {
+	task, err := h.svc.taskSvc.GetByID(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if task == nil {
+		response.NotFound(c)
+		return
+	}
+	if task.Status == taskqueue.TaskCompleted ||
+		task.Status == taskqueue.TaskFailed ||
+		task.Status == taskqueue.TaskCancelled {
+		response.BadRequest(c, "AI 任务已完成，无法取消")
+		return
+	}
+	if task.Status == taskqueue.TaskRunning {
+		if err := h.svc.taskSvc.UpdateStatus(c.Request.Context(), task.ID, taskqueue.TaskCancelled, nil, "cancelled by user"); err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.NoContent(c)
+		return
+	}
+	if err := h.svc.taskSvc.Cancel(c.Request.Context(), task.ID); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -1901,7 +1924,7 @@ func (h *Handler) retryTask(c *gin.Context) {
 		return
 	}
 	if task.Status != taskqueue.TaskFailed && task.Status != taskqueue.TaskCancelled {
-		response.BadRequest(c, "only failed or cancelled tasks can be retried")
+		response.BadRequest(c, "AI 任务无法重试")
 		return
 	}
 

@@ -412,7 +412,7 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 	if item.IsBuiltin {
-		response.BadRequest(c, "builtin preset can not be deleted")
+		response.ForbiddenMsg(c, "内置预设字段不能删除")
 		return
 	}
 	if err := h.db.Delete(&item).Error; err != nil {

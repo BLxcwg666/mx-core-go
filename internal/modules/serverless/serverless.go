@@ -145,7 +145,7 @@ func (h *Handler) run(c *gin.Context) {
 		return
 	}
 	if snippet.Private && !hasFunctionAccess(c) {
-		response.Unauthorized(c)
+		response.ForbiddenMsg(c, "没有权限运行该函数")
 		return
 	}
 

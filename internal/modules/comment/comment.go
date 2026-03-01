@@ -12,9 +12,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	appconfigs "github.com/mx-space/core/internal/modules/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
+)
+
+const nestedReplyMax = 10
+
+var (
+	errCommentParentNotFound = errors.New("parent comment not found")
+	errCommentRefNotFound    = errors.New("comment ref model not found")
+	errCommentTooDeep        = errors.New("comment nested depth too deep")
 )
 
 type CreateCommentDTO struct {
@@ -113,9 +122,32 @@ func (s *Service) GetByID(id string) (*models.CommentModel, error) {
 }
 
 func (s *Service) Create(dto *CreateCommentDTO, ip, agent string) (*models.CommentModel, error) {
+	refID := strings.TrimSpace(dto.RefID)
+	refType := normalizeRefType(string(dto.RefType))
+	if refID == "" || refType == "" {
+		return nil, errCommentRefNotFound
+	}
+
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	commentsIndex, _, err := s.getRefCommentMeta(tx, refType, refID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	c := models.CommentModel{
-		RefType:  normalizeRefType(string(dto.RefType)),
-		RefID:    dto.RefID,
+		RefType:  refType,
+		RefID:    refID,
 		Author:   dto.Author,
 		Mail:     dto.Mail,
 		URL:      dto.URL,
@@ -125,17 +157,51 @@ func (s *Service) Create(dto *CreateCommentDTO, ip, agent string) (*models.Comme
 		Agent:    agent,
 		Meta:     dto.Meta,
 		State:    models.CommentUnread,
+		Key:      fmt.Sprintf("#%d", commentsIndex+1),
 	}
-	return &c, s.db.Create(&c).Error
+	if err := tx.Create(&c).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := s.incrementRefCommentsIndex(tx, refType, refID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (s *Service) Reply(parentID string, dto *CreateCommentDTO, ip, agent string) (*models.CommentModel, error) {
-	parent, err := s.GetByID(parentID)
-	if err != nil {
+	tx := s.db.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	var parent models.CommentModel
+	if err := tx.First(&parent, "id = ?", parentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			tx.Rollback()
+			return nil, errCommentParentNotFound
+		}
+		tx.Rollback()
 		return nil, err
 	}
-	if parent == nil {
-		return nil, fmt.Errorf("parent comment not found")
+	if strings.TrimSpace(parent.Key) != "" && len(strings.Split(parent.Key, "#")) >= nestedReplyMax {
+		tx.Rollback()
+		return nil, errCommentTooDeep
+	}
+
+	parentKey := strings.TrimSpace(parent.Key)
+	if parentKey == "" {
+		parentKey = "#1"
 	}
 	c := models.CommentModel{
 		RefType:  parent.RefType,
@@ -149,8 +215,89 @@ func (s *Service) Reply(parentID string, dto *CreateCommentDTO, ip, agent string
 		Agent:    agent,
 		Meta:     dto.Meta,
 		State:    models.CommentUnread,
+		Key:      fmt.Sprintf("%s#%d", parentKey, parent.CommentsIndex),
 	}
-	return &c, s.db.Create(&c).Error
+	if err := tx.Create(&c).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Model(&models.CommentModel{}).
+		Where("id = ?", parentID).
+		UpdateColumn("comments_index", gorm.Expr("comments_index + 1")).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *Service) AllowComment(refType models.RefType, refID string) (bool, error) {
+	_, allowComment, err := s.getRefCommentMeta(s.db, normalizeRefType(string(refType)), strings.TrimSpace(refID))
+	return allowComment, err
+}
+
+func (s *Service) getRefCommentMeta(tx *gorm.DB, refType models.RefType, refID string) (int, bool, error) {
+	switch refType {
+	case models.RefTypePost:
+		var post models.PostModel
+		if err := tx.Select("id, comments_index, allow_comment").First(&post, "id = ?", refID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, false, errCommentRefNotFound
+			}
+			return 0, false, err
+		}
+		return post.CommentsIndex, post.AllowComment, nil
+	case models.RefTypeNote:
+		var note models.NoteModel
+		if err := tx.Select("id, comments_index, allow_comment").First(&note, "id = ?", refID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, false, errCommentRefNotFound
+			}
+			return 0, false, err
+		}
+		return note.CommentsIndex, note.AllowComment, nil
+	case models.RefTypePage:
+		var page models.PageModel
+		if err := tx.Select("id, comments_index, allow_comment").First(&page, "id = ?", refID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, false, errCommentRefNotFound
+			}
+			return 0, false, err
+		}
+		return page.CommentsIndex, page.AllowComment, nil
+	case models.RefTypeRecently:
+		var recently models.RecentlyModel
+		if err := tx.Select("id, comments_index, allow_comment").First(&recently, "id = ?", refID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return 0, false, errCommentRefNotFound
+			}
+			return 0, false, err
+		}
+		return recently.CommentsIndex, recently.AllowComment, nil
+	default:
+		return 0, false, errCommentRefNotFound
+	}
+}
+
+func (s *Service) incrementRefCommentsIndex(tx *gorm.DB, refType models.RefType, refID string) error {
+	switch refType {
+	case models.RefTypePost:
+		return tx.Model(&models.PostModel{}).Where("id = ?", refID).
+			UpdateColumn("comments_index", gorm.Expr("comments_index + 1")).Error
+	case models.RefTypeNote:
+		return tx.Model(&models.NoteModel{}).Where("id = ?", refID).
+			UpdateColumn("comments_index", gorm.Expr("comments_index + 1")).Error
+	case models.RefTypePage:
+		return tx.Model(&models.PageModel{}).Where("id = ?", refID).
+			UpdateColumn("comments_index", gorm.Expr("comments_index + 1")).Error
+	case models.RefTypeRecently:
+		return tx.Model(&models.RecentlyModel{}).Where("id = ?", refID).
+			UpdateColumn("comments_index", gorm.Expr("comments_index + 1")).Error
+	default:
+		return errCommentRefNotFound
+	}
 }
 
 func (s *Service) ListByRef(refID string, q pagination.Query) ([]models.CommentModel, response.Pagination, error) {
@@ -228,9 +375,17 @@ func toResponse(c *models.CommentModel, isAdmin bool) commentResponse {
 	return r
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc    *Service
+	cfgSvc *appconfigs.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service) *Handler {
+	return &Handler{
+		svc:    svc,
+		cfgSvc: appconfigs.NewService(svc.db),
+	}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/comments")
@@ -254,6 +409,70 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a.PATCH("/:id", h.updateStateCompat)
 	a.PATCH("/:id/state", h.updateState)
 	a.DELETE("/:id", h.delete)
+}
+
+func (h *Handler) isCommentDisabled() (bool, error) {
+	if h.cfgSvc == nil {
+		return false, nil
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return false, err
+	}
+	if cfg == nil {
+		return false, nil
+	}
+	return cfg.CommentOptions.DisableComment, nil
+}
+
+func (h *Handler) ensureCommentEnabled(c *gin.Context) bool {
+	disabled, err := h.isCommentDisabled()
+	if err != nil {
+		response.InternalError(c, err)
+		return false
+	}
+	if disabled {
+		response.ForbiddenMsg(c, "全站评论已关闭")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) ensureCommentAllowed(c *gin.Context, refType models.RefType, refID string) bool {
+	allowComment, err := h.svc.AllowComment(refType, refID)
+	if err != nil {
+		if errors.Is(err, errCommentRefNotFound) {
+			response.BadRequest(c, "评论文章不存在")
+			return false
+		}
+		response.InternalError(c, err)
+		return false
+	}
+	if !allowComment {
+		response.ForbiddenMsg(c, "主人禁止了评论")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) handleCreateError(c *gin.Context, err error) bool {
+	if errors.Is(err, errCommentRefNotFound) {
+		response.BadRequest(c, "评论文章不存在")
+		return true
+	}
+	return false
+}
+
+func (h *Handler) handleReplyError(c *gin.Context, err error) bool {
+	if errors.Is(err, errCommentParentNotFound) {
+		response.NotFound(c)
+		return true
+	}
+	if errors.Is(err, errCommentTooDeep) {
+		response.BadRequest(c, "评论嵌套层数过深")
+		return true
+	}
+	return false
 }
 
 type commentParentResponse struct {
@@ -701,8 +920,17 @@ func (h *Handler) create(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if !h.ensureCommentEnabled(c) {
+		return
+	}
+	if !middleware.IsAuthenticated(c) && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
+		return
+	}
 	cm, err := h.svc.Create(&dto, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
+		if h.handleCreateError(c, err) {
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -814,6 +1042,9 @@ func (h *Handler) reply(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if !h.ensureCommentEnabled(c) {
+		return
+	}
 	createDTO := &CreateCommentDTO{
 		Author: dto.Author,
 		Mail:   dto.Mail,
@@ -823,6 +1054,9 @@ func (h *Handler) reply(c *gin.Context) {
 	}
 	cm, err := h.svc.Reply(c.Param("id"), createDTO, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
+		if h.handleReplyError(c, err) {
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -839,6 +1073,9 @@ func (h *Handler) masterReply(c *gin.Context) {
 	var dto ReplyCommentDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.BadRequest(c, err.Error())
+		return
+	}
+	if !h.ensureCommentEnabled(c) {
 		return
 	}
 
@@ -868,6 +1105,9 @@ func (h *Handler) masterReply(c *gin.Context) {
 	}
 	cm, err := h.svc.Reply(c.Param("id"), createDTO, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
+		if h.handleReplyError(c, err) {
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -888,6 +1128,9 @@ func (h *Handler) masterComment(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.BadRequest(c, err.Error())
+		return
+	}
+	if !h.ensureCommentEnabled(c) {
 		return
 	}
 
@@ -912,6 +1155,9 @@ func (h *Handler) masterComment(c *gin.Context) {
 	}
 	cm, err := h.svc.Create(createDTO, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
+		if h.handleCreateError(c, err) {
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
@@ -950,6 +1196,9 @@ func (h *Handler) createOnRef(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if !h.ensureCommentEnabled(c) {
+		return
+	}
 	dto.RefID = refID
 	// RefType defaults to "post" if not provided
 	if dto.RefType == "" {
@@ -957,8 +1206,14 @@ func (h *Handler) createOnRef(c *gin.Context) {
 	} else {
 		dto.RefType = normalizeRefType(string(dto.RefType))
 	}
+	if !middleware.IsAuthenticated(c) && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
+		return
+	}
 	cm, err := h.svc.Create(&dto, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
+		if h.handleCreateError(c, err) {
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}
