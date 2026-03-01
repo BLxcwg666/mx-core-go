@@ -105,8 +105,19 @@ export default async function handler(ctx) {
   const config = await ctx.getService('config')
   const adminExtra = await config.get('adminExtra')
   const gaodemapKey =
-    pickString(adminExtra && (adminExtra.gaodemapKey || adminExtra.gaodeMapKey)) ||
-    pickString(ctx?.secret?.gaodemapKey || ctx?.secret?.gaodeMapKey)
+    pickString(
+      adminExtra &&
+        (adminExtra.gaodemapKey ||
+          adminExtra.gaodeMapKey ||
+          adminExtra.gaodemap_key ||
+          adminExtra.gaode_map_key),
+    ) ||
+    pickString(
+      ctx?.secret?.gaodemapKey ||
+        ctx?.secret?.gaodeMapKey ||
+        ctx?.secret?.gaodemap_key ||
+        ctx?.secret?.gaode_map_key,
+    )
 
   if (!gaodemapKey) {
     ctx.throws(400, 'gaodemap api key is not configured')
@@ -156,8 +167,19 @@ export default async function handler(ctx) {
   const config = await ctx.getService('config')
   const adminExtra = await config.get('adminExtra')
   const gaodemapKey =
-    pickString(adminExtra && (adminExtra.gaodemapKey || adminExtra.gaodeMapKey)) ||
-    pickString(ctx?.secret?.gaodemapKey || ctx?.secret?.gaodeMapKey)
+    pickString(
+      adminExtra &&
+        (adminExtra.gaodemapKey ||
+          adminExtra.gaodeMapKey ||
+          adminExtra.gaodemap_key ||
+          adminExtra.gaode_map_key),
+    ) ||
+    pickString(
+      ctx?.secret?.gaodemapKey ||
+        ctx?.secret?.gaodeMapKey ||
+        ctx?.secret?.gaodemap_key ||
+        ctx?.secret?.gaode_map_key,
+    )
 
   if (!gaodemapKey) {
     ctx.throws(422, 'gaodemap api key is not configured')

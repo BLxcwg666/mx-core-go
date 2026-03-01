@@ -996,12 +996,12 @@ func (h *Handler) getConfigValue(key string) (interface{}, error) {
 	}
 
 	if value, ok := cfg[key]; ok {
-		return value, nil
+		return withCamelCaseAliases(value), nil
 	}
 
 	snakeKey := camelToSnake(key)
 	if value, ok := cfg[snakeKey]; ok {
-		return value, nil
+		return withCamelCaseAliases(value), nil
 	}
 	return nil, nil
 }
@@ -1023,6 +1023,59 @@ func camelToSnake(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+func snakeToCamel(s string) string {
+	if s == "" {
+		return s
+	}
+
+	parts := strings.Split(s, "_")
+	if len(parts) == 1 {
+		return s
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	b.WriteString(parts[0])
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]))
+		if len(part) > 1 {
+			b.WriteString(part[1:])
+		}
+	}
+	return b.String()
+}
+
+func withCamelCaseAliases(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(v)*2)
+		for key, child := range v {
+			normalizedChild := withCamelCaseAliases(child)
+			out[key] = normalizedChild
+
+			camelKey := snakeToCamel(key)
+			if camelKey == key {
+				continue
+			}
+			if _, exists := out[camelKey]; !exists {
+				out[camelKey] = normalizedChild
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(v))
+		for i := range v {
+			out[i] = withCamelCaseAliases(v[i])
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func (h *Handler) loadMasterUser() (interface{}, error) {
