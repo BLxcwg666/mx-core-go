@@ -1,11 +1,31 @@
 package response
 
 import (
+	"math/rand/v2"
 	"net/http"
 	"reflect"
 
 	"github.com/gin-gonic/gin"
 )
+
+var notFoundMessages = []string{
+	"真不巧，内容走丢了 o(╥﹏╥)o",
+	"电波无法到达 ωω",
+	"数据..不小心丢失了啦 π_π",
+	"404, 这也不是我的错啦 (๐•̆ ·̭ •̆๐)",
+	"嘿，这里空空如也，不如别处走走？",
+
+	"这里什么都没有，连 bug 都懒得来 (￣▽￣)",
+	"请求已发射，但命中了虚空 ଘ(੭ˊ꒳ˋ)੭✧",
+	"服务器翻了翻口袋：真的没有啦 ( ´･ω･`)",
+	"你要找的东西，可能在平行宇宙 (◞‸◟ )",
+	"前方是未探索区域，请谨慎前行 (ง •̀_•́)ง",
+	"404：世界线发生了轻微偏移 |д･)っ",
+	"内容不存在，但梦想还是要有的（？）",
+	"这个页面可能去度假了，还没回来 (●′ω`●)️",
+	"访问到了不存在的存在，这很哲学 ∠(´д｀)",
+	"这里是空的，但你的好奇心不是 (ฅ´ω`ฅ)",
+}
 
 // Pagination metadata returned with paginated responses.
 type Pagination struct {
@@ -74,7 +94,11 @@ func ForbiddenMsg(c *gin.Context, message string) {
 
 // NotFound sends a 404 error response.
 func NotFound(c *gin.Context) {
-	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"ok": 0, "code": http.StatusNotFound, "message": "Not Found"}) // TODO: apps/core/src/common/exceptions/cant-find.exception.ts
+	msg := "Not Found"
+	if len(notFoundMessages) > 0 {
+		msg = notFoundMessages[rand.IntN(len(notFoundMessages))]
+	}
+	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"ok": 0, "code": http.StatusNotFound, "message": msg})
 }
 
 // NotFoundMsg sends a 404 error with a custom message.
