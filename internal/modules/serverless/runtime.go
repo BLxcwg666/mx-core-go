@@ -39,6 +39,7 @@ type runtimeResponseMeta struct {
 	ContentType string
 	Sent        bool
 	SentData    interface{}
+	SentHasData bool
 }
 
 type runtimeContext struct {
@@ -57,8 +58,9 @@ type runtimeContext struct {
 }
 
 type executorResult struct {
-	data interface{}
-	meta runtimeResponseMeta
+	data    interface{}
+	hasData bool
+	meta    runtimeResponseMeta
 }
 
 type runtimeExecError struct {
@@ -276,17 +278,19 @@ func (h *Handler) executeSnippet(snippet *models.SnippetModel, ctx runtimeContex
 		return nil, h.normalizeRuntimeError(err, timeoutReason)
 	}
 
-	result, err := h.resolveResultValue(resultValue)
+	result, hasData, err := h.resolveResultValue(resultValue)
 	if err != nil {
 		return nil, err
 	}
 	if meta.Sent {
 		result = meta.SentData
+		hasData = meta.SentHasData
 	}
 
 	return &executorResult{
-		data: result,
-		meta: meta,
+		data:    result,
+		hasData: hasData,
+		meta:    meta,
 	}, nil
 }
 
@@ -367,14 +371,18 @@ func (h *Handler) installRuntimeGlobals(
 		return resObj
 	})
 	_ = resObj.Set("send", func(call goja.FunctionCall) goja.Value {
+		data, hasData := exportJSValueWithPresence(call.Argument(0))
 		meta.Sent = true
-		meta.SentData = exportJSValue(call.Argument(0))
+		meta.SentData = data
+		meta.SentHasData = hasData
 		return call.Argument(0)
 	})
 	_ = resObj.Set("json", func(call goja.FunctionCall) goja.Value {
+		data, hasData := exportJSValueWithPresence(call.Argument(0))
 		meta.ContentType = "application/json; charset=utf-8"
 		meta.Sent = true
-		meta.SentData = exportJSValue(call.Argument(0))
+		meta.SentData = data
+		meta.SentHasData = hasData
 		return call.Argument(0)
 	})
 	_ = resObj.Set("throws", throwsFn)
@@ -513,15 +521,18 @@ func (h *Handler) installRuntimeGlobals(
 	return nil
 }
 
-func (h *Handler) resolveResultValue(value goja.Value) (interface{}, error) {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return nil, nil
+func (h *Handler) resolveResultValue(value goja.Value) (interface{}, bool, error) {
+	if value == nil || goja.IsUndefined(value) {
+		return nil, false, nil
+	}
+	if goja.IsNull(value) {
+		return nil, true, nil
 	}
 
 	if p, ok := value.Export().(*goja.Promise); ok {
 		switch p.State() {
 		case goja.PromiseStatePending:
-			return nil, &runtimeExecError{
+			return nil, false, &runtimeExecError{
 				Status:  http.StatusInternalServerError,
 				Message: "serverless function returned a pending promise",
 			}
@@ -530,13 +541,13 @@ func (h *Handler) resolveResultValue(value goja.Value) (interface{}, error) {
 			if status == 0 {
 				status = http.StatusInternalServerError
 			}
-			return nil, &runtimeExecError{Status: status, Message: message}
+			return nil, false, &runtimeExecError{Status: status, Message: message}
 		default:
-			return exportJSValue(p.Result()), nil
+			return h.resolveResultValue(p.Result())
 		}
 	}
 
-	return exportJSValue(value), nil
+	return exportJSValue(value), true, nil
 }
 
 func (h *Handler) normalizeRuntimeError(err error, timeoutReason string) error {
@@ -649,10 +660,18 @@ func toInt(v interface{}) int {
 }
 
 func exportJSValue(value goja.Value) interface{} {
-	if value == nil || goja.IsNull(value) || goja.IsUndefined(value) {
-		return nil
+	out, _ := exportJSValueWithPresence(value)
+	return out
+}
+
+func exportJSValueWithPresence(value goja.Value) (interface{}, bool) {
+	if value == nil || goja.IsUndefined(value) {
+		return nil, false
 	}
-	return value.Export()
+	if goja.IsNull(value) {
+		return nil, true
+	}
+	return value.Export(), true
 }
 
 func exportMapValue(value goja.Value) map[string]interface{} {
@@ -1654,7 +1673,7 @@ func (h *Handler) writeServerlessResponse(c *gin.Context, out *executorResult) {
 		c.Header("Content-Type", contentType)
 	}
 
-	if out == nil || out.data == nil {
+	if out == nil || !out.hasData {
 		c.Status(statusCode)
 		return
 	}
