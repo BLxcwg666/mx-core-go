@@ -120,6 +120,7 @@ func (s *Service) Login(username, password, ip, ua string) (string, *models.User
 	if err := s.db.Select("id, username, name, avatar, password, mail, url, introduce, social_ids, last_login_time, last_login_ip").
 		Where("username = ?", username).First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			time.Sleep(3 * time.Second)
 			return "", nil, fmt.Errorf("user not found")
 		}
 		return "", nil, err
@@ -383,13 +384,13 @@ func (h *Handler) loginWithToken(c *gin.Context) {
 		return
 	}
 	currentSessionID := middleware.CurrentSessionID(c)
-	if currentSessionID != "" {
-		_ = sessionpkg.Revoke(h.svc.db, userID, currentSessionID)
-	}
 	token, _, err := sessionpkg.Issue(h.svc.db, userID, c.ClientIP(), c.Request.UserAgent(), sessionpkg.DefaultTTL)
 	if err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if currentSessionID != "" {
+		sessionpkg.RevokeAfter(h.svc.db, userID, currentSessionID, 6*time.Second)
 	}
 	response.OK(c, gin.H{"token": token})
 }

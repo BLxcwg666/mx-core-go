@@ -110,7 +110,17 @@ func extractToken(c *gin.Context) string {
 	if auth != "" {
 		return NormalizeToken(auth)
 	}
-	return NormalizeToken(c.Query("token"))
+	if token := NormalizeToken(c.Query("token")); token != "" {
+		return token
+	}
+	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
+		if raw, err := c.Cookie(cookieKey); err == nil {
+			if token := NormalizeToken(raw); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
 }
 
 // NormalizeToken trims spaces and strips optional Bearer prefix.

@@ -33,15 +33,17 @@ func (h *OAuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	g := rg.Group("/auth")
 
 	g.GET("/providers", h.listProviders)
+	g.POST("/sign-in/social", h.signInSocial) // Better Auth compatibility
 	g.GET("/redirect/:provider", h.redirectToProvider)
 	g.GET("/callback/:provider", h.handleCallback)
 	g.DELETE("/social/:provider", middleware.Auth(h.db), h.unlinkSocial)
 }
 
-type providerInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+type signInSocialDTO struct {
+	Provider         string `json:"provider" binding:"required"`
+	CallbackURL      string `json:"callbackURL"`
+	DisableRedirect  bool   `json:"disableRedirect"`
+	ErrorCallbackURL string `json:"errorCallbackURL"`
 }
 
 // GET /auth/providers
@@ -51,21 +53,14 @@ func (h *OAuthHandler) listProviders(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	var providers []providerInfo
+	providers := make([]string, 0)
 	for _, p := range cfg.OAuth.Providers {
 		providerType := strings.TrimSpace(p.Type)
 		if p.Enabled && providerType != "" && oauthClientID(cfg.OAuth.Public, providerType) != "" {
-			providers = append(providers, providerInfo{
-				ID:      providerType,
-				Name:    providerType,
-				Enabled: true,
-			})
+			providers = append(providers, providerType)
 		}
 	}
-	if providers == nil {
-		providers = []providerInfo{}
-	}
-	response.OK(c, providers)
+	c.JSON(http.StatusOK, providers)
 }
 
 // GET /auth/redirect/:provider?callback_url=...
@@ -73,31 +68,41 @@ func (h *OAuthHandler) redirectToProvider(c *gin.Context) {
 	providerID := c.Param("provider")
 	callbackURL := c.Query("callback_url")
 
-	cfg, err := h.cfgSvc.Get()
+	provider, err := h.resolveProvider(c, providerID, callbackURL)
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-
-	var provider *oauthProviderDef
-	for _, p := range cfg.OAuth.Providers {
-		providerType := strings.TrimSpace(p.Type)
-		clientID := oauthClientID(cfg.OAuth.Public, providerType)
-		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" {
-			def := oauthDef(providerID, clientID, callbackURL, c)
-			if def != nil {
-				provider = def
-				break
-			}
-		}
-	}
-
 	if provider == nil {
 		response.NotFoundMsg(c, "OAuth provider not found or not configured")
 		return
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, provider.AuthURL)
+}
+
+// POST /auth/sign-in/social
+func (h *OAuthHandler) signInSocial(c *gin.Context) {
+	var dto signInSocialDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	provider, err := h.resolveProvider(c, dto.Provider, dto.CallbackURL)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if provider == nil {
+		response.NotFoundMsg(c, "OAuth provider not found or not configured")
+		return
+	}
+
+	response.OK(c, gin.H{
+		"url":      provider.AuthURL,
+		"redirect": !dto.DisableRedirect,
+	})
 }
 
 // GET /auth/callback/:provider?code=...&state=...
@@ -177,6 +182,13 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	setAuthTokenCookie(c, token)
+
+	if callbackURL := strings.TrimSpace(c.Query("state")); callbackURL != "" {
+		if redirectWithToken(c, callbackURL, token) {
+			return
+		}
+	}
 
 	response.OK(c, gin.H{
 		"token": token,
@@ -211,7 +223,12 @@ func callbackURI(c *gin.Context, provider string) string {
 	if c.Request.TLS == nil {
 		scheme = "http"
 	}
-	return fmt.Sprintf("%s://%s/auth/callback/%s", scheme, c.Request.Host, provider)
+	basePath := "/auth"
+	fullPath := c.FullPath()
+	if idx := strings.Index(fullPath, "/auth/"); idx >= 0 {
+		basePath = fullPath[:idx] + "/auth"
+	}
+	return fmt.Sprintf("%s://%s%s/callback/%s", scheme, c.Request.Host, basePath, provider)
 }
 
 func oauthDef(providerID, clientID, callbackURL string, c *gin.Context) *oauthProviderDef {
@@ -243,6 +260,44 @@ func oauthDef(providerID, clientID, callbackURL string, c *gin.Context) *oauthPr
 		}
 	}
 	return nil
+}
+
+func (h *OAuthHandler) resolveProvider(c *gin.Context, providerID, callbackURL string) (*oauthProviderDef, error) {
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range cfg.OAuth.Providers {
+		providerType := strings.TrimSpace(p.Type)
+		clientID := oauthClientID(cfg.OAuth.Public, providerType)
+		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" {
+			return oauthDef(providerType, clientID, callbackURL, c), nil
+		}
+	}
+	return nil, nil
+}
+
+func redirectWithToken(c *gin.Context, callbackURL, token string) bool {
+	target, err := url.Parse(strings.TrimSpace(callbackURL))
+	if err != nil || target == nil {
+		return false
+	}
+	q := target.Query()
+	q.Set("token", token)
+	target.RawQuery = q.Encode()
+	c.Redirect(http.StatusTemporaryRedirect, target.String())
+	return true
+}
+
+func setAuthTokenCookie(c *gin.Context, token string) {
+	const maxAge = 14 * 24 * 60 * 60
+	secure := c.Request.TLS != nil
+	c.SetCookie("mx-token", token, maxAge, "/", "", secure, false)
+}
+
+func clearAuthTokenCookie(c *gin.Context) {
+	secure := c.Request.TLS != nil
+	c.SetCookie("mx-token", "", -1, "/", "", secure, false)
 }
 
 func exchangeCode(providerID, code, clientID, clientSecret, redirectURI string) (string, error) {

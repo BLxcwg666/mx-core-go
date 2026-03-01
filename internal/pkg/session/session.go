@@ -89,6 +89,20 @@ func Revoke(db *gorm.DB, userID, sessionID string) error {
 	return nil
 }
 
+func RevokeAfter(db *gorm.DB, userID, sessionID string, delay time.Duration) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	if delay <= 0 {
+		_ = Revoke(db, userID, sessionID)
+		return
+	}
+	time.AfterFunc(delay, func() {
+		_ = Revoke(db, userID, sessionID)
+	})
+}
+
 func RevokeAllExcept(db *gorm.DB, userID, keepSessionID string) error {
 	now := time.Now()
 	query := db.Model(&models.UserSession{}).

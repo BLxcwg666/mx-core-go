@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"golang.org/x/crypto/bcrypt"
@@ -55,11 +56,13 @@ func (s *Service) Login(username, password, ip, ua string) (string, error) {
 	if err := s.db.Select("id, password").
 		Where("username = ?", username).First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			time.Sleep(3 * time.Second)
 			return "", fmt.Errorf("user not found")
 		}
 		return "", err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
+		time.Sleep(3 * time.Second)
 		return "", fmt.Errorf("wrong password")
 	}
 	token, _, err := sessionpkg.Issue(s.db, u.ID, ip, ua, sessionpkg.DefaultTTL)
@@ -177,6 +180,7 @@ func (h *Handler) login(c *gin.Context) {
 		response.UnprocessableEntity(c, err.Error())
 		return
 	}
+	setAuthTokenCookie(c, token)
 	response.OK(c, loginResponse{Token: token})
 }
 
@@ -191,6 +195,7 @@ func (h *Handler) signInUsername(c *gin.Context) {
 		response.UnprocessableEntity(c, err.Error())
 		return
 	}
+	setAuthTokenCookie(c, token)
 	response.OK(c, gin.H{
 		"token":   token,
 		"success": true,
@@ -305,15 +310,54 @@ func (h *Handler) session(c *gin.Context) {
 		return
 	}
 	userID := middleware.CurrentUserID(c)
-	response.OK(c, gin.H{
-		"user": gin.H{
-			"id": userID,
-		},
-		"is_owner": true,
-	})
+	user, err := h.loadUserSessionProfile(userID)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if user == nil {
+		response.OK(c, nil)
+		return
+	}
+
+	account := h.loadLatestOAuthAccount(userID)
+	provider := account.Provider
+	providerAccountID := strings.TrimSpace(account.ProviderUID)
+	if providerAccountID == "" {
+		providerAccountID = user.ID
+	}
+	accountType := "credential"
+	if provider != "" {
+		accountType = "oauth"
+	}
+
+	out := gin.H{
+		"id":                user.ID,
+		"name":              displayName(user.Name, user.Username),
+		"email":             user.Mail,
+		"image":             user.Avatar,
+		"handle":            user.Username,
+		"isOwner":           true,
+		"providerAccountId": providerAccountID,
+		"provider":          provider,
+		"providerId":        provider,
+		"type":              accountType,
+		"userId":            user.ID,
+	}
+	response.OK(c, out)
 }
 
 func (h *Handler) signOut(c *gin.Context) {
+	if token := extractAuthTokenFromRequest(c); token != "" {
+		if claims, err := jwtpkg.Parse(token); err == nil {
+			sessionID := strings.TrimSpace(claims.SessionID)
+			userID := strings.TrimSpace(claims.UserID)
+			if sessionID != "" && userID != "" {
+				_ = sessionpkg.Revoke(h.svc.db, userID, sessionID)
+			}
+		}
+	}
+	clearAuthTokenCookie(c)
 	response.OK(c, gin.H{"success": true})
 }
 
@@ -323,27 +367,117 @@ func (h *Handler) getAuthSession(c *gin.Context) {
 		return
 	}
 	userID := middleware.CurrentUserID(c)
+	sessionID := middleware.CurrentSessionID(c)
+	if sessionID == "" {
+		response.OK(c, nil)
+		return
+	}
+
+	user, err := h.loadUserSessionProfile(userID)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if user == nil {
+		response.OK(c, nil)
+		return
+	}
+
+	var s models.UserSession
+	if err := h.svc.db.Where("id = ? AND user_id = ?", sessionID, userID).First(&s).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.OK(c, nil)
+			return
+		}
+		response.InternalError(c, err)
+		return
+	}
+
+	rawToken := extractAuthTokenFromRequest(c)
+	if rawToken == "" {
+		rawToken = s.ID
+	}
+
 	response.OK(c, gin.H{
-		"user": gin.H{"id": userID},
 		"session": gin.H{
-			"userId": userID,
+			"id":        s.ID,
+			"token":     rawToken,
+			"userId":    userID,
+			"expiresAt": s.ExpiresAt,
+			"createdAt": s.CreatedAt,
+			"updatedAt": s.UpdatedAt,
+			"ipAddress": s.IP,
+			"userAgent": s.UA,
+		},
+		"user": gin.H{
+			"id":            user.ID,
+			"name":          displayName(user.Name, user.Username),
+			"email":         user.Mail,
+			"image":         user.Avatar,
+			"emailVerified": true,
+			"createdAt":     user.CreatedAt,
+			"updatedAt":     user.UpdatedAt,
 		},
 	})
 }
 
 func (h *Handler) listAuthSessions(c *gin.Context) {
-	response.OK(c, []interface{}{})
+	userID := middleware.CurrentUserID(c)
+	sessions, err := sessionpkg.ListActive(h.svc.db, userID)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	items := make([]gin.H, 0, len(sessions))
+	for _, s := range sessions {
+		items = append(items, gin.H{
+			"id":        s.ID,
+			"token":     s.ID,
+			"userId":    s.UserID,
+			"expiresAt": s.ExpiresAt,
+			"createdAt": s.CreatedAt,
+			"updatedAt": s.UpdatedAt,
+			"ipAddress": s.IP,
+			"userAgent": s.UA,
+		})
+	}
+	c.JSON(200, items)
 }
 
 func (h *Handler) revokeSession(c *gin.Context) {
+	var body struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	sessionID := resolveSessionIDFromToken(body.Token)
+	if sessionID != "" {
+		err := sessionpkg.Revoke(h.svc.db, middleware.CurrentUserID(c), sessionID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			response.InternalError(c, err)
+			return
+		}
+	}
 	response.OK(c, gin.H{"status": true})
 }
 
 func (h *Handler) revokeSessions(c *gin.Context) {
+	if err := sessionpkg.RevokeAllExcept(h.svc.db, middleware.CurrentUserID(c), ""); err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	response.OK(c, gin.H{"status": true})
 }
 
 func (h *Handler) revokeOtherSessions(c *gin.Context) {
+	if err := sessionpkg.RevokeAllExcept(h.svc.db, middleware.CurrentUserID(c), middleware.CurrentSessionID(c)); err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	response.OK(c, gin.H{"status": true})
 }
 
@@ -403,4 +537,64 @@ func firstNonNilTime(values ...*time.Time) *time.Time {
 		}
 	}
 	return nil
+}
+
+func (h *Handler) loadUserSessionProfile(userID string) (*models.UserModel, error) {
+	var u models.UserModel
+	if err := h.svc.db.
+		Select("id, username, name, avatar, mail, created_at, updated_at").
+		Where("id = ?", userID).
+		First(&u).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (h *Handler) loadLatestOAuthAccount(userID string) *models.OAuth2Token {
+	var account models.OAuth2Token
+	if err := h.svc.db.
+		Where("user_id = ?", userID).
+		Order("last_used DESC, updated_at DESC, created_at DESC").
+		First(&account).Error; err != nil {
+		return &models.OAuth2Token{}
+	}
+	return &account
+}
+
+func extractAuthTokenFromRequest(c *gin.Context) string {
+	if token := middleware.NormalizeToken(c.GetHeader("Authorization")); token != "" {
+		return token
+	}
+	if token := middleware.NormalizeToken(c.Query("token")); token != "" {
+		return token
+	}
+	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
+		if raw, err := c.Cookie(cookieKey); err == nil {
+			if token := middleware.NormalizeToken(raw); token != "" {
+				return token
+			}
+		}
+	}
+	return ""
+}
+
+func resolveSessionIDFromToken(rawToken string) string {
+	token := middleware.NormalizeToken(rawToken)
+	if token == "" {
+		return ""
+	}
+	if claims, err := jwtpkg.Parse(token); err == nil {
+		return strings.TrimSpace(claims.SessionID)
+	}
+	return strings.TrimSpace(token)
+}
+
+func displayName(name, fallback string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return fallback
 }
