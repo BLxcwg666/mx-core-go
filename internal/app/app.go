@@ -115,7 +115,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
+		ExposeHeaders:    []string{"Content-Length", "x-mx-cache", "x-mx-served-by"},
 		AllowCredentials: true,
 	}
 	if len(cfg.AllowedOrigins) > 0 && !cfg.IsDev() {
@@ -254,6 +254,13 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	// Versioned API
 	api := r.Group(apiPrefix)
 	api.Use(middleware.OptionalAuth(db))
+	api.Use(middleware.HTTPCache(rc.Raw(), middleware.HTTPCacheOptions{
+		TTL:                    15 * time.Second,
+		EnableCDNHeader:        true,
+		EnableForceCacheHeader: false,
+		Disable:                a.cfg.IsDev(),
+		SkipPaths:              httpCacheSkipPaths(apiPrefix),
+	}))
 
 	// Infrastructure
 	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW)
@@ -324,7 +331,16 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	cleanCache := func(c *gin.Context) {
 		cfgSvc.Invalidate()
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+		deleted, err := middleware.PurgeHTTPCache(c.Request.Context(), rc.Raw())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"ok":      0,
+				"code":    http.StatusInternalServerError,
+				"message": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": deleted})
 	}
 	api.GET("/clean_cache", authMW, cleanCache)
 	api.GET("/clean_catch", authMW, cleanCache) // legacy typo compatibility
@@ -415,6 +431,30 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	aiSvc := ai.NewService(db, cfgSvc, taskSvc)
 	ai.NewHandler(aiSvc).RegisterRoutes(api, authMW)
+}
+
+func httpCacheSkipPaths(apiPrefix string) []string {
+	p := strings.TrimSuffix(strings.TrimSpace(apiPrefix), "/")
+	if p == "" {
+		p = "/api/v2"
+	}
+	return []string{
+		p + "/uptime",
+		p + "/like_this",
+		p + "/clean_cache",
+		p + "/clean_catch",
+		p + "/clean_redis",
+		p + "/server-time",
+		p + "/search",
+		p + "/search/",
+		p + "/search/type/*",
+		p + "/master/allow-login",
+		p + "/master/check_logged",
+		p + "/user/allow-login",
+		p + "/user/check_logged",
+		p + "/owner/allow-login",
+		p + "/owner/check_logged",
+	}
 }
 
 // cfgStartTime keeps runtime uptime stable across hot paths without extra globals.
