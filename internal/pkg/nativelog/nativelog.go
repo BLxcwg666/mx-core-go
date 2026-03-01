@@ -362,7 +362,9 @@ func parseSessionFileIndex(todayName, fileName string) (int, bool) {
 }
 
 // NewZapLogger creates a zap logger with native log file output and realtime stream.
-// Console output uses the pretty encoder (with colors); file output uses plain text.
+// Both console and file output use the pretty encoder with ANSI colors, because the
+// file output is also consumed by the real-time log stream (WebSocket) which renders
+// ANSI escape codes in the browser.
 func NewZapLogger() (*zap.Logger, error) {
 	writer, err := NewWriter()
 	if err != nil {
@@ -372,7 +374,7 @@ func NewZapLogger() (*zap.Logger, error) {
 	level := zap.NewAtomicLevelAt(zap.DebugLevel)
 
 	consoleEncoder := prettylog.NewEncoder(prettylog.ShouldColor())
-	fileEncoder := prettylog.NewEncoder(false)
+	fileEncoder := prettylog.NewEncoder(true)
 
 	core := zapcore.NewTee(
 		zapcore.NewCore(consoleEncoder, zapcore.Lock(os.Stdout), level),
