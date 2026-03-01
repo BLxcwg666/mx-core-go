@@ -2,23 +2,31 @@ package render
 
 import (
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	appconfigs "github.com/mx-space/core/internal/modules/configs"
+	mdmodule "github.com/mx-space/core/internal/modules/markdown"
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db *gorm.DB
+	db     *gorm.DB
+	cfgSvc *appconfigs.Service
 }
 
-func NewHandler(db *gorm.DB) *Handler { return &Handler{db: db} }
+func NewHandler(db *gorm.DB, cfgSvc *appconfigs.Service) *Handler {
+	return &Handler{db: db, cfgSvc: cfgSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/render")
@@ -27,13 +35,14 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 }
 
 func (h *Handler) renderArticle(c *gin.Context) {
+	start := time.Now()
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
 		response.NotFound(c)
 		return
 	}
 
-	title, text, isPrivate, err := h.loadRenderableByID(id)
+	doc, err := h.loadRenderableByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c)
@@ -43,18 +52,49 @@ func (h *Handler) renderArticle(c *gin.Context) {
 		return
 	}
 
-	if isPrivate && !hasRenderAccess(c) {
+	if doc.IsPrivate && !hasRenderAccess(c) {
 		response.Forbidden(c)
 		return
 	}
 
+	html := mdmodule.RenderMarkdownContent(doc.Text)
+	structure := mdmodule.BuildRenderedMarkdownHTMLStructure(html, doc.Title, c.Query("theme"))
+
+	sourceURL := h.resolveSourceURL(c, doc.RelativePath())
+	username := h.resolveMasterName()
+	renderedAt := time.Now().Format("2006-01-02 15:04:05")
+	createdAt := doc.CreatedAt.Format("2006-01-02 15:04")
+	renderCostMs := float64(time.Since(start).Microseconds()) / 1000.0
+
+	footer := fmt.Sprintf(`<div>本文渲染于 %s，由 marked.js 解析生成，用时 %.2fms</div>
+      <div>作者：%s，撰写于%s</div>
+      <div>原文地址：<a href="%s">%s</a></div>`,
+		template.HTMLEscapeString(renderedAt),
+		renderCostMs,
+		template.HTMLEscapeString(username),
+		template.HTMLEscapeString(createdAt),
+		template.HTMLEscapeString(sourceURL),
+		template.HTMLEscapeString(sourceURL),
+	)
+
+	info := ""
+	if doc.IsPrivate {
+		info = "正在查看的文章还未公开"
+	}
+
+	page := mdmodule.RenderMarkdownHTMLDocument(structure, mdmodule.RenderDocumentOptions{
+		Title:  doc.Title,
+		Info:   template.HTMLEscapeString(info),
+		Footer: footer,
+	})
+
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, renderHTML(title, text))
+	c.String(http.StatusOK, page)
 }
 
 type markdownPreviewDTO struct {
 	MD    string `json:"md" binding:"required"`
-	Title string `json:"title"`
+	Title string `json:"title" binding:"required"`
 }
 
 func (h *Handler) previewMarkdown(c *gin.Context) {
@@ -64,33 +104,89 @@ func (h *Handler) previewMarkdown(c *gin.Context) {
 		return
 	}
 
+	html := mdmodule.RenderMarkdownContent(dto.MD)
+	structure := mdmodule.BuildRenderedMarkdownHTMLStructure(html, dto.Title, c.Query("theme"))
+	page := mdmodule.RenderMarkdownHTMLDocument(structure, mdmodule.RenderDocumentOptions{
+		Title: dto.Title,
+	})
+
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, renderHTML(dto.Title, dto.MD))
+	c.String(http.StatusOK, page)
 }
 
-func (h *Handler) loadRenderableByID(id string) (title, text string, isPrivate bool, err error) {
-	var post models.PostModel
-	if err = h.db.Select("id, title, text, is_published").First(&post, "id = ?", id).Error; err == nil {
-		return post.Title, post.Text, !post.IsPublished, nil
+type renderableDocument struct {
+	Type         string
+	Title        string
+	Text         string
+	Slug         string
+	NID          int
+	CategorySlug string
+	CreatedAt    time.Time
+	IsPrivate    bool
+}
+
+func (d renderableDocument) RelativePath() string {
+	switch d.Type {
+	case "posts":
+		return fmt.Sprintf("/posts/%s/%s", d.CategorySlug, d.Slug)
+	case "notes":
+		return fmt.Sprintf("/notes/%d", d.NID)
+	case "pages":
+		return "/" + strings.TrimPrefix(d.Slug, "/")
+	default:
+		return "/"
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", "", false, err
+}
+
+func (h *Handler) loadRenderableByID(id string) (*renderableDocument, error) {
+	var post models.PostModel
+	if err := h.db.Preload("Category").
+		Select("id, title, text, slug, category_id, is_published, created_at").
+		First(&post, "id = ?", id).Error; err == nil {
+		categorySlug := ""
+		if post.Category != nil {
+			categorySlug = post.Category.Slug
+		}
+		return &renderableDocument{
+			Type:         "posts",
+			Title:        post.Title,
+			Text:         post.Text,
+			Slug:         post.Slug,
+			CategorySlug: categorySlug,
+			CreatedAt:    post.CreatedAt,
+			IsPrivate:    !post.IsPublished,
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	var note models.NoteModel
-	if err = h.db.Select("id, title, text, is_published, password_hash").First(&note, "id = ?", id).Error; err == nil {
-		private := !note.IsPublished || strings.TrimSpace(note.Password) != ""
-		return note.Title, note.Text, private, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", "", false, err
+	if err := h.db.Select("id, title, text, n_id, is_published, password_hash, created_at").First(&note, "id = ?", id).Error; err == nil {
+		return &renderableDocument{
+			Type:      "notes",
+			Title:     note.Title,
+			Text:      note.Text,
+			NID:       note.NID,
+			CreatedAt: note.CreatedAt,
+			IsPrivate: !note.IsPublished || strings.TrimSpace(note.Password) != "",
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	var page models.PageModel
-	if err = h.db.Select("id, title, text").First(&page, "id = ?", id).Error; err == nil {
-		return page.Title, page.Text, false, nil
+	if err := h.db.Select("id, title, text, slug, created_at").First(&page, "id = ?", id).Error; err == nil {
+		return &renderableDocument{
+			Type:      "pages",
+			Title:     page.Title,
+			Text:      page.Text,
+			Slug:      page.Slug,
+			CreatedAt: page.CreatedAt,
+			IsPrivate: false,
+		}, nil
 	}
-	return "", "", false, err
+
+	return nil, gorm.ErrRecordNotFound
 }
 
 func hasRenderAccess(c *gin.Context) bool {
@@ -108,27 +204,56 @@ func hasRenderAccess(c *gin.Context) bool {
 	return err == nil
 }
 
-func renderHTML(title, markdown string) string {
-	escapedTitle := template.HTMLEscapeString(strings.TrimSpace(title))
-	escapedContent := template.HTMLEscapeString(markdown)
-	return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>` + escapedTitle + `</title>
-  <style>
-    body { margin: 0; padding: 24px; font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #222; background: #fff; }
-    main { max-width: 860px; margin: 0 auto; }
-    h1 { margin: 0 0 20px; font-size: 28px; }
-    pre { white-space: pre-wrap; word-break: break-word; border: 1px solid #eee; border-radius: 8px; padding: 16px; background: #fafafa; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>` + escapedTitle + `</h1>
-    <pre>` + escapedContent + `</pre>
-  </main>
-</body>
-</html>`
+func (h *Handler) resolveSourceURL(c *gin.Context, relativePath string) string {
+	webURL := h.resolveWebURL(c)
+	base, err := url.Parse(webURL)
+	if err != nil {
+		return relativePath
+	}
+	ref, err := url.Parse(relativePath)
+	if err != nil {
+		return relativePath
+	}
+	return base.ResolveReference(ref).String()
+}
+
+func (h *Handler) resolveWebURL(c *gin.Context) string {
+	if h.cfgSvc != nil {
+		if cfg, err := h.cfgSvc.Get(); err == nil {
+			if webURL := strings.TrimSpace(cfg.URL.WebURL); webURL != "" {
+				if !strings.HasPrefix(webURL, "http://") && !strings.HasPrefix(webURL, "https://") {
+					webURL = "http://" + webURL
+				}
+				return webURL
+			}
+		}
+	}
+
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	if proto := strings.TrimSpace(c.Request.Header.Get("X-Forwarded-Proto")); proto != "" {
+		scheme = strings.Split(proto, ",")[0]
+	}
+
+	host := strings.TrimSpace(c.Request.Host)
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host
+}
+
+func (h *Handler) resolveMasterName() string {
+	var user models.UserModel
+	if err := h.db.Select("name, username").Order("created_at asc").First(&user).Error; err != nil {
+		return "owner"
+	}
+	if strings.TrimSpace(user.Name) != "" {
+		return user.Name
+	}
+	if strings.TrimSpace(user.Username) != "" {
+		return user.Username
+	}
+	return "owner"
 }

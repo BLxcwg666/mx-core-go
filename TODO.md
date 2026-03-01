@@ -1,5 +1,4 @@
 ### 待做：  
-- render 全量对齐  
 - 设置项引用量
 - 埋在 codebase 里的 TODO
 - Cluster 模式

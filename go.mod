@@ -68,6 +68,7 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
+	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/zishang520/engine.io-go-parser v1.3.2 // indirect
 	github.com/zishang520/engine.io/v2 v2.5.0 // indirect
 	github.com/zishang520/socket.io-go-parser/v2 v2.5.0 // indirect

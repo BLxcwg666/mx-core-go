@@ -3,15 +3,19 @@ package markdown
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/pkg/response"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -28,7 +32,19 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g.POST("/import", h.importMarkdown)
 }
 
-// GET /markdown/render/structure/:id — extract heading structure from an article
+type articleSnapshot struct {
+	ID        string
+	Title     string
+	Text      string
+	Slug      string
+	NID       int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Type      string
+	Category  *models.CategoryModel
+}
+
+// GET /markdown/render/structure/:id
 func (h *Handler) renderStructure(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
@@ -36,7 +52,7 @@ func (h *Handler) renderStructure(c *gin.Context) {
 		return
 	}
 
-	title, text, err := h.loadArticleByID(id)
+	article, err := h.loadArticleByID(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFound(c)
@@ -46,102 +62,70 @@ func (h *Handler) renderStructure(c *gin.Context) {
 		return
 	}
 
-	response.OK(c, gin.H{
-		"title":    title,
-		"headings": extractHeadings(text),
-	})
+	html := RenderMarkdownContent(article.Text)
+	structure := BuildRenderedMarkdownHTMLStructure(html, article.Title, c.Query("theme"))
+	response.OK(c, structure)
 }
 
-type headingItem struct {
-	Level int    `json:"level"`
-	Text  string `json:"text"`
-	ID    string `json:"id"`
-}
-
-// extractHeadings parses ATX-style Markdown headings from text.
-func extractHeadings(text string) []headingItem {
-	var headings []headingItem
-	for _, line := range strings.Split(text, "\n") {
-		if !strings.HasPrefix(line, "#") {
-			continue
-		}
-		level := 0
-		for _, r := range line {
-			if r == '#' {
-				level++
-			} else {
-				break
-			}
-		}
-		if level < 1 || level > 6 {
-			continue
-		}
-		content := strings.TrimSpace(line[level:])
-		if content == "" {
-			continue
-		}
-		headings = append(headings, headingItem{
-			Level: level,
-			Text:  content,
-			ID:    slugifyHeading(content),
-		})
-	}
-	if headings == nil {
-		headings = []headingItem{}
-	}
-	return headings
-}
-
-// slugifyHeading converts heading text to a URL-friendly anchor ID.
-func slugifyHeading(text string) string {
-	s := strings.ToLower(text)
-	s = strings.ReplaceAll(s, " ", "-")
-	var sb strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			sb.WriteRune(r)
-		}
-	}
-	result := strings.Trim(sb.String(), "-")
-	if result == "" {
-		result = "heading"
-	}
-	return result
-}
-
-// loadArticleByID searches posts, notes, pages by ID.
-func (h *Handler) loadArticleByID(id string) (title, text string, err error) {
+func (h *Handler) loadArticleByID(id string) (*articleSnapshot, error) {
 	var post models.PostModel
-	if err = h.db.Select("id, title, text").First(&post, "id = ?", id).Error; err == nil {
-		return post.Title, post.Text, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", "", err
+	if err := h.db.Preload("Category").Select("id, title, text, slug, category_id, created_at, updated_at").First(&post, "id = ?", id).Error; err == nil {
+		return &articleSnapshot{
+			ID:        post.ID,
+			Title:     post.Title,
+			Text:      post.Text,
+			Slug:      post.Slug,
+			CreatedAt: post.CreatedAt,
+			UpdatedAt: post.UpdatedAt,
+			Type:      "post",
+			Category:  post.Category,
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	var note models.NoteModel
-	if err = h.db.Select("id, title, text").First(&note, "id = ?", id).Error; err == nil {
-		return note.Title, note.Text, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", "", err
+	if err := h.db.Select("id, title, text, n_id, created_at, updated_at").First(&note, "id = ?", id).Error; err == nil {
+		return &articleSnapshot{
+			ID:        note.ID,
+			Title:     note.Title,
+			Text:      note.Text,
+			NID:       note.NID,
+			CreatedAt: note.CreatedAt,
+			UpdatedAt: note.UpdatedAt,
+			Type:      "note",
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	var page models.PageModel
-	if err = h.db.Select("id, title, text").First(&page, "id = ?", id).Error; err == nil {
-		return page.Title, page.Text, nil
+	if err := h.db.Select("id, title, text, slug, created_at, updated_at").First(&page, "id = ?", id).Error; err == nil {
+		return &articleSnapshot{
+			ID:        page.ID,
+			Title:     page.Title,
+			Text:      page.Text,
+			Slug:      page.Slug,
+			CreatedAt: page.CreatedAt,
+			UpdatedAt: page.UpdatedAt,
+			Type:      "page",
+		}, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
-	return "", "", err
+
+	return nil, gorm.ErrRecordNotFound
 }
 
-// GET /markdown/export?show_title=true&slug=true&yaml=true
+// GET /markdown/export?show_title=true&slug=true&yaml=true&with_meta_json=true
 func (h *Handler) export(c *gin.Context) {
-	showTitle := c.Query("show_title") == "true" || c.Query("show_title") == "1"
-	useSlug := c.Query("slug") == "true" || c.Query("slug") == "1"
-	includeYAML := c.Query("yaml") == "true" || c.Query("yaml") == "1"
+	showTitle := parseBool(c.Query("show_title"))
+	useSlug := parseBool(c.Query("slug"))
+	includeYAML := parseBool(c.Query("yaml"))
+	withMetaJSON := parseBool(c.Query("with_meta_json"))
 
 	var posts []models.PostModel
-	h.db.Find(&posts)
+	h.db.Preload("Category").Find(&posts)
 
 	var notes []models.NoteModel
 	h.db.Find(&notes)
@@ -152,40 +136,81 @@ func (h *Handler) export(c *gin.Context) {
 	buf := &bytes.Buffer{}
 	w := zip.NewWriter(buf)
 
+	postMetaMap := make(map[string]any)
 	for _, p := range posts {
-		filename := p.ID
-		if useSlug && p.Slug != "" {
-			filename = p.Slug
+		meta := map[string]any{
+			"created":  p.CreatedAt,
+			"modified": p.UpdatedAt,
+			"title":    p.Title,
+			"slug":     chooseFirstNonEmpty(p.Slug, p.Title),
+			"oid":      p.ID,
+			"type":     "post",
+			"tags":     p.Tags,
 		}
-		content := buildMarkdown(p.Title, p.Text, showTitle, includeYAML, map[string]string{
-			"slug": p.Slug,
-			"date": p.CreatedAt.Format(time.RFC3339),
-		})
-		f, _ := w.Create(fmt.Sprintf("posts/%s.md", filename))
+		if p.Category != nil {
+			meta["categories"] = p.Category.Name
+			meta["permalink"] = fmt.Sprintf("/posts/%s/%s", p.Category.Slug, p.Slug)
+		}
+		content := markdownBuilder(meta, p.Text, includeYAML, showTitle)
+		filename := markdownFilename(meta, useSlug)
+		f, _ := w.Create(filepath.ToSlash(filepath.Join("posts", filename)))
 		f.Write([]byte(content))
+		postMetaMap[p.ID] = exportMetaWithoutText(p)
 	}
 
+	noteMetaMap := make(map[string]any)
 	for _, n := range notes {
-		filename := fmt.Sprintf("%d", n.NID)
-		content := buildMarkdown(n.Title, n.Text, showTitle, includeYAML, map[string]string{
-			"nid":  fmt.Sprintf("%d", n.NID),
-			"date": n.CreatedAt.Format(time.RFC3339),
-		})
-		f, _ := w.Create(fmt.Sprintf("notes/%s.md", filename))
+		meta := map[string]any{
+			"created":   n.CreatedAt,
+			"modified":  n.UpdatedAt,
+			"title":     n.Title,
+			"slug":      fmt.Sprintf("%d", n.NID),
+			"oid":       n.ID,
+			"type":      "note",
+			"id":        n.NID,
+			"mood":      n.Mood,
+			"weather":   n.Weather,
+			"permalink": fmt.Sprintf("/notes/%d", n.NID),
+		}
+		content := markdownBuilder(meta, n.Text, includeYAML, showTitle)
+		filename := markdownFilename(meta, useSlug)
+		f, _ := w.Create(filepath.ToSlash(filepath.Join("notes", filename)))
 		f.Write([]byte(content))
+		noteMetaMap[n.ID] = exportMetaWithoutText(n)
 	}
 
+	pageMetaMap := make(map[string]any)
 	for _, pg := range pages {
-		filename := pg.ID
-		if useSlug && pg.Slug != "" {
-			filename = pg.Slug
+		meta := map[string]any{
+			"created":   pg.CreatedAt,
+			"modified":  pg.UpdatedAt,
+			"title":     pg.Title,
+			"slug":      chooseFirstNonEmpty(pg.Slug, pg.Title),
+			"oid":       pg.ID,
+			"type":      "page",
+			"subtitle":  pg.Subtitle,
+			"permalink": "/" + pg.Slug,
 		}
-		content := buildMarkdown(pg.Title, pg.Text, showTitle, includeYAML, map[string]string{
-			"slug": pg.Slug,
-			"date": pg.CreatedAt.Format(time.RFC3339),
-		})
-		f, _ := w.Create(fmt.Sprintf("pages/%s.md", filename))
+		content := markdownBuilder(meta, pg.Text, includeYAML, showTitle)
+		filename := markdownFilename(meta, useSlug)
+		f, _ := w.Create(filepath.ToSlash(filepath.Join("pages", filename)))
 		f.Write([]byte(content))
+		pageMetaMap[pg.ID] = exportMetaWithoutText(pg)
+	}
+
+	if withMetaJSON {
+		if b, err := json.Marshal(postMetaMap); err == nil {
+			f, _ := w.Create("posts/_meta.json")
+			f.Write(b)
+		}
+		if b, err := json.Marshal(noteMetaMap); err == nil {
+			f, _ := w.Create("notes/_meta.json")
+			f.Write(b)
+		}
+		if b, err := json.Marshal(pageMetaMap); err == nil {
+			f, _ := w.Create("pages/_meta.json")
+			f.Write(b)
+		}
 	}
 
 	w.Close()
@@ -195,20 +220,32 @@ func (h *Handler) export(c *gin.Context) {
 	c.Data(http.StatusOK, "application/zip", buf.Bytes())
 }
 
-func buildMarkdown(title, text string, showTitle, includeYAML bool, meta map[string]string) string {
+func markdownBuilder(meta map[string]any, text string, includeYAMLHeader, showHeader bool) string {
+	title := asString(meta["title"])
 	var sb strings.Builder
-	if includeYAML {
-		sb.WriteString("---\n")
-		sb.WriteString(fmt.Sprintf("title: %q\n", title))
-		for k, v := range meta {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+	if includeYAMLHeader {
+		header := map[string]any{
+			"date":    meta["created"],
+			"updated": meta["modified"],
+			"title":   title,
 		}
-		sb.WriteString("---\n\n")
+		for key, value := range meta {
+			if key == "created" || key == "modified" || key == "title" {
+				continue
+			}
+			header[key] = value
+		}
+		yamlText, _ := yaml.Marshal(header)
+		sb.WriteString("---\n")
+		sb.WriteString(strings.TrimSpace(string(yamlText)))
+		sb.WriteString("\n---\n\n")
 	}
-	if showTitle {
-		sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+	if showHeader {
+		sb.WriteString("# ")
+		sb.WriteString(title)
+		sb.WriteString("\n\n")
 	}
-	sb.WriteString(text)
+	sb.WriteString(strings.TrimSpace(text))
 	return sb.String()
 }
 
@@ -219,10 +256,17 @@ type importDTO struct {
 }
 
 type importItem struct {
-	Title string `json:"title"`
-	Text  string `json:"text"`
-	Slug  string `json:"slug"`
-	Date  string `json:"date"`
+	Meta *importMeta `json:"meta"`
+	Text string      `json:"text" binding:"required"`
+}
+
+type importMeta struct {
+	Title      string   `json:"title"`
+	Date       string   `json:"date"`
+	Updated    string   `json:"updated"`
+	Categories []string `json:"categories"`
+	Tags       []string `json:"tags"`
+	Slug       string   `json:"slug"`
 }
 
 func (h *Handler) importMarkdown(c *gin.Context) {
@@ -232,65 +276,254 @@ func (h *Handler) importMarkdown(c *gin.Context) {
 		return
 	}
 
-	imported := 0
-	for _, item := range dto.Data {
-		switch dto.Type {
-		case "post":
-			slug := item.Slug
-			if slug == "" {
-				slug = sanitizeSlug(item.Title)
-			}
-
-			var count int64
-			h.db.Model(&models.PostModel{}).Where("slug = ?", slug).Count(&count)
-			if count > 0 {
-				continue
-			}
-			p := models.PostModel{
-				WriteBase: models.WriteBase{
-					Base:  models.Base{},
-					Title: item.Title,
-					Text:  item.Text,
-				},
-				Slug:        slug,
-				IsPublished: true,
-			}
-			if err := h.db.Create(&p).Error; err == nil {
-				imported++
-			}
-		case "note":
-			var maxNID int
-			h.db.Model(&models.NoteModel{}).Select("COALESCE(MAX(n_id), 0)").Scan(&maxNID)
-			n := models.NoteModel{
-				WriteBase: models.WriteBase{
-					Title: item.Title,
-					Text:  item.Text,
-				},
-				NID:         maxNID + 1,
-				IsPublished: true,
-			}
-			if err := h.db.Create(&n).Error; err == nil {
-				imported++
-			}
-		}
+	docType := strings.ToLower(strings.TrimSpace(dto.Type))
+	if docType != "post" && docType != "note" {
+		response.BadRequest(c, "type must be post or note")
+		return
 	}
 
-	response.OK(c, gin.H{"imported": imported})
+	if docType == "post" {
+		created, err := h.importPosts(dto.Data)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, created)
+		return
+	}
+
+	created, err := h.importNotes(dto.Data)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	response.OK(c, created)
 }
 
-func sanitizeSlug(title string) string {
-	s := strings.ToLower(title)
-	s = strings.ReplaceAll(s, " ", "-")
+func (h *Handler) importPosts(data []importItem) ([]models.PostModel, error) {
+	var categories []models.CategoryModel
+	if err := h.db.Find(&categories).Error; err != nil {
+		return nil, err
+	}
 
-	var sb strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			sb.WriteRune(r)
+	var defaultCategory models.CategoryModel
+	if err := h.db.Order("created_at asc").First(&defaultCategory).Error; err != nil {
+		return nil, errors.New("分类不存在")
+	}
+
+	categoryByName := make(map[string]models.CategoryModel, len(categories))
+	categoryBySlug := make(map[string]models.CategoryModel, len(categories))
+	for _, category := range categories {
+		categoryByName[category.Name] = category
+		categoryBySlug[category.Slug] = category
+	}
+
+	unnamedCount := 1
+	createdModels := make([]models.PostModel, 0, len(data))
+
+	for _, item := range data {
+		title := fmt.Sprintf("未命名-%d", unnamedCount)
+		slug := fmt.Sprintf("%d", time.Now().UnixMilli())
+		categoryID := defaultCategory.ID
+		tags := models.StringSlice{}
+		createdAt, updatedAt := parseMetaDates(nil)
+
+		if item.Meta != nil {
+			createdAt, updatedAt = parseMetaDates(item.Meta)
+			if strings.TrimSpace(item.Meta.Title) != "" {
+				title = item.Meta.Title
+			}
+			if strings.TrimSpace(item.Meta.Slug) != "" {
+				slug = item.Meta.Slug
+			} else {
+				slug = title
+			}
+			if len(item.Meta.Tags) > 0 {
+				tags = append(tags, item.Meta.Tags...)
+			}
+
+			if len(item.Meta.Categories) > 0 {
+				firstCategory := strings.TrimSpace(item.Meta.Categories[0])
+				if firstCategory != "" {
+					if existing, ok := categoryByName[firstCategory]; ok {
+						categoryID = existing.ID
+					} else if existing, ok := categoryBySlug[firstCategory]; ok {
+						categoryID = existing.ID
+					} else {
+						category := models.CategoryModel{
+							Name: firstCategory,
+							Slug: firstCategory,
+							Type: 0,
+						}
+						if err := h.db.Create(&category).Error; err == nil {
+							categoryByName[category.Name] = category
+							categoryBySlug[category.Slug] = category
+							categoryID = category.ID
+						}
+					}
+				}
+			}
+		} else {
+			unnamedCount++
+		}
+
+		post := models.PostModel{
+			WriteBase: models.WriteBase{
+				Title: title,
+				Text:  item.Text,
+				Base: models.Base{
+					CreatedAt: createdAt,
+					UpdatedAt: updatedAt,
+				},
+			},
+			Slug:       slug,
+			CategoryID: &categoryID,
+			Tags:       tags,
+		}
+
+		if err := h.db.Create(&post).Error; err != nil {
+			continue
+		}
+		createdModels = append(createdModels, post)
+	}
+	return createdModels, nil
+}
+
+func (h *Handler) importNotes(data []importItem) ([]models.NoteModel, error) {
+	var maxNID int
+	if err := h.db.Model(&models.NoteModel{}).Select("COALESCE(MAX(n_id), 0)").Scan(&maxNID).Error; err != nil {
+		return nil, err
+	}
+
+	createdModels := make([]models.NoteModel, 0, len(data))
+	for _, item := range data {
+		title := "未命名记录"
+		createdAt, updatedAt := parseMetaDates(nil)
+		if item.Meta != nil {
+			createdAt, updatedAt = parseMetaDates(item.Meta)
+			if strings.TrimSpace(item.Meta.Title) != "" {
+				title = item.Meta.Title
+			}
+		}
+
+		maxNID++
+		note := models.NoteModel{
+			WriteBase: models.WriteBase{
+				Title: title,
+				Text:  item.Text,
+				Base: models.Base{
+					CreatedAt: createdAt,
+					UpdatedAt: updatedAt,
+				},
+			},
+			NID: maxNID,
+		}
+
+		if err := h.db.Create(&note).Error; err != nil {
+			maxNID--
+			continue
+		}
+		createdModels = append(createdModels, note)
+	}
+	return createdModels, nil
+}
+
+func parseBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func chooseFirstNonEmpty(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return primary
+	}
+	return fallback
+}
+
+func markdownFilename(meta map[string]any, useSlug bool) string {
+	filename := asString(meta["title"])
+	if useSlug {
+		filename = asString(meta["slug"])
+	}
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		filename = "untitled"
+	}
+	filename = strings.ReplaceAll(filename, "/", "-")
+	filename = strings.ReplaceAll(filename, "\\", "-")
+	return filename + ".md"
+}
+
+func asString(v any) string {
+	switch value := v.(type) {
+	case string:
+		return value
+	case fmt.Stringer:
+		return value.String()
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+func parseMetaDates(meta *importMeta) (time.Time, time.Time) {
+	now := time.Now()
+	if meta == nil {
+		return now, now
+	}
+
+	created := parseTime(meta.Date)
+	if created.IsZero() {
+		created = now
+	}
+
+	updated := parseTime(meta.Updated)
+	if updated.IsZero() {
+		updated = created
+	}
+	return created, updated
+}
+
+func parseTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed
 		}
 	}
-	result := sb.String()
-	if result == "" {
-		result = fmt.Sprintf("import-%d", time.Now().UnixMilli())
+	return time.Time{}
+}
+
+func exportMetaWithoutText(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return map[string]any{}
 	}
-	return result
+
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	delete(out, "text")
+	delete(out, "__v")
+	return out
 }

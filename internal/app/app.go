@@ -248,7 +248,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	root := r.Group("")
 	sitemap.RegisterRoutes(root, db, cfgSvc)
 	feed.RegisterRoutes(root, db, cfgSvc) // /feed.xml, /atom.xml
-	render.NewHandler(db).RegisterRoutes(root, authMW)
+	render.NewHandler(db, cfgSvc).RegisterRoutes(root, authMW)
 	pageproxy.NewHandler(cfgSvc, a.cfg).RegisterRoutes(root)
 
 	// Versioned API
