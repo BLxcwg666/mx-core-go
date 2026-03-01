@@ -198,6 +198,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a := g.Group("", authMW)
 	a.GET("", h.list)
 	a.GET("/group", h.listGroup)
+	a.GET("/group/", h.listGroupByEmptyReference)
 	a.GET("/group/:reference", h.listGroupByReference)
 	a.GET("/all", h.listAll)
 	a.GET("/:id", h.getByID)
@@ -349,7 +350,14 @@ func (h *Handler) listGroup(c *gin.Context) {
 }
 
 func (h *Handler) listGroupByReference(c *gin.Context) {
-	ref := c.Param("reference")
+	h.listGroupByReferenceWithValue(c, c.Param("reference"))
+}
+
+func (h *Handler) listGroupByEmptyReference(c *gin.Context) {
+	h.listGroupByReferenceWithValue(c, "")
+}
+
+func (h *Handler) listGroupByReferenceWithValue(c *gin.Context, ref string) {
 	var items []models.SnippetModel
 	h.svc.db.Where("reference = ?", ref).Order("name ASC").Find(&items)
 	out := make([]snippetResponse, len(items))
