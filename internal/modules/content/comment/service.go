@@ -51,7 +51,17 @@ func (s *Service) GetByID(id string) (*models.CommentModel, error) {
 func (s *Service) Create(dto *CreateCommentDTO, ip, agent string) (*models.CommentModel, error) {
 	refID := strings.TrimSpace(dto.RefID)
 	refType := normalizeRefType(string(dto.RefType))
-	if refID == "" || refType == "" {
+	if refID == "" {
+		return nil, errCommentRefNotFound
+	}
+	if refType == "" {
+		resolvedType, err := s.resolveRefTypeByID(refID)
+		if err != nil {
+			return nil, err
+		}
+		refType = resolvedType
+	}
+	if refType == "" {
 		return nil, errCommentRefNotFound
 	}
 
@@ -161,7 +171,24 @@ func (s *Service) Reply(parentID string, dto *CreateCommentDTO, ip, agent string
 }
 
 func (s *Service) AllowComment(refType models.RefType, refID string) (bool, error) {
-	_, allowComment, err := s.getRefCommentMeta(s.db, normalizeRefType(string(refType)), strings.TrimSpace(refID))
+	refID = strings.TrimSpace(refID)
+	if refID == "" {
+		return false, errCommentRefNotFound
+	}
+
+	normalizedRefType := normalizeRefType(string(refType))
+	if normalizedRefType == "" {
+		resolvedType, err := s.resolveRefTypeByID(refID)
+		if err != nil {
+			return false, err
+		}
+		normalizedRefType = resolvedType
+	}
+	if normalizedRefType == "" {
+		return false, errCommentRefNotFound
+	}
+
+	_, allowComment, err := s.getRefCommentMeta(s.db, normalizedRefType, refID)
 	return allowComment, err
 }
 
@@ -225,6 +252,43 @@ func (s *Service) incrementRefCommentsIndex(tx *gorm.DB, refType models.RefType,
 	default:
 		return errCommentRefNotFound
 	}
+}
+
+func (s *Service) resolveRefTypeByID(refID string) (models.RefType, error) {
+	refID = strings.TrimSpace(refID)
+	if refID == "" {
+		return "", nil
+	}
+
+	check := func(model interface{}, refType models.RefType) (models.RefType, error) {
+		var count int64
+		if err := s.db.Model(model).Where("id = ?", refID).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count > 0 {
+			return refType, nil
+		}
+		return "", nil
+	}
+
+	for _, item := range []struct {
+		model   interface{}
+		refType models.RefType
+	}{
+		{model: &models.PostModel{}, refType: models.RefTypePost},
+		{model: &models.NoteModel{}, refType: models.RefTypeNote},
+		{model: &models.PageModel{}, refType: models.RefTypePage},
+		{model: &models.RecentlyModel{}, refType: models.RefTypeRecently},
+	} {
+		resolvedType, err := check(item.model, item.refType)
+		if err != nil {
+			return "", err
+		}
+		if resolvedType != "" {
+			return resolvedType, nil
+		}
+	}
+	return "", nil
 }
 
 func (s *Service) ListByRef(refID string, q pagination.Query) ([]models.CommentModel, response.Pagination, error) {

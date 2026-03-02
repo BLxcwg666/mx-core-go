@@ -813,12 +813,11 @@ func (h *Handler) masterComment(c *gin.Context) {
 	}
 
 	createDTO := &CreateCommentDTO{
-		RefID:   refID,
-		RefType: models.RefTypePost,
-		Author:  author,
-		Mail:    user.Mail,
-		URL:     user.URL,
-		Text:    dto.Text,
+		RefID:  refID,
+		Author: author,
+		Mail:   user.Mail,
+		URL:    user.URL,
+		Text:   dto.Text,
 	}
 	if refType := c.Query("ref"); refType != "" {
 		createDTO.RefType = normalizeRefType(refType)
@@ -887,11 +886,11 @@ func (h *Handler) createOnRef(c *gin.Context) {
 		return
 	}
 	dto.RefID = refID
-	// RefType defaults to "post" if not provided
-	if dto.RefType == "" {
-		dto.RefType = models.RefTypePost
-	} else {
+	if dto.RefType != "" {
 		dto.RefType = normalizeRefType(string(dto.RefType))
+	}
+	if refType := c.Query("ref"); refType != "" {
+		dto.RefType = normalizeRefType(refType)
 	}
 	isAuthenticated := middleware.IsAuthenticated(c)
 	if !isAuthenticated && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
