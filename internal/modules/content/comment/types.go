@@ -16,8 +16,8 @@ var (
 )
 
 type CreateCommentDTO struct {
-	RefType  models.RefType         `json:"ref_type"  binding:"required"`
-	RefID    string                 `json:"ref_id"    binding:"required"`
+	RefType  models.RefType         `json:"ref_type"`
+	RefID    string                 `json:"ref_id"`
 	Author   string                 `json:"author"    binding:"required"`
 	Mail     string                 `json:"mail"`
 	URL      string                 `json:"url"`
