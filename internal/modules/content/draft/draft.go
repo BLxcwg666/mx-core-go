@@ -151,13 +151,25 @@ func (s *Service) Update(id string, dto *UpdateDraftDTO) (*models.DraftModel, er
 		updates["text"] = *dto.Text
 	}
 	if dto.Images != nil {
-		updates["images"] = dto.Images
+		raw, err := json.Marshal(dto.Images)
+		if err != nil {
+			return nil, err
+		}
+		updates["images"] = string(raw)
 	}
 	if dto.Meta != nil {
-		updates["meta"] = dto.Meta
+		raw, err := json.Marshal(dto.Meta)
+		if err != nil {
+			return nil, err
+		}
+		updates["meta"] = string(raw)
 	}
 	if dto.TypeSpecificData != nil {
-		updates["type_specific_data"] = dto.TypeSpecificData
+		raw, err := json.Marshal(dto.TypeSpecificData)
+		if err != nil {
+			return nil, err
+		}
+		updates["type_specific_data"] = string(raw)
 	}
 
 	return d, s.db.Model(d).Updates(updates).Error
@@ -177,7 +189,11 @@ func (s *Service) Publish(id string) (string, error) {
 		if d.RefID != nil {
 			updates := map[string]interface{}{"title": d.Title, "text": d.Text}
 			if d.Images != nil {
-				updates["images"] = d.Images
+				raw, err := json.Marshal(d.Images)
+				if err != nil {
+					return "", err
+				}
+				updates["images"] = string(raw)
 			}
 			if err := s.db.Model(&models.PostModel{}).Where("id = ?", *d.RefID).Updates(updates).Error; err != nil {
 				return "", err
