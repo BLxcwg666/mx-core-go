@@ -16,14 +16,23 @@ var (
 )
 
 type CreateCommentDTO struct {
-	RefType  models.RefType         `json:"ref_type"`
-	RefID    string                 `json:"ref_id"`
-	Author   string                 `json:"author"    binding:"required"`
-	Mail     string                 `json:"mail"`
-	URL      string                 `json:"url"`
-	Text     string                 `json:"text"      binding:"required"`
-	ParentID *string                `json:"parent_id"`
-	Meta     map[string]interface{} `json:"meta"`
+	RefType         models.RefType         `json:"ref_type"`
+	RefID           string                 `json:"ref_id"`
+	Author          string                 `json:"author"    binding:"required"`
+	Mail            string                 `json:"mail"`
+	URL             string                 `json:"url"`
+	Text            string                 `json:"text"      binding:"required"`
+	ParentID        *string                `json:"parent_id"`
+	Meta            map[string]interface{} `json:"meta"`
+	IsWhispers      bool                   `json:"isWhispers"`
+	IsWhispersSnake bool                   `json:"is_whispers"`
+}
+
+func (d *CreateCommentDTO) IsWhisperEnabled() bool {
+	if d == nil {
+		return false
+	}
+	return d.IsWhispers || d.IsWhispersSnake
 }
 
 type UpdateCommentStateDTO struct {

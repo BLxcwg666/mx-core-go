@@ -334,10 +334,20 @@ func (h *Handler) loadRefMap(comments []models.CommentModel) (map[string]gin.H, 
 
 func (h *Handler) loadReadersMap(comments []models.CommentModel) (gin.H, error) {
 	readerIDs := make([]string, 0, len(comments))
-	for _, cm := range comments {
+	var walk func(*models.CommentModel)
+	walk = func(cm *models.CommentModel) {
+		if cm == nil {
+			return
+		}
 		if cm.ReaderID != nil {
 			readerIDs = append(readerIDs, *cm.ReaderID)
 		}
+		for i := range cm.Children {
+			walk(&cm.Children[i])
+		}
+	}
+	for i := range comments {
+		walk(&comments[i])
 	}
 	readerIDs = uniqueStrings(readerIDs)
 	readers := gin.H{}
@@ -666,12 +676,15 @@ func (h *Handler) batchUpdateState(c *gin.Context) {
 // GET /comments/ref/:refId
 func (h *Handler) listByRef(c *gin.Context) {
 	q := pagination.FromContext(c)
-	comments, pag, err := h.svc.ListByRef(c.Param("refId"), q)
+	isAdmin := middleware.IsAuthenticated(c)
+	comments, pag, err := h.svc.ListByRef(c.Param("refId"), q, ListByRefOptions{
+		IsAdmin:       isAdmin,
+		IncludeUnread: !h.shouldAuditComment(),
+	})
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-	isAdmin := middleware.IsAuthenticated(c)
 	readers, err := h.loadReadersMap(comments)
 	if err != nil {
 		response.InternalError(c, err)

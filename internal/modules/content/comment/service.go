@@ -15,6 +15,11 @@ type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
+type ListByRefOptions struct {
+	IsAdmin       bool
+	IncludeUnread bool
+}
+
 func (s *Service) List(q pagination.Query, refType *string, refID *string, state *int) ([]models.CommentModel, response.Pagination, error) {
 	tx := s.db.Model(&models.CommentModel{}).
 		Order("created_at DESC")
@@ -83,18 +88,19 @@ func (s *Service) Create(dto *CreateCommentDTO, ip, agent string) (*models.Comme
 	}
 
 	c := models.CommentModel{
-		RefType:  refType,
-		RefID:    refID,
-		Author:   dto.Author,
-		Mail:     dto.Mail,
-		URL:      dto.URL,
-		Text:     dto.Text,
-		ParentID: dto.ParentID,
-		IP:       ip,
-		Agent:    agent,
-		Meta:     dto.Meta,
-		State:    models.CommentUnread,
-		Key:      fmt.Sprintf("#%d", commentsIndex+1),
+		RefType:    refType,
+		RefID:      refID,
+		Author:     dto.Author,
+		Mail:       dto.Mail,
+		URL:        dto.URL,
+		Text:       dto.Text,
+		ParentID:   dto.ParentID,
+		IP:         ip,
+		Agent:      agent,
+		Meta:       dto.Meta,
+		IsWhispers: dto.IsWhisperEnabled(),
+		State:      models.CommentUnread,
+		Key:        fmt.Sprintf("#%d", commentsIndex+1),
 	}
 	if err := tx.Create(&c).Error; err != nil {
 		tx.Rollback()
@@ -141,18 +147,19 @@ func (s *Service) Reply(parentID string, dto *CreateCommentDTO, ip, agent string
 		parentKey = "#1"
 	}
 	c := models.CommentModel{
-		RefType:  parent.RefType,
-		RefID:    parent.RefID,
-		Author:   dto.Author,
-		Mail:     dto.Mail,
-		URL:      dto.URL,
-		Text:     dto.Text,
-		ParentID: &parentID,
-		IP:       ip,
-		Agent:    agent,
-		Meta:     dto.Meta,
-		State:    models.CommentUnread,
-		Key:      fmt.Sprintf("%s#%d", parentKey, parent.CommentsIndex),
+		RefType:    parent.RefType,
+		RefID:      parent.RefID,
+		Author:     dto.Author,
+		Mail:       dto.Mail,
+		URL:        dto.URL,
+		Text:       dto.Text,
+		ParentID:   &parentID,
+		IP:         ip,
+		Agent:      agent,
+		Meta:       dto.Meta,
+		IsWhispers: parent.IsWhispers,
+		State:      models.CommentUnread,
+		Key:        fmt.Sprintf("%s#%d", parentKey, parent.CommentsIndex),
 	}
 	if err := tx.Create(&c).Error; err != nil {
 		tx.Rollback()
@@ -291,14 +298,129 @@ func (s *Service) resolveRefTypeByID(refID string) (models.RefType, error) {
 	return "", nil
 }
 
-func (s *Service) ListByRef(refID string, q pagination.Query) ([]models.CommentModel, response.Pagination, error) {
+type commentTreeNode struct {
+	model    models.CommentModel
+	children []*commentTreeNode
+}
+
+func (s *Service) ListByRef(refID string, q pagination.Query, opts ListByRefOptions) ([]models.CommentModel, response.Pagination, error) {
+	refID = strings.TrimSpace(refID)
 	tx := s.db.Model(&models.CommentModel{}).
-		Where("ref_id = ? AND parent_id IS NULL", refID).
-		Preload("Children").
-		Order("created_at DESC")
-	var comments []models.CommentModel
-	pag, err := pagination.Paginate(tx, q, &comments)
-	return comments, pag, err
+		Where("ref_id = ?", refID).
+		Order("pin DESC, created_at DESC")
+
+	if opts.IncludeUnread {
+		tx = tx.Where("state IN ?", []models.CommentState{models.CommentRead, models.CommentUnread})
+	} else {
+		tx = tx.Where("state = ?", models.CommentRead)
+	}
+	if !opts.IsAdmin {
+		tx = tx.Where("is_whispers = ?", false)
+	}
+
+	var rows []models.CommentModel
+	if err := tx.Find(&rows).Error; err != nil {
+		return nil, response.Pagination{}, err
+	}
+
+	nodes := make([]*commentTreeNode, 0, len(rows))
+	byID := make(map[string]*commentTreeNode, len(rows))
+	byKey := make(map[string]*commentTreeNode, len(rows))
+
+	for _, row := range rows {
+		row.Children = nil
+		node := &commentTreeNode{model: row}
+		nodes = append(nodes, node)
+		byID[node.model.ID] = node
+
+		if key := strings.TrimSpace(node.model.Key); key != "" {
+			byKey[parentLookupKey(node.model.RefType, node.model.RefID, key)] = node
+		}
+	}
+
+	roots := make([]*commentTreeNode, 0, len(nodes))
+	for _, node := range nodes {
+		parent, hasParent := findCommentParentNode(node, byID, byKey)
+		if parent == nil {
+			if hasParent {
+				// Dangling reply, skip to avoid broken tree output.
+				continue
+			}
+			roots = append(roots, node)
+			continue
+		}
+		if node.model.ParentID == nil {
+			parentID := parent.model.ID
+			node.model.ParentID = &parentID
+		}
+		parent.children = append(parent.children, node)
+	}
+
+	allRoots := make([]models.CommentModel, len(roots))
+	for i, root := range roots {
+		allRoots[i] = buildCommentTree(root)
+	}
+
+	total := len(allRoots)
+	start := (q.Page - 1) * q.Size
+	if start > total {
+		start = total
+	}
+	end := start + q.Size
+	if end > total {
+		end = total
+	}
+
+	totalPage := 0
+	if q.Size > 0 {
+		totalPage = (total + q.Size - 1) / q.Size
+	}
+
+	pag := response.Pagination{
+		Total:       int64(total),
+		CurrentPage: q.Page,
+		TotalPage:   totalPage,
+		Size:        q.Size,
+		HasNextPage: q.Page < totalPage,
+	}
+	return allRoots[start:end], pag, nil
+}
+
+func findCommentParentNode(node *commentTreeNode, byID map[string]*commentTreeNode, byKey map[string]*commentTreeNode) (*commentTreeNode, bool) {
+	hasParent := false
+
+	if node.model.ParentID != nil {
+		parentID := strings.TrimSpace(*node.model.ParentID)
+		if parentID != "" {
+			hasParent = true
+			if parent, ok := byID[parentID]; ok {
+				return parent, true
+			}
+		}
+	}
+
+	if parentKey := parentKeyFromCommentKey(node.model.Key); parentKey != "" {
+		hasParent = true
+		if parent, ok := byKey[parentLookupKey(node.model.RefType, node.model.RefID, parentKey)]; ok {
+			return parent, true
+		}
+	}
+
+	return nil, hasParent
+}
+
+func buildCommentTree(node *commentTreeNode) models.CommentModel {
+	comment := node.model
+	if len(node.children) == 0 {
+		comment.Children = nil
+		return comment
+	}
+	children := make([]models.CommentModel, len(node.children))
+	for i, child := range node.children {
+		children[i] = buildCommentTree(child)
+	}
+	comment.Children = children
+	return comment
 }
 
 func (s *Service) UpdateState(id string, state models.CommentState) (*models.CommentModel, error) {
