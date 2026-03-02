@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,9 +28,263 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g.GET("/today", h.today)
 	g.GET("/week", h.week)
 	g.GET("/aggregate", h.aggregate)
+	g.GET("/like", h.like)
+	g.GET("/traffic-source", h.trafficSource)
+	g.GET("/device", h.deviceDistribution)
 	g.GET("/total", h.total)
 	g.GET("/paths", h.topPaths)
 	g.DELETE("", h.cleanOld)
+}
+
+func (h *Handler) like(c *gin.Context) {
+	type activityPayload struct {
+		Payload map[string]interface{} `gorm:"column:payload"`
+	}
+	var rows []activityPayload
+	if err := h.db.Model(&models.ActivityModel{}).
+		Select("payload").
+		Where("type = ?", "0").
+		Find(&rows).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	likeMap := map[string]map[string]struct{}{}
+	for _, row := range rows {
+		id := stringFromAny(row.Payload["id"])
+		if id == "" {
+			continue
+		}
+		ip := stringFromAny(row.Payload["ip"])
+		ips, ok := likeMap[id]
+		if !ok {
+			ips = map[string]struct{}{}
+			likeMap[id] = ips
+		}
+		if ip != "" {
+			ips[ip] = struct{}{}
+		}
+	}
+
+	ids := make([]string, 0, len(likeMap))
+	for id := range likeMap {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]gin.H, 0, len(ids))
+	for _, id := range ids {
+		ipSet := likeMap[id]
+		ips := make([]string, 0, len(ipSet))
+		for ip := range ipSet {
+			ips = append(ips, ip)
+		}
+		sort.Strings(ips)
+		out = append(out, gin.H{
+			"id":  id,
+			"ips": ips,
+		})
+	}
+
+	response.OK(c, out)
+}
+
+func (h *Handler) trafficSource(c *gin.Context) {
+	var aq analyzeQuery
+	if err := c.ShouldBindQuery(&aq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	from, to := rangeOrDefault(aq, 7*24*time.Hour)
+
+	type refererCount struct {
+		Referer string `gorm:"column:referer"`
+		Count   int64  `gorm:"column:count"`
+	}
+	var rows []refererCount
+	if err := h.db.Model(&models.AnalyzeModel{}).
+		Select("referer, COUNT(*) as count").
+		Where("timestamp >= ? AND timestamp <= ?", from, to).
+		Group("referer").
+		Order("count DESC").
+		Find(&rows).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	categories := map[string]int64{
+		"direct": 0,
+		"search": 0,
+		"social": 0,
+		"other":  0,
+	}
+	hostCount := map[string]int64{}
+
+	searchEngines := []string{
+		"google",
+		"bing",
+		"baidu",
+		"sogou",
+		"so.com",
+		"360.cn",
+		"yahoo",
+		"duckduckgo",
+		"yandex",
+	}
+	socialNetworks := []string{
+		"twitter",
+		"x.com",
+		"facebook",
+		"weibo",
+		"zhihu",
+		"douban",
+		"reddit",
+		"linkedin",
+		"instagram",
+		"tiktok",
+		"youtube",
+		"bilibili",
+		"t.me",
+		"telegram",
+		"discord",
+	}
+
+	for _, row := range rows {
+		referer := strings.ToLower(strings.TrimSpace(row.Referer))
+		if referer == "" {
+			categories["direct"] += row.Count
+			continue
+		}
+
+		parsed, err := url.Parse(referer)
+		if err != nil {
+			categories["other"] += row.Count
+			continue
+		}
+		host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+		if host == "" {
+			categories["other"] += row.Count
+			continue
+		}
+
+		isSearch := containsAny(host, searchEngines)
+		isSocial := containsAny(host, socialNetworks)
+		if isSearch {
+			categories["search"] += row.Count
+		} else if isSocial {
+			categories["social"] += row.Count
+		} else {
+			categories["other"] += row.Count
+		}
+		hostCount[host] += row.Count
+	}
+
+	details := make([]gin.H, 0, len(hostCount))
+	for source, count := range hostCount {
+		details = append(details, gin.H{
+			"source": source,
+			"count":  count,
+		})
+	}
+	sort.Slice(details, func(i, j int) bool {
+		return details[i]["count"].(int64) > details[j]["count"].(int64)
+	})
+	if len(details) > 10 {
+		details = details[:10]
+	}
+
+	categoryList := make([]gin.H, 0, 4)
+	categoriesInOrder := []struct {
+		key  string
+		name string
+	}{
+		{key: "direct", name: "直接访问"},
+		{key: "search", name: "搜索引擎"},
+		{key: "social", name: "社交媒体"},
+		{key: "other", name: "其他来源"},
+	}
+	for _, item := range categoriesInOrder {
+		value := categories[item.key]
+		if value <= 0 {
+			continue
+		}
+		categoryList = append(categoryList, gin.H{
+			"name":  item.name,
+			"value": value,
+		})
+	}
+
+	response.OK(c, gin.H{
+		"categories": categoryList,
+		"details":    details,
+	})
+}
+
+func (h *Handler) deviceDistribution(c *gin.Context) {
+	var aq analyzeQuery
+	if err := c.ShouldBindQuery(&aq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	from, to := rangeOrDefault(aq, 7*24*time.Hour)
+
+	type uaRow struct {
+		UA map[string]interface{} `gorm:"column:ua"`
+	}
+	var rows []uaRow
+	if err := h.db.Model(&models.AnalyzeModel{}).
+		Select("ua").
+		Where("timestamp >= ? AND timestamp <= ?", from, to).
+		Find(&rows).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	browserCount := map[string]int64{}
+	osCount := map[string]int64{}
+	deviceCount := map[string]int64{}
+	for _, row := range rows {
+		browser := nestedName(row.UA, "browser")
+		if browser == "" {
+			browser = "Unknown"
+		}
+		osName := nestedName(row.UA, "os")
+		if osName == "" {
+			osName = "Unknown"
+		}
+		device := nestedName(row.UA, "device")
+		if device == "" {
+			device = stringFromAny(row.UA["type"])
+		}
+		if device == "" {
+			device = "desktop"
+		}
+
+		browserCount[browser]++
+		osCount[osName]++
+		deviceCount[strings.ToLower(device)]++
+	}
+
+	deviceNameMap := map[string]string{
+		"desktop": "桌面端",
+		"mobile":  "移动端",
+		"tablet":  "平板",
+		"unknown": "未知",
+	}
+
+	response.OK(c, gin.H{
+		"browsers": toCountList(browserCount, 10, nil),
+		"os":       toCountList(osCount, 10, nil),
+		"devices": toCountList(deviceCount, 0, func(key string) string {
+			if mapped, ok := deviceNameMap[key]; ok {
+				return mapped
+			}
+			if key == "" {
+				return "桌面端"
+			}
+			return key
+		}),
+	})
 }
 
 func (h *Handler) list(c *gin.Context) {
@@ -346,6 +601,92 @@ func (h *Handler) getOptionInt(name string) (value int64, found bool, err error)
 		return int64(number), true, nil
 	}
 	return 0, true, nil
+}
+
+func rangeOrDefault(aq analyzeQuery, fallbackWindow time.Duration) (time.Time, time.Time) {
+	start := aq.StartAt
+	if start == nil {
+		start = aq.From
+	}
+	end := aq.EndAt
+	if end == nil {
+		end = aq.To
+	}
+
+	to := time.Now()
+	if end != nil {
+		to = *end
+	}
+	from := to.Add(-fallbackWindow)
+	if start != nil {
+		from = *start
+	}
+	return from, to
+}
+
+func containsAny(host string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(host, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func nestedName(raw map[string]interface{}, key string) string {
+	nested, ok := raw[key]
+	if !ok {
+		return ""
+	}
+	switch value := nested.(type) {
+	case map[string]interface{}:
+		return stringFromAny(value["name"])
+	case gin.H:
+		return stringFromAny(value["name"])
+	default:
+		return ""
+	}
+}
+
+func toCountList(counts map[string]int64, limit int, rename func(key string) string) []gin.H {
+	list := make([]gin.H, 0, len(counts))
+	for key, value := range counts {
+		name := key
+		if rename != nil {
+			name = rename(key)
+		}
+		list = append(list, gin.H{
+			"name":  name,
+			"value": value,
+		})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i]["value"].(int64) > list[j]["value"].(int64)
+	})
+	if limit > 0 && len(list) > limit {
+		return list[:limit]
+	}
+	return list
+}
+
+func stringFromAny(raw interface{}) string {
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case fmt.Stringer:
+		return strings.TrimSpace(value.String())
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case float64:
+		if value == float64(int64(value)) {
+			return strconv.FormatInt(int64(value), 10)
+		}
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	default:
+		return ""
+	}
 }
 
 func beginningOfDay(t time.Time) time.Time {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
+	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -170,10 +171,19 @@ func (h *Handler) listAround(c *gin.Context) {
 }
 
 func (h *Handler) like(c *gin.Context) {
-	if err := h.svc.IncrementLikeCount(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.IncrementLikeCount(id); err != nil {
 		response.InternalError(c, err)
 		return
 	}
+	_ = h.svc.db.Create(&models.ActivityModel{
+		Type: "0",
+		Payload: map[string]interface{}{
+			"id":   id,
+			"type": "note",
+			"ip":   c.ClientIP(),
+		},
+	}).Error
 	response.NoContent(c)
 }
 
