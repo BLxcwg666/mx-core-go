@@ -42,11 +42,29 @@ func NewHandler(cfgSvc *configs.Service, runtime *appcfg.AppConfig) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	base := h.adminProxyBasePath()
-	rg.GET(base, h.getLocalBundledAdmin)
-	rg.GET(base+"/dev-proxy", h.proxyLocalDev)
-	rg.GET(base+"/assets/*filepath", h.proxyAssetRoute)
-	rg.GET("/proxy/*filepath", h.proxyCompatAssetRoute)
+	// Use a single /proxy/* route and dispatch internally.
+	// Gin does not allow registering /proxy/* together with /proxy/qaqdmin.
+	rg.GET("/proxy/*filepath", h.proxyDispatchRoute)
+}
+
+func (h *Handler) proxyDispatchRoute(c *gin.Context) {
+	relative := strings.TrimPrefix(c.Param("filepath"), "/")
+	if relative == "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	adminPrefix := strings.TrimPrefix(h.adminProxyBasePath(), "/proxy/")
+	switch relative {
+	case adminPrefix:
+		h.getLocalBundledAdmin(c)
+		return
+	case adminPrefix + "/dev-proxy":
+		h.proxyLocalDev(c)
+		return
+	}
+
+	h.proxyCompatAssetRoute(c)
 }
 
 func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
