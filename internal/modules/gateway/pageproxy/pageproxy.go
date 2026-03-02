@@ -46,7 +46,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET(base, h.getLocalBundledAdmin)
 	rg.GET(base+"/dev-proxy", h.proxyLocalDev)
 	rg.GET(base+"/assets/*filepath", h.proxyAssetRoute)
-	rg.GET("/proxy/:legacyRoot/*filepath", h.proxyLegacyAssetRoute)
+	rg.GET("/proxy/*filepath", h.proxyCompatAssetRoute)
 }
 
 func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
@@ -148,7 +148,7 @@ func (h *Handler) proxyAssetRoute(c *gin.Context) {
 	h.serveAssetRelative(c, relative)
 }
 
-func (h *Handler) proxyLegacyAssetRoute(c *gin.Context) {
+func (h *Handler) proxyCompatAssetRoute(c *gin.Context) {
 	canAccess, err := h.checkCanAccessAdminProxy()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
@@ -161,18 +161,24 @@ func (h *Handler) proxyLegacyAssetRoute(c *gin.Context) {
 		return
 	}
 
-	legacyRoot := strings.TrimSpace(c.Param("legacyRoot"))
-	if legacyRoot == "" || legacyRoot == "qaqdmin" {
-		c.Status(http.StatusNotFound)
-		return
-	}
-
 	relative := strings.TrimPrefix(c.Param("filepath"), "/")
 	if relative == "" {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	h.serveAssetRelative(c, filepath.ToSlash(filepath.Join(legacyRoot, relative)))
+
+	// TS compatibility: /proxy/* may carry /proxy/qaqdmin/assets/*.
+	adminPrefix := strings.TrimPrefix(h.adminProxyBasePath(), "/proxy/")
+	if adminPrefix != "" {
+		if strings.HasPrefix(relative, adminPrefix+"/assets/") {
+			relative = strings.TrimPrefix(relative, adminPrefix+"/assets/")
+		} else if strings.HasPrefix(relative, adminPrefix+"/") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+	}
+
+	h.serveAssetRelative(c, relative)
 }
 
 func (h *Handler) serveAssetRelative(c *gin.Context, relative string) {
