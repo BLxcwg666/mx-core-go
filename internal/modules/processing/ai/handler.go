@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -77,7 +76,7 @@ func (h *Handler) getSummary(c *gin.Context) {
 		return
 	}
 
-	task, err := h.svc.EnqueueSummary(c.Request.Context(), articleID, "", "", lang)
+	summary, err = h.generateSummaryNow(c.Request.Context(), articleID, lang)
 	if err != nil {
 		if errors.Is(err, errSummaryArticleNotFound) {
 			response.NotFoundMsg(c, "文章不存在")
@@ -86,10 +85,7 @@ func (h *Handler) getSummary(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "summary generation queued",
-		"task_id": task.ID,
-	})
+	response.OK(c, summary)
 }
 
 // GET /ai/summaries/article/:id/generate  — SSE streaming
