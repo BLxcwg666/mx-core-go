@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -15,10 +16,11 @@ type Handler struct {
 	svc       *Service
 	notifySvc *notify.Service
 	macroSvc  *textmacro.Service
+	hub       *gateway.Hub
 }
 
-func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service) *Handler {
-	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc}
+func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc, hub: hub}
 }
 
 // RegisterRoutes mounts post routes onto the given router group.
@@ -208,6 +210,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.notifySvc != nil && post.IsPublished {
 		go h.notifySvc.OnPostCreate(post)
 	}
+	if h.hub != nil && post.IsPublished {
+		h.hub.BroadcastPublic("POST_CREATE", toResponse(post))
+	}
 
 	response.Created(c, toResponse(post))
 }
@@ -235,7 +240,9 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
-
+	if h.hub != nil && post.IsPublished {
+		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))
+	}
 	response.OK(c, toResponse(post))
 }
 
@@ -250,10 +257,13 @@ func (h *Handler) publish(c *gin.Context) {
 		return
 	}
 
-	_, err := h.svc.Update(id, &dto)
+	post, err := h.svc.Update(id, &dto)
 	if err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil && post != nil && post.IsPublished {
+		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))
 	}
 
 	response.OK(c, gin.H{"success": true})
@@ -262,9 +272,17 @@ func (h *Handler) publish(c *gin.Context) {
 // delete DELETE /posts/:id  [auth]
 func (h *Handler) delete(c *gin.Context) {
 	id := c.Param("id")
+	post, err := h.svc.GetByID(id)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
 	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil && post != nil && post.IsPublished {
+		h.hub.BroadcastPublic("POST_DELETE", toResponse(post))
 	}
 	response.NoContent(c)
 }

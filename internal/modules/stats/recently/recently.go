@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -202,9 +203,12 @@ func (s *Service) resolveRefTypeByID(refID string) (*models.RefType, error) {
 	return nil, nil
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	hub *gateway.Hub
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, hub *gateway.Hub) *Handler { return &Handler{svc: svc, hub: hub} }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	for _, prefix := range []string{"/recently", "/shorthand"} {
@@ -332,17 +336,24 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("RECENTLY_CREATE", toResponse(r))
+	}
 	response.Created(c, toResponse(r))
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFoundMsg(c, "内容不存在")
 			return
 		}
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("RECENTLY_DELETE", id)
 	}
 	response.NoContent(c)
 }
@@ -361,6 +372,9 @@ func (h *Handler) update(c *gin.Context) {
 	if r == nil {
 		response.NotFoundMsg(c, "内容不存在")
 		return
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("RECENTLY_UPDATE", toResponse(r))
 	}
 	response.OK(c, toResponse(r))
 }

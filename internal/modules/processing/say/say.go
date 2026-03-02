@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -105,9 +106,12 @@ func (s *Service) Delete(id string) error {
 	return s.db.Delete(&models.SayModel{}, "id = ?", id).Error
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	hub *gateway.Hub
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, hub *gateway.Hub) *Handler { return &Handler{svc: svc, hub: hub} }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/says")
@@ -187,6 +191,9 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("SAY_CREATE", toResponse(item))
+	}
 	response.Created(c, toResponse(item))
 }
 
@@ -205,13 +212,21 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("SAY_UPDATE", toResponse(item))
+	}
 	response.OK(c, toResponse(item))
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("SAY_DELETE", id)
+		h.hub.BroadcastAdmin("SAY_DELETE", id)
 	}
 	response.NoContent(c)
 }

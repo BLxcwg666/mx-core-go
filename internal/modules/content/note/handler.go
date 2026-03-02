@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -17,10 +18,11 @@ type Handler struct {
 	svc       *Service
 	notifySvc *notify.Service
 	macroSvc  *textmacro.Service
+	hub       *gateway.Hub
 }
 
-func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service) *Handler {
-	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc}
+func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc, hub: hub}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -201,6 +203,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.notifySvc != nil && note.IsPublished {
 		go h.notifySvc.OnNoteCreate(note)
 	}
+	if h.hub != nil && note.IsPublished {
+		h.hub.BroadcastPublic("NOTE_CREATE", toResponse(note))
+	}
 	response.Created(c, toResponse(note))
 }
 
@@ -219,13 +224,25 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
+	if h.hub != nil && note.IsPublished {
+		h.hub.BroadcastPublic("NOTE_UPDATE", toResponse(note))
+	}
 	response.OK(c, toResponse(note))
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	note, err := h.svc.GetByID(id)
+	if err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if err := h.svc.Delete(id); err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if h.hub != nil && note != nil && note.IsPublished {
+		h.hub.BroadcastPublic("NOTE_DELETE", toResponse(note))
 	}
 	response.NoContent(c)
 }

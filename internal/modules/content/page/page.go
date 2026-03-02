@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/modules/system/util/slugtracker"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -189,10 +190,11 @@ func (s *Service) Reorder(id string, order int) {
 type Handler struct {
 	svc      *Service
 	macroSvc *textmacro.Service
+	hub      *gateway.Hub
 }
 
-func NewHandler(svc *Service, macroSvc ...*textmacro.Service) *Handler {
-	h := &Handler{svc: svc}
+func NewHandler(svc *Service, hub *gateway.Hub, macroSvc ...*textmacro.Service) *Handler {
+	h := &Handler{svc: svc, hub: hub}
 	if len(macroSvc) > 0 {
 		h.macroSvc = macroSvc[0]
 	}
@@ -272,6 +274,9 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("PAGE_CREATE", toResponse(p))
+	}
 	response.Created(c, toResponse(p))
 }
 
@@ -295,13 +300,20 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("PAGE_UPDATE", toResponse(p))
+	}
 	response.OK(c, toResponse(p))
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("PAGE_DELETE", id)
 	}
 	response.NoContent(c)
 }

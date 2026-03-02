@@ -249,10 +249,10 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	postSvc.SetSlugTracker(slugTrackerSvc)
 	pageSvc.SetSlugTracker(slugTrackerSvc)
 
-	post.NewHandler(postSvc, notifySvc, macroSvc).RegisterRoutes(api, authMW)
-	note.NewHandler(note.NewService(db), notifySvc, macroSvc).RegisterRoutes(api, authMW)
-	page.NewHandler(pageSvc, macroSvc).RegisterRoutes(api, authMW)
-	recently.NewHandler(recently.NewService(db)).RegisterRoutes(api, authMW)
+	post.NewHandler(postSvc, notifySvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
+	note.NewHandler(note.NewService(db), notifySvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
+	page.NewHandler(pageSvc, a.hub, macroSvc).RegisterRoutes(api, authMW)
+	recently.NewHandler(recently.NewService(db), a.hub).RegisterRoutes(api, authMW)
 	draft.NewHandler(draft.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Taxonomy
@@ -260,11 +260,16 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	topic.NewHandler(topic.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Comments
-	comment.NewHandler(comment.NewService(db), notifySvc, comment.WithLogger(a.logger)).RegisterRoutes(api, authMW)
+	comment.NewHandler(
+		comment.NewService(db),
+		notifySvc,
+		comment.WithLogger(a.logger),
+		comment.WithHub(a.hub),
+	).RegisterRoutes(api, authMW)
 
 	// Extras
-	say.NewHandler(say.NewService(db)).RegisterRoutes(api, authMW)
-	link.NewHandler(link.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
+	say.NewHandler(say.NewService(db), a.hub).RegisterRoutes(api, authMW)
+	link.NewHandler(link.NewService(db), cfgSvc, a.hub).RegisterRoutes(api, authMW)
 	subscribe.NewHandler(subscribeSvc, cfgSvc).RegisterRoutes(api, authMW)
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)

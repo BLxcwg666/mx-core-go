@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -24,6 +25,7 @@ type Handler struct {
 	cfgSvc    *appconfigs.Service
 	notifySvc *notify.Service
 	logger    *zap.Logger
+	hub       *gateway.Hub
 }
 
 func NewHandler(svc *Service, notifySvc *notify.Service, opts ...HandlerOption) *Handler {
@@ -48,6 +50,13 @@ func WithLogger(l *zap.Logger) HandlerOption {
 		if l != nil {
 			h.logger = l.Named("CommentService")
 		}
+	}
+}
+
+// WithHub sets gateway hub for comment websocket events.
+func WithHub(hub *gateway.Hub) HandlerOption {
+	return func(h *Handler) {
+		h.hub = hub
 	}
 }
 
@@ -100,6 +109,38 @@ func (h *Handler) ensureCommentEnabled(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+func (h *Handler) shouldAuditComment() bool {
+	if h.cfgSvc == nil {
+		return false
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil || cfg == nil {
+		return false
+	}
+	return cfg.CommentOptions.CommentShouldAudit
+}
+
+func (h *Handler) emitCommentCreate(cm *models.CommentModel, isAuthenticated, isSpam bool) {
+	if h.hub == nil || cm == nil {
+		return
+	}
+
+	publicPayload := legacyCommentPayload(cm, false)
+	adminPayload := legacyCommentPayload(cm, true)
+
+	if isAuthenticated {
+		h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
+		return
+	}
+
+	h.hub.BroadcastAdmin("COMMENT_CREATE", adminPayload)
+	if isSpam || cm.IsWhispers || cm.State == models.CommentJunk || h.shouldAuditComment() {
+		return
+	}
+
+	h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
 }
 
 // checkSpamAndMark checks anti-spam rules and marks the comment as junk when
@@ -523,7 +564,8 @@ func (h *Handler) create(c *gin.Context) {
 	if !h.ensureCommentEnabled(c) {
 		return
 	}
-	if !middleware.IsAuthenticated(c) && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
+	isAuthenticated := middleware.IsAuthenticated(c)
+	if !isAuthenticated && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
 		return
 	}
 	cm, err := h.svc.Create(&dto, c.ClientIP(), c.GetHeader("User-Agent"))
@@ -536,9 +578,10 @@ func (h *Handler) create(c *gin.Context) {
 	}
 	h.fillAvatarForComment(cm)
 	isSpam := h.checkSpamAndMark(cm)
-	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+	if !isSpam && !isAuthenticated && h.notifySvc != nil {
 		go h.notifySvc.OnCommentCreate(cm)
 	}
+	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	response.Created(c, toResponse(cm, false))
 }
 
@@ -565,9 +608,13 @@ func (h *Handler) updateStateCompat(c *gin.Context) {
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("COMMENT_DELETE", id)
 	}
 	response.NoContent(c)
 }
@@ -587,6 +634,9 @@ func (h *Handler) batchDelete(c *gin.Context) {
 		if err := h.svc.Delete(id); err != nil {
 			response.InternalError(c, err)
 			return
+		}
+		if h.hub != nil {
+			h.hub.BroadcastPublic("COMMENT_DELETE", id)
 		}
 	}
 	response.NoContent(c)
@@ -664,10 +714,13 @@ func (h *Handler) reply(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.fillAvatarForComment(cm)
+	isAuthenticated := middleware.IsAuthenticated(c)
 	isSpam := h.checkSpamAndMark(cm)
-	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+	if !isSpam && !isAuthenticated && h.notifySvc != nil {
 		go h.notifySvc.OnCommentCreate(cm)
 	}
+	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	payload, err := h.buildReplyPayload(cm.ID, false)
 	if err != nil {
 		response.InternalError(c, err)
@@ -720,6 +773,8 @@ func (h *Handler) masterReply(c *gin.Context) {
 		return
 	}
 	_, _ = h.svc.UpdateState(cm.ID, models.CommentRead)
+	h.fillAvatarForComment(cm)
+	h.emitCommentCreate(cm, true, false)
 	if h.notifySvc != nil {
 		parentID := c.Param("id")
 		var parent models.CommentModel
@@ -778,6 +833,7 @@ func (h *Handler) masterComment(c *gin.Context) {
 	}
 	_, _ = h.svc.UpdateState(cm.ID, models.CommentRead)
 	h.fillAvatarForComment(cm)
+	h.emitCommentCreate(cm, true, false)
 	response.Created(c, toResponse(cm, true))
 }
 
@@ -790,6 +846,15 @@ func (h *Handler) edit(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	var cm models.CommentModel
+	if err := h.svc.db.Select("id, is_whispers").First(&cm, "id = ?", c.Param("id")).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.NotFoundMsg(c, "评论不存在")
+			return
+		}
+		response.InternalError(c, err)
+		return
+	}
 	now := time.Now()
 	if err := h.svc.db.Model(&models.CommentModel{}).
 		Where("id = ?", c.Param("id")).
@@ -799,6 +864,13 @@ func (h *Handler) edit(c *gin.Context) {
 		}).Error; err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.hub != nil {
+		payload := gin.H{"id": cm.ID, "text": body.Text}
+		h.hub.BroadcastAdmin("COMMENT_UPDATE", payload)
+		if !cm.IsWhispers {
+			h.hub.BroadcastPublic("COMMENT_UPDATE", payload)
+		}
 	}
 	response.NoContent(c)
 }
@@ -821,7 +893,8 @@ func (h *Handler) createOnRef(c *gin.Context) {
 	} else {
 		dto.RefType = normalizeRefType(string(dto.RefType))
 	}
-	if !middleware.IsAuthenticated(c) && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
+	isAuthenticated := middleware.IsAuthenticated(c)
+	if !isAuthenticated && !h.ensureCommentAllowed(c, dto.RefType, dto.RefID) {
 		return
 	}
 	cm, err := h.svc.Create(&dto, c.ClientIP(), c.GetHeader("User-Agent"))
@@ -834,8 +907,9 @@ func (h *Handler) createOnRef(c *gin.Context) {
 	}
 	h.fillAvatarForComment(cm)
 	isSpam := h.checkSpamAndMark(cm)
-	if !isSpam && !middleware.IsAuthenticated(c) && h.notifySvc != nil {
+	if !isSpam && !isAuthenticated && h.notifySvc != nil {
 		go h.notifySvc.OnCommentCreate(cm)
 	}
+	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	response.Created(c, toResponse(cm, false))
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -21,10 +22,11 @@ import (
 type Handler struct {
 	svc    *Service
 	cfgSvc *appconfigs.Service
+	hub    *gateway.Hub
 }
 
-func NewHandler(svc *Service, cfgSvc *appconfigs.Service) *Handler {
-	return &Handler{svc: svc, cfgSvc: cfgSvc}
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service, hub *gateway.Hub) *Handler {
+	return &Handler{svc: svc, cfgSvc: cfgSvc, hub: hub}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -140,7 +142,7 @@ func (h *Handler) create(c *gin.Context) {
 			normalizedURL, normalizeErr := normalizeApplyLinkURL(dto.URL, cfg.FriendLinkOptions.AllowSubPath)
 			if normalizeErr != nil {
 				if errors.Is(normalizeErr, errSubpathLinkDisable) {
-					response.UnprocessableEntity(c, "管理员当前禁用了子路径友链申请")
+					response.UnprocessableEntity(c, "主人当前禁用了子路径友链申请")
 					return
 				}
 				response.BadRequest(c, normalizeErr.Error())
@@ -169,6 +171,9 @@ func (h *Handler) create(c *gin.Context) {
 		}
 		response.InternalError(c, err)
 		return
+	}
+	if !isAdmin && h.hub != nil {
+		h.hub.BroadcastAdmin("LINK_APPLY", toResponse(l, true))
 	}
 	response.Created(c, toResponse(l, isAdmin))
 }
