@@ -100,8 +100,17 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	router.Use(middleware.Logger(logger))
 
 	corsConfig := cors.Config{
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{
+			"Origin",
+			"Accept",
+			"Content-Length",
+			"Content-Type",
+			"Authorization",
+			"X-Requested-With",
+			"X-Session-UUID",
+			"x-session-uuid",
+		},
 		ExposeHeaders:    []string{"Content-Length", "x-mx-cache", "x-mx-served-by"},
 		AllowCredentials: true,
 	}
