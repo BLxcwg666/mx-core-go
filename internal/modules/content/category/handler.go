@@ -1,16 +1,15 @@
 package category
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
 type Handler struct {
 	svc *Service
-}
-
-type listQuery struct {
-	Type *int `form:"type"`
 }
 
 type getByQueryOptions struct {
@@ -34,15 +33,22 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	var query listQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
 	listType := CategoryTypeCategory
-	if query.Type != nil {
-		listType = *query.Type
+	rawType := strings.TrimSpace(c.Query("type"))
+	if rawType != "" {
+		switch strings.ToLower(rawType) {
+		case "0", "category", "categories":
+			listType = CategoryTypeCategory
+		case "1", "tag", "tags":
+			listType = CategoryTypeTag
+		default:
+			parsed, err := strconv.Atoi(rawType)
+			if err != nil {
+				response.BadRequest(c, "type must be 0|1|Category|Tag")
+				return
+			}
+			listType = parsed
+		}
 	}
 
 	switch listType {
