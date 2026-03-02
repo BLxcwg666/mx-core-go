@@ -81,6 +81,7 @@ func buildAggregate(db *gorm.DB, cfgSvc *configs.Service, themeName string) (*ag
 		User: userSummary{
 			ID: user.ID, Username: user.Username, Name: user.Name,
 			Avatar: user.Avatar, Introduce: user.Introduce, URL: user.URL,
+			SocialIDs: parseSocialIDs(user.SocialIDs),
 		},
 		SEO:          cfg.SEO,
 		URL:          cfg.URL,
@@ -94,4 +95,15 @@ func buildAggregate(db *gorm.DB, cfgSvc *configs.Service, themeName string) (*ag
 		Tags:  tags,
 		Count: cnt,
 	}, nil
+}
+
+func parseSocialIDs(raw string) map[string]interface{} {
+	out := map[string]interface{}{}
+	if raw == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || out == nil {
+		return map[string]interface{}{}
+	}
+	return out
 }

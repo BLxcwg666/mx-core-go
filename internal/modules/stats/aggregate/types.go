@@ -54,12 +54,13 @@ type aggregateAI struct {
 }
 
 type userSummary struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Name      string `json:"name"`
-	Avatar    string `json:"avatar"`
-	Introduce string `json:"introduce"`
-	URL       string `json:"url"`
+	ID        string                 `json:"id"`
+	Username  string                 `json:"username"`
+	Name      string                 `json:"name"`
+	Avatar    string                 `json:"avatar"`
+	Introduce string                 `json:"introduce"`
+	URL       string                 `json:"url"`
+	SocialIDs map[string]interface{} `json:"social_ids"`
 }
 
 type statResponse struct {
