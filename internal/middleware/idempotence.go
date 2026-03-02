@@ -20,14 +20,39 @@ const (
 	idempotenceTTL    = 60 * time.Second
 )
 
-// Idempotence returns a middleware that prevents duplicate non-GET requests from
+type idempotenceRouteRule struct {
+	Method  string
+	Pattern string
+}
+
+var idempotenceRouteRules = []idempotenceRouteRule{
+	{Method: http.MethodPost, Pattern: "/api/v2/categories"},
+	{Method: http.MethodPost, Pattern: "/api/v2/notes"},
+	{Method: http.MethodPost, Pattern: "/api/v2/pages"},
+	{Method: http.MethodPost, Pattern: "/api/v2/posts"},
+	{Method: http.MethodPost, Pattern: "/api/v2/topics"},
+	{Method: http.MethodPost, Pattern: "/api/v2/snippets"},
+	{Method: http.MethodPost, Pattern: "/api/v2/says"},
+	{Method: http.MethodPost, Pattern: "/api/v2/projects"},
+	{Method: http.MethodPost, Pattern: "/api/v2/recently"},
+	{Method: http.MethodPost, Pattern: "/api/v2/shorthand"},
+	{Method: http.MethodPost, Pattern: "/api/v2/links"},
+	{Method: http.MethodPost, Pattern: "/api/v2/friends"},
+	{Method: http.MethodPost, Pattern: "/api/v2/links/audit"},
+	{Method: http.MethodPost, Pattern: "/api/v2/friends/audit"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/reply/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/master/comment/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/master/reply/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/owner/comment/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/comments/owner/reply/:id"},
+	{Method: http.MethodPost, Pattern: "/api/v2/webhooks/redispatch/:id"},
+}
+
+// Idempotence returns a middleware that prevents duplicate requests for selected routes.
 func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet {
-			c.Next()
-			return
-		}
-		if shouldSkipIdempotence(c.Request.Method, c.Request.URL.Path) {
+		if !shouldApplyIdempotence(c.Request.Method, c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -76,24 +101,60 @@ func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 	}
 }
 
-func shouldSkipIdempotence(method, path string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut:
-	default:
+func shouldApplyIdempotence(method, path string) bool {
+	normalizedMethod := strings.ToUpper(strings.TrimSpace(method))
+	normalizedPath := normalizeIdempotencePath(path)
+
+	for _, rule := range idempotenceRouteRules {
+		if normalizedMethod != rule.Method {
+			continue
+		}
+		if idempotencePatternMatch(rule.Pattern, normalizedPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeIdempotencePath(path string) string {
+	p := strings.TrimSpace(strings.ToLower(path))
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return "/"
+	}
+	return p
+}
+
+func idempotencePatternMatch(pattern, path string) bool {
+	pattern = normalizeIdempotencePath(pattern)
+	path = normalizeIdempotencePath(path)
+
+	if pattern == path {
+		return true
+	}
+
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(patternParts) != len(pathParts) {
 		return false
 	}
 
-	p := strings.TrimSpace(strings.ToLower(path))
-	p = strings.TrimRight(p, "/")
-	switch p {
-	case "/api/v2/master/login",
-		"/api/v2/user/login",
-		"/api/v2/owner/login",
-		"/api/v2/auth/login":
-		return true
-	default:
-		return false
+	for i := range patternParts {
+		segment := patternParts[i]
+		if strings.HasPrefix(segment, ":") && len(segment) > 1 {
+			continue
+		}
+		if segment != pathParts[i] {
+			return false
+		}
 	}
+	return true
 }
 
 // resolveIdempotenceKey returns the idempotence key for the current request.
