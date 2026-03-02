@@ -85,39 +85,29 @@ func (w *Writer) Write(p []byte) (int, error) {
 	}
 	defer w.mu.Unlock()
 
-	n := 0
-	lockErr := withProcessLogLock(func() error {
-		path := filepath.Join(w.dir, TodayFilename(time.Now()))
-		if err := w.rotateIfNeeded(path, int64(len(p))); err != nil {
-			return err
-		}
+	path := filepath.Join(w.dir, TodayFilename(time.Now()))
+	// Rotation is best-effort and must not block request processing.
+	_ = w.rotateIfNeeded(path, int64(len(p)))
 
-		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, defaultLogFilePerm)
-		if err != nil {
-			return err
-		}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, defaultLogFilePerm)
+	if err != nil {
+		return 0, err
+	}
 
-		wrote, writeErr := file.Write(p)
-		n = wrote
-		closeErr := file.Close()
+	n, writeErr := file.Write(p)
+	closeErr := file.Close()
 
-		if writeErr != nil {
-			return writeErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		return nil
-	})
+	if writeErr != nil {
+		return n, writeErr
+	}
+	if closeErr != nil {
+		return n, closeErr
+	}
 
 	if n > 0 {
 		Publish(string(p[:n]))
 	}
-	if errors.Is(lockErr, errProcessLogLockTimeout) {
-		return len(p), nil
-	}
-
-	return n, lockErr
+	return n, nil
 }
 
 func (w *Writer) Sync() error {
@@ -161,7 +151,19 @@ func (w *Writer) rotateIfNeeded(path string, incoming int64) error {
 	if info.Size()+incoming <= w.rotateMaxSize {
 		return nil
 	}
-	return w.rotate(path)
+	return withProcessLogLockNoWait(func() error {
+		freshInfo, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if freshInfo.Size()+incoming <= w.rotateMaxSize {
+			return nil
+		}
+		return w.rotate(path)
+	})
 }
 
 func (w *Writer) rotate(path string) error {

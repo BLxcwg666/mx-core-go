@@ -20,14 +20,25 @@ var (
 const processLogLockWait = 300 * time.Millisecond
 
 func withProcessLogLock(fn func() error) error {
+	return withProcessLogLockTimeout(processLogLockWait, fn)
+}
+
+func withProcessLogLockNoWait(fn func() error) error {
+	return withProcessLogLockTimeout(0, fn)
+}
+
+func withProcessLogLockTimeout(timeout time.Duration, fn func() error) error {
 	h, err := getProcessLogLockHandle()
 	if err != nil {
 		return err
 	}
 
-	waitMs := uint32(processLogLockWait / time.Millisecond)
-	if waitMs == 0 {
-		waitMs = 1
+	waitMs := uint32(0)
+	if timeout > 0 {
+		waitMs = uint32(timeout / time.Millisecond)
+		if waitMs == 0 {
+			waitMs = 1
+		}
 	}
 
 	state, err := windows.WaitForSingleObject(h, waitMs)
