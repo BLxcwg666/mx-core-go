@@ -66,13 +66,36 @@ func resolveSummaryTargetLanguageName(lang string) string {
 func (s *Service) GetSummary(articleID, lang string) (*models.AISummaryModel, error) {
 	hash := hashKey(articleID, lang)
 	var summary models.AISummaryModel
-	if err := s.db.Where("hash = ?", hash).First(&summary).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
+	if err := s.db.Where("hash = ?", hash).First(&summary).Error; err == nil {
+		return &summary, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	return &summary, nil
+
+	langCandidates := summaryLangCandidates(lang)
+	if len(langCandidates) > 0 {
+		if err := s.db.
+			Where("ref_id = ?", articleID).
+			Where("LOWER(lang) IN ?", langCandidates).
+			Order("created_at DESC").
+			First(&summary).Error; err == nil {
+			return &summary, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+
+	if err := s.db.
+		Where("ref_id = ?", articleID).
+		Where("lang = '' OR LOWER(lang) = ?", "default").
+		Order("created_at DESC").
+		First(&summary).Error; err == nil {
+		return &summary, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	return nil, nil
 }
 
 // GetDeepReading returns the cached deep reading for a given articleID.
@@ -284,4 +307,38 @@ func (s *Service) fetchArticleText(refID, refType string) (string, error) {
 		return pg.Text, nil
 	}
 	return "", fmt.Errorf("unsupported ref type: %s", refType)
+}
+
+func summaryLangCandidates(lang string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 6)
+	add := func(v string) {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	raw := strings.TrimSpace(lang)
+	if idx := strings.Index(raw, ","); idx >= 0 {
+		raw = strings.TrimSpace(raw[:idx])
+	}
+	add(raw)
+
+	if idx := strings.Index(raw, "-"); idx >= 0 {
+		add(strings.TrimSpace(raw[:idx]))
+	}
+
+	normalized := normalizeLanguageCode(lang)
+	add(normalized)
+	if normalized == "zh" {
+		add("zh-cn")
+	}
+
+	return out
 }
