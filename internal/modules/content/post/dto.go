@@ -43,7 +43,7 @@ type ListQuery struct {
 	Year     *int    `form:"year"`
 	Category *string `form:"category"`
 	Tag      *string `form:"tag"`
-	Truncate *bool   `form:"truncate"`
+	Truncate *int    `form:"truncate"`
 }
 
 // postResponse is the API response shape for a post.

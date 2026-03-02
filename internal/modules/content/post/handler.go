@@ -56,11 +56,31 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
+	truncate := 0
+	if lq.Truncate != nil && *lq.Truncate > 0 {
+		truncate = *lq.Truncate
+	}
+
 	items := make([]postResponse, len(posts))
 	for i, p := range posts {
-		items[i] = toResponse(&p)
+		item := toResponse(&p)
+		if truncate > 0 {
+			item.Text = truncateRunes(item.Text, truncate)
+		}
+		items[i] = item
 	}
 	response.Paged(c, items, pag)
+}
+
+func truncateRunes(text string, limit int) string {
+	if limit <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit])
 }
 
 // getByIdentifier GET /posts/:identifier
