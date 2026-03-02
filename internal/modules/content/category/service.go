@@ -3,7 +3,9 @@ package category
 import (
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/mx-space/core/internal/models"
 	"gorm.io/gorm"
 )
@@ -22,6 +24,25 @@ type UpdateCategoryDTO struct {
 
 type Service struct {
 	db *gorm.DB
+}
+
+type CategoryPostLite struct {
+	ID       string    `json:"id"       gorm:"column:id"`
+	Title    string    `json:"title"    gorm:"column:title"`
+	Slug     string    `json:"slug"     gorm:"column:slug"`
+	Created  time.Time `json:"created"  gorm:"column:created"`
+	Modified time.Time `json:"modified" gorm:"column:modified"`
+}
+
+type CategoryDetail struct {
+	ID       string             `json:"id"`
+	Name     string             `json:"name"`
+	Slug     string             `json:"slug"`
+	Type     int                `json:"type"`
+	Count    int                `json:"count"`
+	Created  time.Time          `json:"created"`
+	Modified time.Time          `json:"modified"`
+	Children []CategoryPostLite `json:"children"`
 }
 
 func NewService(db *gorm.DB) *Service {
@@ -45,10 +66,12 @@ func (s *Service) GetByID(id string) (*models.CategoryModel, error) {
 }
 
 func (s *Service) GetByQuery(query string) (*models.CategoryModel, error) {
-	if cat, err := s.GetByID(query); err != nil {
-		return nil, err
-	} else if cat != nil {
-		return cat, nil
+	if isUUID(query) {
+		if cat, err := s.GetByID(query); err != nil {
+			return nil, err
+		} else if cat != nil {
+			return cat, nil
+		}
 	}
 
 	var cat models.CategoryModel
@@ -59,6 +82,47 @@ func (s *Service) GetByQuery(query string) (*models.CategoryModel, error) {
 		return nil, err
 	}
 	return &cat, nil
+}
+
+func (s *Service) GetDetailByQuery(query string) (*CategoryDetail, error) {
+	cat, err := s.GetByQuery(query)
+	if err != nil || cat == nil {
+		return nil, err
+	}
+
+	children, err := s.listPostsByCategory(cat.ID)
+	if err != nil {
+		return nil, err
+	}
+	if children == nil {
+		children = []CategoryPostLite{}
+	}
+
+	return &CategoryDetail{
+		ID:       cat.ID,
+		Name:     cat.Name,
+		Slug:     cat.Slug,
+		Type:     cat.Type,
+		Count:    len(children),
+		Created:  cat.CreatedAt,
+		Modified: cat.UpdatedAt,
+		Children: children,
+	}, nil
+}
+
+func (s *Service) listPostsByCategory(categoryID string) ([]CategoryPostLite, error) {
+	var items []CategoryPostLite
+	err := s.db.Model(&models.PostModel{}).
+		Select("id, title, slug, created_at AS created, updated_at AS modified").
+		Where("category_id = ? AND is_published = ?", categoryID, true).
+		Order("created_at DESC").
+		Find(&items).Error
+	return items, err
+}
+
+func isUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
 }
 
 func (s *Service) Create(dto *CreateCategoryDTO) (*models.CategoryModel, error) {

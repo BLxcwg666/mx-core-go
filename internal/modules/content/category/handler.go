@@ -35,16 +35,16 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 func (h *Handler) getByQuery(c *gin.Context) {
-	cat, err := h.svc.GetByQuery(c.Param("query"))
+	detail, err := h.svc.GetDetailByQuery(c.Param("query"))
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-	if cat == nil {
+	if detail == nil {
 		response.NotFoundMsg(c, "分类不存在")
 		return
 	}
-	response.OK(c, cat)
+	response.OK(c, gin.H{"data": detail})
 }
 
 func (h *Handler) create(c *gin.Context) {
