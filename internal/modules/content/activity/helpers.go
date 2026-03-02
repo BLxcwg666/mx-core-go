@@ -1,12 +1,14 @@
 package activity
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/mx-space/core/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -107,11 +109,37 @@ func strFromAny(v interface{}) string {
 	switch t := v.(type) {
 	case string:
 		return t
+	case []byte:
+		return string(t)
+	case map[string]interface{}:
+		if oid, ok := t["$oid"]; ok {
+			return strFromAny(oid)
+		}
+		if id, ok := t["id"]; ok {
+			return strFromAny(id)
+		}
+		return ""
 	case fmt.Stringer:
 		return t.String()
 	default:
 		return ""
 	}
+}
+
+func normalizeRefID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if len(id) == 24 {
+		if _, err := hex.DecodeString(id); err == nil {
+			return strings.ToLower(id)
+		}
+	}
+	if _, err := uuid.Parse(id); err == nil {
+		return strings.ToLower(id)
+	}
+	return id
 }
 
 func uniq(values []string) []string {
@@ -121,14 +149,15 @@ func uniq(values []string) []string {
 	set := map[string]struct{}{}
 	out := make([]string, 0, len(values))
 	for _, v := range values {
-		if v == "" {
+		id := normalizeRefID(v)
+		if id == "" {
 			continue
 		}
-		if _, ok := set[v]; ok {
+		if _, ok := set[id]; ok {
 			continue
 		}
-		set[v] = struct{}{}
-		out = append(out, v)
+		set[id] = struct{}{}
+		out = append(out, id)
 	}
 	return out
 }

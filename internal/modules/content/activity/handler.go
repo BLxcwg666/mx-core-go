@@ -53,15 +53,21 @@ func (h *Handler) like(c *gin.Context) {
 		return
 	}
 
+	refID := normalizeRefID(dto.ID)
+	if refID == "" {
+		response.BadRequest(c, "id is required")
+		return
+	}
+
 	contentType := strings.ToLower(dto.Type)
 	var tx *gorm.DB
 	switch contentType {
 	case "post", "posts":
-		tx = h.db.Model(&models.PostModel{}).Where("id = ?", dto.ID).
+		tx = h.db.Model(&models.PostModel{}).Where("id = ?", refID).
 			UpdateColumn("like_count", gorm.Expr("like_count + 1"))
 		contentType = "post"
 	case "note", "notes":
-		tx = h.db.Model(&models.NoteModel{}).Where("id = ?", dto.ID).
+		tx = h.db.Model(&models.NoteModel{}).Where("id = ?", refID).
 			UpdateColumn("like_count", gorm.Expr("like_count + 1"))
 		contentType = "note"
 	default:
@@ -80,7 +86,7 @@ func (h *Handler) like(c *gin.Context) {
 	act := models.ActivityModel{
 		Type: fmt.Sprintf("%d", activityTypeLike),
 		Payload: map[string]interface{}{
-			"id":   dto.ID,
+			"id":   refID,
 			"type": contentType,
 			"ip":   c.ClientIP(),
 		},
@@ -123,7 +129,10 @@ func (h *Handler) listLikePaged(c *gin.Context) {
 	postIDs := make([]string, 0)
 	noteIDs := make([]string, 0)
 	for _, row := range rows {
-		id := strFromAny(row.Payload["id"])
+		id := normalizeRefID(firstNonEmpty(
+			strFromAny(row.Payload["id"]),
+			strFromAny(row.Payload["_id"]),
+		))
 		if id == "" {
 			continue
 		}
@@ -145,7 +154,7 @@ func (h *Handler) listLikePaged(c *gin.Context) {
 			return
 		}
 		for _, p := range posts {
-			postMap[p.ID] = p
+			postMap[normalizeRefID(p.ID)] = p
 		}
 	}
 
@@ -156,14 +165,17 @@ func (h *Handler) listLikePaged(c *gin.Context) {
 			return
 		}
 		for _, n := range notes {
-			noteMap[n.ID] = n
+			noteMap[normalizeRefID(n.ID)] = n
 		}
 	}
 
 	items := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
 		payload := copyPayload(row.Payload)
-		id := strFromAny(payload["id"])
+		id := normalizeRefID(firstNonEmpty(
+			strFromAny(payload["id"]),
+			strFromAny(payload["_id"]),
+		))
 		item := gin.H{
 			"id":      row.ID,
 			"type":    activityTypeLike,
@@ -635,7 +647,10 @@ func (h *Handler) getRecentLike(limit int) ([]gin.H, error) {
 
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
-		id := strFromAny(row.Payload["id"])
+		id := normalizeRefID(firstNonEmpty(
+			strFromAny(row.Payload["id"]),
+			strFromAny(row.Payload["_id"]),
+		))
 		if id != "" {
 			ids = append(ids, id)
 		}
@@ -647,7 +662,10 @@ func (h *Handler) getRecentLike(limit int) ([]gin.H, error) {
 
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		id := strFromAny(row.Payload["id"])
+		id := normalizeRefID(firstNonEmpty(
+			strFromAny(row.Payload["id"]),
+			strFromAny(row.Payload["_id"]),
+		))
 		ref := flat[id]
 		if ref == nil {
 			out = append(out, gin.H{
@@ -785,6 +803,7 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 		item := compactPost(p)
 		objects["posts"] = append(objects["posts"], item)
 		flat[p.ID] = item
+		flat[normalizeRefID(p.ID)] = item
 	}
 
 	var notes []models.NoteModel
@@ -795,6 +814,7 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 		item := compactNote(n)
 		objects["notes"] = append(objects["notes"], item)
 		flat[n.ID] = item
+		flat[normalizeRefID(n.ID)] = item
 	}
 
 	var pages []models.PageModel
@@ -805,6 +825,7 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 		item := compactPage(p)
 		objects["pages"] = append(objects["pages"], item)
 		flat[p.ID] = item
+		flat[normalizeRefID(p.ID)] = item
 	}
 
 	var recentlies []models.RecentlyModel
@@ -815,6 +836,7 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 		item := compactRecently(r)
 		objects["recentlies"] = append(objects["recentlies"], item)
 		flat[r.ID] = item
+		flat[normalizeRefID(r.ID)] = item
 	}
 
 	return objects, flat, nil
