@@ -79,6 +79,7 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 func (s *Service) Search(q string) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
 		if results, err := client.Search(q); err == nil {
+			s.hydrateSearchResults(results)
 			s.logger.Debug(fmt.Sprintf("MeiliSearch 搜索命中 %d 条结果", len(results)))
 			return results, servedByMeili, nil
 		} else {
@@ -86,7 +87,69 @@ func (s *Service) Search(q string) ([]SearchResult, string, error) {
 		}
 	}
 	results, err := s.mysqlSearch(q)
+	s.hydrateSearchResults(results)
 	return results, servedByMySQL, err
+}
+
+func (s *Service) hydrateSearchResults(results []SearchResult) {
+	if len(results) == 0 {
+		return
+	}
+
+	postIDs := make([]string, 0, len(results))
+	needPostHydrate := make(map[string]struct{}, len(results))
+	for i := range results {
+		if results[i].Type != "post" || results[i].ID == "" {
+			continue
+		}
+		if results[i].Category != nil && results[i].Slug != "" {
+			continue
+		}
+		if _, exists := needPostHydrate[results[i].ID]; exists {
+			continue
+		}
+		needPostHydrate[results[i].ID] = struct{}{}
+		postIDs = append(postIDs, results[i].ID)
+	}
+	if len(postIDs) == 0 {
+		return
+	}
+
+	var posts []models.PostModel
+	if err := s.db.
+		Model(&models.PostModel{}).
+		Preload("Category").
+		Where("id IN ?", postIDs).
+		Find(&posts).Error; err != nil {
+		return
+	}
+
+	postMap := make(map[string]models.PostModel, len(posts))
+	for _, post := range posts {
+		postMap[post.ID] = post
+	}
+
+	for i := range results {
+		if results[i].Type != "post" {
+			continue
+		}
+		post, ok := postMap[results[i].ID]
+		if !ok {
+			continue
+		}
+		if results[i].Slug == "" {
+			results[i].Slug = post.Slug
+		}
+		if results[i].Summary == "" {
+			results[i].Summary = post.Summary
+		}
+		if results[i].CategoryID == nil {
+			results[i].CategoryID = post.CategoryID
+		}
+		if results[i].Category == nil {
+			results[i].Category = post.Category
+		}
+	}
 }
 
 func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin bool) ([]SearchResult, response.Pagination, error) {
