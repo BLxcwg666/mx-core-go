@@ -60,7 +60,7 @@ func (h *OAuthHandler) listProviders(c *gin.Context) {
 			providers = append(providers, providerType)
 		}
 	}
-	c.JSON(http.StatusOK, providers)
+	response.OK(c, providers)
 }
 
 // GET /auth/redirect/:provider?callback_url=...
