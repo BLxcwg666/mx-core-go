@@ -1,6 +1,7 @@
 package post
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -240,7 +241,11 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 		updates["allow_comment"] = *dto.AllowComment
 	}
 	if dto.Tags != nil {
-		updates["tags"] = dto.Tags
+		encodedTags, err := json.Marshal(dto.Tags)
+		if err != nil {
+			return nil, err
+		}
+		updates["tags"] = string(encodedTags)
 	}
 	if dto.Pin != nil {
 		updates["pin"] = *dto.Pin
@@ -249,7 +254,11 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 		updates["pin_order"] = *dto.PinOrder
 	}
 	if dto.Images != nil {
-		updates["images"] = dto.Images
+		encodedImages, err := json.Marshal(dto.Images)
+		if err != nil {
+			return nil, err
+		}
+		updates["images"] = string(encodedImages)
 	}
 
 	if err := s.db.Model(post).Updates(updates).Error; err != nil {

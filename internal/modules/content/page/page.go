@@ -1,6 +1,7 @@
 package page
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -159,13 +160,21 @@ func (s *Service) Update(id string, dto *UpdatePageDTO) (*models.PageModel, erro
 		updates["order_num"] = *dto.Order
 	}
 	if dto.Meta != nil {
-		updates["meta"] = dto.Meta
+		encodedMeta, err := json.Marshal(dto.Meta)
+		if err != nil {
+			return nil, err
+		}
+		updates["meta"] = string(encodedMeta)
 	}
 	if dto.AllowComment != nil {
 		updates["allow_comment"] = *dto.AllowComment
 	}
 	if dto.Images != nil {
-		updates["images"] = dto.Images
+		encodedImages, err := json.Marshal(dto.Images)
+		if err != nil {
+			return nil, err
+		}
+		updates["images"] = string(encodedImages)
 	}
 	if err := s.db.Model(p).Updates(updates).Error; err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package note
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -266,10 +267,18 @@ func (s *Service) Update(id string, dto *UpdateNoteDTO) (*models.NoteModel, erro
 		updates["public_at"] = dto.PublicAt
 	}
 	if dto.Coordinates != nil {
-		updates["coordinates"] = dto.Coordinates
+		encodedCoordinates, err := json.Marshal(dto.Coordinates)
+		if err != nil {
+			return nil, err
+		}
+		updates["coordinates"] = string(encodedCoordinates)
 	}
 	if dto.Images != nil {
-		updates["images"] = dto.Images
+		encodedImages, err := json.Marshal(dto.Images)
+		if err != nil {
+			return nil, err
+		}
+		updates["images"] = string(encodedImages)
 	}
 	if dto.Password != nil {
 		if *dto.Password == "" {
