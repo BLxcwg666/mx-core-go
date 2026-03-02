@@ -1,7 +1,7 @@
 # Mix Space Core
 
 > [!WARNING]
-> 没写完，别急！！！
+> 大体功能写完了，还差小细节，欢迎反馈
 
 这是以 Golang 重写的 Mix Space Core
 
