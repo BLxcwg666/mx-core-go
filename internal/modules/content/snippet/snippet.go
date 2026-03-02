@@ -203,6 +203,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a.GET("/all", h.listAll)
 	a.GET("/:id", h.getByID)
 	a.POST("", h.create)
+	a.POST("/aggregate", h.aggregate)
 	a.POST("/import", h.importSnippets)
 	a.PUT("/:id", h.update)
 	a.PATCH("/:id", h.update) // legacy compatibility
@@ -418,4 +419,30 @@ func (h *Handler) importSnippets(c *gin.Context) {
 		h.svc.db.Create(&s)
 	}
 	response.OK(c, "OK")
+}
+
+func (h *Handler) aggregate(c *gin.Context) {
+	var pipeline []map[string]interface{}
+	if err := c.ShouldBindJSON(&pipeline); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	var snippets []models.SnippetModel
+	if err := h.svc.db.Find(&snippets).Error; err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	docs := make([]map[string]interface{}, 0, len(snippets))
+	for i := range snippets {
+		docs = append(docs, snippetToAggregateDoc(&snippets[i]))
+	}
+
+	result, err := runAggregatePipeline(docs, pipeline)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.OK(c, result)
 }
