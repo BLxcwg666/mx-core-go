@@ -9,6 +9,14 @@ type Handler struct {
 	svc *Service
 }
 
+type listQuery struct {
+	Type *int `form:"type"`
+}
+
+type getByQueryOptions struct {
+	Tag *bool `form:"tag"`
+}
+
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
@@ -26,16 +34,59 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 }
 
 func (h *Handler) list(c *gin.Context) {
-	cats, err := h.svc.List()
-	if err != nil {
-		response.InternalError(c, err)
+	var query listQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
-	response.OK(c, gin.H{"data": cats})
+
+	listType := CategoryTypeCategory
+	if query.Type != nil {
+		listType = *query.Type
+	}
+
+	switch listType {
+	case CategoryTypeTag:
+		tags, err := h.svc.ListTags()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, tags)
+	default:
+		cats, err := h.svc.ListCategories()
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, cats)
+	}
 }
 
 func (h *Handler) getByQuery(c *gin.Context) {
-	detail, err := h.svc.GetDetailByQuery(c.Param("query"))
+	var options getByQueryOptions
+	if err := c.ShouldBindQuery(&options); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	query := c.Param("query")
+
+	if options.Tag != nil && *options.Tag {
+		posts, err := h.svc.ListPostsByTag(query)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if len(posts) == 0 {
+			response.NotFoundMsg(c, "标签不存在")
+			return
+		}
+		response.OK(c, gin.H{"tag": query, "data": posts})
+		return
+	}
+
+	detail, err := h.svc.GetDetailByQuery(query)
 	if err != nil {
 		response.InternalError(c, err)
 		return
