@@ -28,23 +28,27 @@ func NewHandler(svc *Service, cfgSvc *appconfigs.Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
-	g := rg.Group("/links")
+	for _, prefix := range []string{"/links", "/friends"} {
+		g := rg.Group(prefix)
 
-	g.GET("", h.list)
-	g.GET("/all", h.listAll)
-	g.GET("/audit", h.canApply)
-	g.GET("/state", h.stateCount)
+		g.GET("", h.list)
+		g.GET("/all", h.listAll)
+		g.GET("/audit", h.canApply)
+		g.GET("/state", h.stateCount)
+		g.GET("/:id", h.get)
 
-	g.POST("", h.create)
-	g.POST("/audit", h.create)
+		g.POST("", h.create)
+		g.POST("/audit", h.create)
 
-	a := g.Group("", authMW)
-	a.GET("/health", h.health)
-	a.PATCH("/audit/:id", h.audit)
-	a.POST("/audit/reason/:id", h.auditReason)
-	a.POST("/avatar/migrate", h.migrateAvatars)
-	a.PUT("/:id", h.update)
-	a.DELETE("/:id", h.delete)
+		a := g.Group("", authMW)
+		a.GET("/health", h.health)
+		a.PATCH("/audit/:id", h.audit)
+		a.POST("/audit/reason/:id", h.auditReason)
+		a.POST("/avatar/migrate", h.migrateAvatars)
+		a.PUT("/:id", h.update)
+		a.PATCH("/:id", h.patch)
+		a.DELETE("/:id", h.delete)
+	}
 }
 
 // GET /links/audit
@@ -169,6 +173,19 @@ func (h *Handler) create(c *gin.Context) {
 	response.Created(c, toResponse(l, isAdmin))
 }
 
+func (h *Handler) get(c *gin.Context) {
+	l, err := h.svc.GetByID(c.Param("id"))
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if l == nil {
+		response.NotFoundMsg(c, "友链不存在")
+		return
+	}
+	response.OK(c, toResponse(l, middleware.IsAuthenticated(c)))
+}
+
 // GET /links/health — health check
 func (h *Handler) health(c *gin.Context) {
 	result := h.svc.HealthCheck()
@@ -254,6 +271,24 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	response.OK(c, toResponse(l, true))
+}
+
+func (h *Handler) patch(c *gin.Context) {
+	var dto UpdateLinkDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	l, err := h.svc.Update(c.Param("id"), &dto)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if l == nil {
+		response.NotFoundMsg(c, "友链不存在")
+		return
+	}
+	response.NoContent(c)
 }
 
 func (h *Handler) delete(c *gin.Context) {

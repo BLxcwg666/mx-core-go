@@ -25,6 +25,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/cron-task", authMW)
 	g.GET("", h.list)
 	g.GET("/:name", h.get)
+	g.POST("/run/:type", h.run)
 	g.POST("/:name/run", h.run)
 
 	tasks := g.Group("/tasks")
@@ -53,7 +54,11 @@ func (h *Handler) get(c *gin.Context) {
 
 // POST /cron-task/:name/run — manually trigger a job
 func (h *Handler) run(c *gin.Context) {
-	if err := h.sched.Run(c.Request.Context(), c.Param("name")); err != nil {
+	name := c.Param("name")
+	if name == "" {
+		name = c.Param("type")
+	}
+	if err := h.sched.Run(c.Request.Context(), name); err != nil {
 		response.NotFoundMsg(c, "定时任务不存在")
 		return
 	}

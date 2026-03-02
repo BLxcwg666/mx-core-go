@@ -158,6 +158,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a := g.Group("", authMW)
 	a.POST("", h.create)
 	a.PUT("/:id", h.update)
+	a.PATCH("/:id", h.patch)
 	a.DELETE("/:id", h.delete)
 }
 
@@ -235,6 +236,24 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	response.OK(c, toResponse(p))
+}
+
+func (h *Handler) patch(c *gin.Context) {
+	var dto UpdateProjectDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	p, err := h.svc.Update(c.Param("id"), &dto)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	if p == nil {
+		response.NotFoundMsg(c, "项目不存在")
+		return
+	}
+	response.NoContent(c)
 }
 
 func (h *Handler) delete(c *gin.Context) {

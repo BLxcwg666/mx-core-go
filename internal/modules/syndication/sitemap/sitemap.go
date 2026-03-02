@@ -11,7 +11,7 @@ import (
 )
 
 func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service) {
-	rg.GET("/sitemap.xml", func(c *gin.Context) {
+	render := func(c *gin.Context) {
 		xml, err := buildSitemap(db, cfgSvc)
 		if err != nil {
 			c.String(500, "error generating sitemap")
@@ -19,7 +19,9 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service) {
 		}
 		c.Header("Content-Type", "application/xml; charset=utf-8")
 		c.String(200, xml)
-	})
+	}
+	rg.GET("/sitemap.xml", render)
+	rg.GET("/sitemap", render)
 }
 
 type sitemapURL struct {
