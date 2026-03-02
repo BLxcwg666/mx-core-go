@@ -10,16 +10,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db *gorm.DB
+	db  *gorm.DB
+	hub *gateway.Hub
 }
 
-func NewHandler(db *gorm.DB) *Handler { return &Handler{db: db} }
+func NewHandler(db *gorm.DB, hub *gateway.Hub) *Handler { return &Handler{db: db, hub: hub} }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/activity")
@@ -243,6 +245,13 @@ func (h *Handler) updatePresence(c *gin.Context) {
 	if dto.TS == 0 {
 		dto.TS = now
 	}
+	if h.hub != nil {
+		if !h.hub.SIDInPublicRoom(dto.SID, dto.RoomName) {
+			response.NoContent(c)
+			return
+		}
+		h.hub.SetSIDIdentity(dto.SID, dto.Identity)
+	}
 
 	entry := upsertPresence(dto, c.ClientIP())
 
@@ -265,6 +274,17 @@ func (h *Handler) updatePresence(c *gin.Context) {
 	_ = h.db.Create(&row).Error
 
 	sanitized := sanitizePresence(entry)
+	if dto.ReaderID != "" {
+		readers, err := h.loadReadersByIDs([]string{dto.ReaderID})
+		if err == nil {
+			if reader, ok := readers[dto.ReaderID]; ok {
+				sanitized["reader"] = reader
+			}
+		}
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("ACTIVITY_UPDATE_PRESENCE", sanitized)
+	}
 	response.OK(c, sanitized)
 }
 
@@ -279,19 +299,47 @@ func (h *Handler) getPresence(c *gin.Context) {
 		return
 	}
 
+	if h.hub != nil {
+		prunePresenceBySocketState(h.hub.HasSID, h.hub.SIDInPublicRoom)
+	}
+
 	entries := listRoomPresence(query.RoomName)
 	data := map[string]gin.H{}
+	readerIDs := make([]string, 0, len(entries))
 	for _, e := range entries {
 		data[e.Identity] = sanitizePresence(e)
+		if e.ReaderID != "" {
+			readerIDs = append(readerIDs, e.ReaderID)
+		}
+	}
+
+	readers := gin.H{}
+	if len(readerIDs) > 0 {
+		readerMap, err := h.loadReadersByIDs(readerIDs)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		readers = readerMap
 	}
 	response.OK(c, gin.H{
 		"data":    data,
-		"readers": gin.H{},
+		"readers": readers,
 	})
 }
 
 func (h *Handler) getRooms(c *gin.Context) {
-	roomNames, roomCount := getAllRooms()
+	var (
+		roomNames []string
+		roomCount map[string]int
+	)
+	if h.hub != nil {
+		roomCount = h.hub.PublicRoomCount()
+		roomNames = sortedRoomNames(roomCount)
+	} else {
+		roomNames, roomCount = getAllRooms()
+	}
+	roomCount = normalizeRoomCount(roomCount)
 
 	ids := make([]string, 0, len(roomNames))
 	for _, room := range roomNames {
@@ -316,8 +364,50 @@ func (h *Handler) getRooms(c *gin.Context) {
 	})
 }
 
+func normalizeRoomCount(roomCount map[string]int) map[string]int {
+	out := make(map[string]int, len(roomCount)*3)
+	for roomName, count := range roomCount {
+		aliases := roomNameAliases(roomName)
+		for _, alias := range aliases {
+			out[alias] += count
+		}
+	}
+	return out
+}
+
+func (h *Handler) loadReadersByIDs(ids []string) (gin.H, error) {
+	ids = uniq(ids)
+	if len(ids) == 0 {
+		return gin.H{}, nil
+	}
+
+	var readers []models.ReaderModel
+	if err := h.db.Where("id IN ?", ids).Find(&readers).Error; err != nil {
+		return nil, err
+	}
+
+	out := make(gin.H, len(readers))
+	for _, reader := range readers {
+		out[reader.ID] = gin.H{
+			"id":       reader.ID,
+			"email":    reader.Email,
+			"isOwner":  reader.IsOwner,
+			"image":    reader.Image,
+			"name":     reader.Name,
+			"provider": "",
+			"handle":   reader.Handle,
+		}
+	}
+	return out, nil
+}
+
 func (h *Handler) getOnlineCount(c *gin.Context) {
-	_, roomCount := getAllRooms()
+	roomCount := map[string]int{}
+	if h.hub != nil {
+		roomCount = h.hub.PublicRoomCount()
+	} else {
+		_, roomCount = getAllRooms()
+	}
 	total := 0
 	for _, count := range roomCount {
 		total += count
@@ -326,6 +416,15 @@ func (h *Handler) getOnlineCount(c *gin.Context) {
 		"total": total,
 		"rooms": roomCount,
 	})
+}
+
+func sortedRoomNames(roomCount map[string]int) []string {
+	rooms := make([]string, 0, len(roomCount))
+	for roomName := range roomCount {
+		rooms = append(rooms, roomName)
+	}
+	sort.Strings(rooms)
+	return rooms
 }
 
 func (h *Handler) getReadingRank(c *gin.Context) {

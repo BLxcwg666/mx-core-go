@@ -67,6 +67,8 @@ func extractRefIDFromRoomName(roomName string) string {
 		return ""
 	}
 	switch {
+	case strings.HasPrefix(roomName, "article-"):
+		return strings.TrimPrefix(roomName, "article-")
 	case strings.HasPrefix(roomName, "article_"):
 		return strings.TrimPrefix(roomName, "article_")
 	case strings.HasPrefix(roomName, "article:"):
@@ -74,6 +76,20 @@ func extractRefIDFromRoomName(roomName string) string {
 	default:
 		return ""
 	}
+}
+
+func roomNameAliases(roomName string) []string {
+	refID := extractRefIDFromRoomName(roomName)
+	if refID == "" {
+		return []string{roomName}
+	}
+
+	out := []string{
+		"article-" + refID,
+		"article_" + refID,
+		"article:" + refID,
+	}
+	return out
 }
 
 func copyPayload(payload map[string]interface{}) map[string]interface{} {

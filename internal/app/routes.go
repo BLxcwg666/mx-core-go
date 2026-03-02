@@ -269,7 +269,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
-	activity.NewHandler(db).RegisterRoutes(api, authMW)
+	activity.NewHandler(db, a.hub).RegisterRoutes(api, authMW)
 	metapreset.NewHandler(db).RegisterRoutes(api, authMW)
 	serverless.NewHandler(db, a.hub, rc).RegisterRoutes(api, authMW)
 	dependency.NewHandler().RegisterRoutes(api, authMW)

@@ -20,6 +20,12 @@ const (
 	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
 	eventVisitorOnline          = "VISITOR_ONLINE"
 	eventVisitorOffline         = "VISITOR_OFFLINE"
+	eventActivityLeavePresence  = "ACTIVITY_LEAVE_PRESENCE"
+
+	messageJoin       = "join"
+	messageLeave      = "leave"
+	messageUpdateSID  = "updateSid"
+	messageUpdateLang = "updateLang"
 
 	nativeLogSnapshotChunkSize = 32 * 1024
 )
@@ -53,8 +59,13 @@ type adminLogSubscription struct {
 type Hub struct {
 	mu sync.RWMutex
 
-	sidRoom   map[string]string
-	roomCount map[string]int
+	sidRoom            map[string]string
+	sidSession         map[string]string
+	sidIdentity        map[string]string
+	roomCount          map[string]int
+	publicSessionCount map[string]int
+	sidJoinedRooms     map[string]map[string]struct{}
+	joinedRoomCount    map[string]int
 
 	logSubMu sync.Mutex
 	logSubs  map[string]adminLogSubscription

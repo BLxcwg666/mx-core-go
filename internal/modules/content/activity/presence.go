@@ -14,6 +14,16 @@ func upsertPresence(dto presenceUpdateDTO, ip string) presenceRecord {
 
 	cleanupPresenceLocked(now)
 
+	for roomName, room := range presenceStore.rooms {
+		if roomName == dto.RoomName {
+			continue
+		}
+		delete(room, dto.SID)
+		if len(room) == 0 {
+			delete(presenceStore.rooms, roomName)
+		}
+	}
+
 	if _, ok := presenceStore.rooms[dto.RoomName]; !ok {
 		presenceStore.rooms[dto.RoomName] = map[string]presenceRecord{}
 	}
@@ -75,6 +85,32 @@ func getAllRooms() ([]string, map[string]int) {
 	}
 	sort.Strings(rooms)
 	return rooms, roomCount
+}
+
+func prunePresenceBySocketState(
+	hasSID func(string) bool,
+	sidInRoom func(string, string) bool,
+) {
+	if hasSID == nil || sidInRoom == nil {
+		return
+	}
+
+	now := nowMillis()
+	presenceStore.mu.Lock()
+	defer presenceStore.mu.Unlock()
+
+	cleanupPresenceLocked(now)
+
+	for roomName, room := range presenceStore.rooms {
+		for sid := range room {
+			if !hasSID(sid) || !sidInRoom(sid, roomName) {
+				delete(room, sid)
+			}
+		}
+		if len(room) == 0 {
+			delete(presenceStore.rooms, roomName)
+		}
+	}
 }
 
 func cleanupPresenceLocked(now int64) {
