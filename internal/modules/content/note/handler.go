@@ -1,8 +1,10 @@
 package note
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
@@ -12,6 +14,7 @@ import (
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -77,7 +80,27 @@ func (h *Handler) getByNID(c *gin.Context) {
 	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
 	resp := toResponse(note)
 	h.applyMacros(&resp, isAdmin)
-	response.OK(c, resp)
+	if isTruthy(c.Query("single")) {
+		response.OK(c, resp)
+		return
+	}
+
+	prev, err := h.findAdjacentNoteByCreated(resp.Created, isAdmin, true)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	next, err := h.findAdjacentNoteByCreated(resp.Created, isAdmin, false)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+
+	response.OK(c, gin.H{
+		"data": resp,
+		"next": next,
+		"prev": prev,
+	})
 }
 
 func (h *Handler) getByID(c *gin.Context) {
@@ -110,7 +133,17 @@ func (h *Handler) latest(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
-	response.OK(c, toResponse(note))
+	isAdmin := middleware.IsAuthenticated(c)
+	resp := toResponse(note)
+	next, err := h.findAdjacentNoteByCreated(resp.Created, isAdmin, false)
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	response.OK(c, gin.H{
+		"data": resp,
+		"next": next,
+	})
 }
 
 func (h *Handler) listByTopic(c *gin.Context) {
@@ -263,4 +296,50 @@ func (h *Handler) applyMacros(resp *noteResponse, isAuthenticated bool) {
 		"nid_str":          fmt.Sprintf("%d", resp.NID),
 	}
 	resp.Text = h.macroSvc.Process(resp.Text, fields)
+}
+
+type noteNavItem struct {
+	ID       string     `json:"id"`
+	NID      int        `json:"nid"`
+	Title    string     `json:"title"`
+	Created  time.Time  `json:"created"`
+	Modified *time.Time `json:"modified"`
+}
+
+func (h *Handler) findAdjacentNoteByCreated(created time.Time, isAdmin, newer bool) (*noteNavItem, error) {
+	tx := h.svc.db.Model(&models.NoteModel{}).
+		Select("id, n_id, title, created_at, updated_at")
+	if !isAdmin {
+		tx = tx.Where("is_published = ?", true)
+	}
+	if newer {
+		tx = tx.Where("created_at > ?", created).Order("created_at ASC")
+	} else {
+		tx = tx.Where("created_at < ?", created).Order("created_at DESC")
+	}
+
+	var note models.NoteModel
+	if err := tx.First(&note).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &noteNavItem{
+		ID:       note.ID,
+		NID:      note.NID,
+		Title:    note.Title,
+		Created:  note.CreatedAt,
+		Modified: nullableModified(note.UpdatedAt),
+	}, nil
+}
+
+func isTruthy(value string) bool {
+	switch value {
+	case "1", "true", "True", "TRUE", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

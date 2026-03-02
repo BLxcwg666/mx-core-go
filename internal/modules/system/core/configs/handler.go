@@ -95,7 +95,7 @@ func (h *Handler) getOption(c *gin.Context) {
 	if val, ok := m[key]; ok {
 		var result interface{}
 		json.Unmarshal(val, &result)
-		response.OK(c, convertMapKeys(result, snakeToCamelKey))
+		response.OK(c, gin.H{"data": convertMapKeys(result, snakeToCamelKey)})
 		return
 	}
 	response.NotFoundMsg(c, "设置不存在")
