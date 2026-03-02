@@ -294,21 +294,26 @@ func (h *Handler) voteDown(c *gin.Context) {
 }
 
 func (h *Handler) attitude(c *gin.Context) {
-	switch c.Query("attitude") {
-	case "up", "like":
-		if err := h.svc.Vote(c.Param("id"), true); err != nil {
-			response.InternalError(c, err)
-			return
-		}
-		response.OK(c, gin.H{"code": 1})
-	case "down", "hate":
-		if err := h.svc.Vote(c.Param("id"), false); err != nil {
-			response.InternalError(c, err)
-			return
-		}
-		response.OK(c, gin.H{"code": 1})
+	isUp, ok := parseAttitude(c.Query("attitude"))
+	if !ok {
+		response.BadRequest(c, "attitude must be up|down|0|1")
+		return
+	}
+	if err := h.svc.Vote(c.Param("id"), isUp); err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"code": 1})
+}
+
+func parseAttitude(raw string) (isUp bool, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "up", "like", "0":
+		return true, true
+	case "down", "hate", "1":
+		return false, true
 	default:
-		response.BadRequest(c, "attitude must be up|down")
+		return false, false
 	}
 }
 
