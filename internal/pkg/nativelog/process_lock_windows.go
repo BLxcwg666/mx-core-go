@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -16,17 +17,27 @@ var (
 	logLockErr    error
 )
 
+const processLogLockWait = 300 * time.Millisecond
+
 func withProcessLogLock(fn func() error) error {
 	h, err := getProcessLogLockHandle()
 	if err != nil {
 		return err
 	}
 
-	state, err := windows.WaitForSingleObject(h, windows.INFINITE)
+	waitMs := uint32(processLogLockWait / time.Millisecond)
+	if waitMs == 0 {
+		waitMs = 1
+	}
+
+	state, err := windows.WaitForSingleObject(h, waitMs)
 	if err != nil {
 		return err
 	}
-	if state != windows.WAIT_OBJECT_0 && state != windows.WAIT_ABANDONED {
+	if state == uint32(windows.WAIT_TIMEOUT) {
+		return errProcessLogLockTimeout
+	}
+	if state != windows.WAIT_OBJECT_0 && state != uint32(windows.WAIT_ABANDONED) {
 		return fmt.Errorf("wait process log lock: unexpected state %d", state)
 	}
 
@@ -35,6 +46,8 @@ func withProcessLogLock(fn func() error) error {
 	}()
 	return fn()
 }
+
+var errProcessLogLockTimeout = errors.New("process log lock timeout")
 
 func getProcessLogLockHandle() (windows.Handle, error) {
 	logLockOnce.Do(func() {

@@ -80,7 +80,9 @@ func (w *Writer) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	w.mu.Lock()
+	if !w.mu.TryLock() {
+		return len(p), nil
+	}
 	defer w.mu.Unlock()
 
 	n := 0
@@ -110,6 +112,9 @@ func (w *Writer) Write(p []byte) (int, error) {
 
 	if n > 0 {
 		Publish(string(p[:n]))
+	}
+	if errors.Is(lockErr, errProcessLogLockTimeout) {
+		return len(p), nil
 	}
 
 	return n, lockErr
