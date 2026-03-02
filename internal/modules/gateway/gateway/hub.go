@@ -66,7 +66,7 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) registerClient(c clientMeta) {
-	trackOnline := false
+	shouldBroadcastOnline := false
 	currentOnline := 0
 
 	h.mu.Lock()
@@ -83,28 +83,40 @@ func (h *Hub) registerClient(c clientMeta) {
 	h.sidRoom[c.sid] = c.room
 	h.roomCount[c.room]++
 	if c.room == RoomPublic {
-		trackOnline = true
+		shouldBroadcastOnline = true
 		currentOnline = h.roomCount[RoomPublic]
 	}
 	h.mu.Unlock()
 
-	if trackOnline {
+	if shouldBroadcastOnline {
+		h.BroadcastPublic(eventVisitorOnline, newVisitorEventPayload(currentOnline, ""))
 		h.updateDailyOnlineStats(currentOnline)
 	}
 }
 
 func (h *Hub) unregisterClient(c clientMeta) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	shouldBroadcastOffline := false
+	currentOnline := 0
 
+	h.mu.Lock()
 	room, ok := h.sidRoom[c.sid]
 	if !ok {
+		h.mu.Unlock()
 		return
 	}
 
 	delete(h.sidRoom, c.sid)
 	if h.roomCount[room] > 0 {
 		h.roomCount[room]--
+	}
+	if room == RoomPublic {
+		shouldBroadcastOffline = true
+		currentOnline = h.roomCount[RoomPublic]
+	}
+	h.mu.Unlock()
+
+	if shouldBroadcastOffline {
+		h.BroadcastPublic(eventVisitorOffline, newVisitorEventPayload(currentOnline, c.sessionID))
 	}
 }
 
@@ -146,6 +158,17 @@ func (h *Hub) updateDailyOnlineStats(currentOnline int) {
 
 func shortDateKey(t time.Time) string {
 	return t.Format("1-2-06")
+}
+
+func newVisitorEventPayload(online int, sessionID string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"online":    online,
+		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if sessionID != "" {
+		payload["sessionId"] = sessionID
+	}
+	return payload
 }
 
 // Broadcast sends an event to all clients in the given room (or all if room="").

@@ -18,6 +18,8 @@ const (
 
 	redisKeyMaxOnlineCount      = "mx:max_online_count"
 	redisKeyMaxOnlineCountTotal = "mx:max_online_count:total"
+	eventVisitorOnline          = "VISITOR_ONLINE"
+	eventVisitorOffline         = "VISITOR_OFFLINE"
 
 	nativeLogSnapshotChunkSize = 32 * 1024
 )
@@ -37,8 +39,9 @@ type gatewayPayload struct {
 }
 
 type clientMeta struct {
-	sid  string
-	room string
+	sid       string
+	room      string
+	sessionID string
 }
 
 type adminLogSubscription struct {

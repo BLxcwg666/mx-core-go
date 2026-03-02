@@ -14,11 +14,12 @@ func (h *Hub) registerNamespaces() {
 			return
 		}
 		sid := string(client.Id())
-		h.register <- clientMeta{sid: sid, room: RoomPublic}
+		sessionID := extractSessionID(client, sid)
+		h.register <- clientMeta{sid: sid, room: RoomPublic, sessionID: sessionID}
 		_ = client.Emit("message", h.gatewayMessageFormat("GATEWAY_CONNECT", "WebSocket connected", nil))
 
 		_ = client.On("disconnect", func(_ ...any) {
-			h.unregister <- clientMeta{sid: sid, room: RoomPublic}
+			h.unregister <- clientMeta{sid: sid, room: RoomPublic, sessionID: sessionID}
 		})
 	})
 
@@ -66,6 +67,20 @@ func extractToken(client *socketio.Socket) string {
 		return token
 	}
 	return ""
+}
+
+func extractSessionID(client *socketio.Socket, fallback string) string {
+	handshake := client.Handshake()
+	if handshake == nil {
+		return fallback
+	}
+	if sid := firstValueFromMultiMap(handshake.Query, "socket_session_id"); sid != "" {
+		return sid
+	}
+	if sid := firstValueFromMultiMap(handshake.Headers, "x-socket-session-id"); sid != "" {
+		return sid
+	}
+	return fallback
 }
 
 func firstValueFromMultiMap(values map[string][]string, key string) string {
