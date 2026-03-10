@@ -40,10 +40,12 @@ type UpdatePostDTO struct {
 
 // ListQuery holds query params for listing posts.
 type ListQuery struct {
-	Year     *int    `form:"year"`
-	Category *string `form:"category"`
-	Tag      *string `form:"tag"`
-	Truncate *int    `form:"truncate"`
+	Year      *int    `form:"year"`
+	Category  *string `form:"category"`
+	Tag       *string `form:"tag"`
+	SortBy    *string `form:"sortBy"`
+	SortOrder *int    `form:"sortOrder"`
+	Truncate  *int    `form:"truncate"`
 }
 
 // postResponse is the API response shape for a post.

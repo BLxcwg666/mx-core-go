@@ -23,10 +23,19 @@ func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
 
-func (s *Service) List(q pagination.Query) ([]models.NoteModel, response.Pagination, error) {
+func (s *Service) List(q pagination.Query, lq ListQuery, isAdmin bool) ([]models.NoteModel, response.Pagination, error) {
 	tx := s.db.Model(&models.NoteModel{}).
-		Preload("Topic").
-		Order("created_at DESC")
+		Preload("Topic")
+
+	if lq.Year != nil {
+		tx = tx.Where("YEAR(created_at) = ?", *lq.Year)
+	}
+	if !isAdmin {
+		tx = tx.Where("is_published = ?", true)
+	}
+	for _, order := range noteListOrders(lq) {
+		tx = tx.Order(order)
+	}
 
 	var notes []models.NoteModel
 	pag, err := pagination.Paginate(tx, q, &notes)
@@ -74,18 +83,55 @@ func (s *Service) GetLatest(isAdmin bool) (*models.NoteModel, error) {
 	return &note, nil
 }
 
-func (s *Service) ListByTopic(topicID string, q pagination.Query, isAdmin bool) ([]models.NoteModel, response.Pagination, error) {
+func (s *Service) ListByTopic(topicID string, q pagination.Query, lq ListQuery, isAdmin bool) ([]models.NoteModel, response.Pagination, error) {
 	tx := s.db.Model(&models.NoteModel{}).
 		Preload("Topic").
-		Where("topic_id = ?", topicID).
-		Order("created_at DESC")
+		Where("topic_id = ?", topicID)
 	if !isAdmin {
 		tx = tx.Where("is_published = ?", true)
+	}
+	for _, order := range noteListOrders(lq) {
+		tx = tx.Order(order)
 	}
 
 	var notes []models.NoteModel
 	pag, err := pagination.Paginate(tx, q, &notes)
 	return notes, pag, err
+}
+
+func noteListOrders(lq ListQuery) []string {
+	sortBy := ""
+	if lq.SortBy != nil {
+		sortBy = normalizeNoteSortKey(*lq.SortBy)
+	}
+	if sortBy == "" {
+		return []string{"created_at DESC"}
+	}
+
+	direction := "DESC"
+	if lq.SortOrder != nil && *lq.SortOrder == 1 {
+		direction = "ASC"
+	}
+
+	switch sortBy {
+	case "created", "createdat":
+		return []string{"created_at " + direction}
+	case "modified", "updated", "updatedat":
+		return []string{"updated_at " + direction}
+	case "title":
+		return []string{"title " + direction}
+	case "weather":
+		return []string{"weather " + direction}
+	case "mood":
+		return []string{"mood " + direction}
+	default:
+		return []string{"created_at DESC"}
+	}
+}
+
+func normalizeNoteSortKey(sortBy string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
 }
 
 // ListAround returns notes around the given note id, including itself.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,11 @@ type UpdatePageDTO struct {
 	Meta         map[string]interface{} `json:"meta"`
 	AllowComment *bool                  `json:"allowComment"`
 	Images       []models.Image         `json:"images"`
+}
+
+type ListQuery struct {
+	SortBy    *string `form:"sortBy"`
+	SortOrder *int    `form:"sortOrder"`
 }
 
 type pageResponse struct {
@@ -81,11 +87,49 @@ func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 // SetSlugTracker wires up slug change tracking (optional).
 func (s *Service) SetSlugTracker(st *slugtracker.Service) { s.slugTracker = st }
 
-func (s *Service) List(q pagination.Query) ([]models.PageModel, response.Pagination, error) {
-	tx := s.db.Model(&models.PageModel{}).Order("order_num ASC, created_at ASC")
+func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.PageModel, response.Pagination, error) {
+	tx := s.db.Model(&models.PageModel{})
+	for _, order := range pageListOrders(lq) {
+		tx = tx.Order(order)
+	}
 	var pages []models.PageModel
 	pag, err := pagination.Paginate(tx, q, &pages)
 	return pages, pag, err
+}
+
+func pageListOrders(lq ListQuery) []string {
+	sortBy := ""
+	if lq.SortBy != nil {
+		sortBy = normalizePageSortKey(*lq.SortBy)
+	}
+	if sortBy == "" {
+		return []string{"order_num DESC"}
+	}
+
+	direction := "DESC"
+	if lq.SortOrder != nil && *lq.SortOrder == 1 {
+		direction = "ASC"
+	}
+
+	switch sortBy {
+	case "order":
+		return []string{"order_num " + direction}
+	case "subtitle":
+		return []string{"subtitle " + direction}
+	case "title":
+		return []string{"title " + direction}
+	case "created", "createdat":
+		return []string{"created_at " + direction}
+	case "modified", "updated", "updatedat":
+		return []string{"updated_at " + direction}
+	default:
+		return []string{"order_num DESC"}
+	}
+}
+
+func normalizePageSortKey(sortBy string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
 }
 
 func (s *Service) GetBySlug(slug string) (*models.PageModel, error) {
@@ -231,7 +275,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
-	pages, pag, err := h.svc.List(q)
+	var lq ListQuery
+	if err := c.ShouldBindQuery(&lq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	pages, pag, err := h.svc.List(q, lq)
 	if err != nil {
 		response.InternalError(c, err)
 		return

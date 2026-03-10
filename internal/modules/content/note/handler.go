@@ -50,7 +50,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
-	notes, pag, err := h.svc.List(q)
+	var lq ListQuery
+	if err := c.ShouldBindQuery(&lq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	notes, pag, err := h.svc.List(q, lq, middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -157,7 +162,12 @@ func (h *Handler) latest(c *gin.Context) {
 
 func (h *Handler) listByTopic(c *gin.Context) {
 	q := pagination.FromContext(c)
-	items, pag, err := h.svc.ListByTopic(c.Param("id"), q, middleware.IsAuthenticated(c))
+	var lq ListQuery
+	if err := c.ShouldBindQuery(&lq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	items, pag, err := h.svc.ListByTopic(c.Param("id"), q, lq, middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
 		return

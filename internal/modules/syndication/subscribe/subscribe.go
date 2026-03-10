@@ -12,6 +12,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
+	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -41,6 +42,11 @@ type SubscribeDTO struct {
 	Email     string   `json:"email"     binding:"required,email"`
 	Subscribe *int     `json:"subscribe"` // legacy bitmask
 	Types     []string `json:"types"`     // preferred format
+}
+
+type ListQuery struct {
+	SortBy    *string `form:"sortBy"`
+	SortOrder *int    `form:"sortOrder"`
 }
 
 type Service struct{ db *gorm.DB }
@@ -292,12 +298,60 @@ func (h *Handler) unsubscribe(c *gin.Context) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	q := pagination.FromContext(c)
+	var lq ListQuery
+	if err := c.ShouldBindQuery(&lq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	tx := h.svc.db.Model(&models.SubscribeModel{})
+	for _, order := range subscribeListOrders(lq) {
+		tx = tx.Order(order)
+	}
+
 	var subs []models.SubscribeModel
-	if err := h.svc.db.Order("created_at DESC").Find(&subs).Error; err != nil {
+	pag, err := pagination.Paginate(tx, q, &subs)
+	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-	response.OK(c, gin.H{"data": subs})
+	response.Paged(c, subs, pag)
+}
+
+func subscribeListOrders(lq ListQuery) []string {
+	sortBy := ""
+	if lq.SortBy != nil {
+		sortBy = normalizeSubscribeSortKey(*lq.SortBy)
+	}
+	if sortBy == "" {
+		return []string{"created_at DESC"}
+	}
+
+	direction := "DESC"
+	if lq.SortOrder != nil && *lq.SortOrder == 1 {
+		direction = "ASC"
+	}
+
+	switch sortBy {
+	case "created", "createdat":
+		return []string{"created_at " + direction}
+	case "modified", "updated", "updatedat":
+		return []string{"updated_at " + direction}
+	case "email":
+		return []string{"email " + direction}
+	case "subscribe":
+		return []string{"subscribe " + direction}
+	case "verified":
+		return []string{"verified " + direction}
+	default:
+		return []string{"created_at DESC"}
+	}
+}
+
+func normalizeSubscribeSortKey(sortBy string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
 }
 
 func (h *Handler) status(c *gin.Context) {

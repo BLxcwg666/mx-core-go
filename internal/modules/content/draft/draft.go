@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,13 @@ type UpdateDraftDTO struct {
 	Images           []models.Image         `json:"images"`
 	Meta             map[string]interface{} `json:"meta"`
 	TypeSpecificData map[string]interface{} `json:"typeSpecificData"`
+}
+
+type ListQuery struct {
+	RefType   *string `form:"refType"`
+	HasRef    *bool   `form:"hasRef"`
+	SortBy    *string `form:"sortBy"`
+	SortOrder *int    `form:"sortOrder"`
 }
 
 type draftResponse struct {
@@ -76,14 +84,63 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-func (s *Service) List(q pagination.Query, refType *string) ([]models.DraftModel, response.Pagination, error) {
-	tx := s.db.Model(&models.DraftModel{}).Order("updated_at DESC")
-	if refType != nil {
-		tx = tx.Where("ref_type = ?", *refType)
+func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.DraftModel, response.Pagination, error) {
+	tx := s.db.Model(&models.DraftModel{})
+	if lq.RefType != nil {
+		tx = tx.Where("ref_type = ?", *lq.RefType)
+	}
+	if lq.HasRef != nil {
+		if *lq.HasRef {
+			tx = tx.Where("ref_id IS NOT NULL")
+		} else {
+			tx = tx.Where("ref_id IS NULL")
+		}
+	}
+	for _, order := range draftListOrders(lq) {
+		tx = tx.Order(order)
 	}
 	var items []models.DraftModel
 	pag, err := pagination.Paginate(tx, q, &items)
 	return items, pag, err
+}
+
+func draftListOrders(lq ListQuery) []string {
+	sortBy := ""
+	if lq.SortBy != nil {
+		sortBy = normalizeDraftSortKey(*lq.SortBy)
+	}
+	if sortBy == "" {
+		return []string{"updated_at DESC"}
+	}
+
+	direction := "DESC"
+	if lq.SortOrder != nil && *lq.SortOrder == 1 {
+		direction = "ASC"
+	}
+
+	switch sortBy {
+	case "updated", "modified", "updatedat":
+		return []string{"updated_at " + direction}
+	case "created", "createdat":
+		return []string{"created_at " + direction}
+	case "title":
+		return []string{"title " + direction}
+	case "reftype":
+		return []string{"ref_type " + direction}
+	case "refid":
+		return []string{"ref_id " + direction}
+	case "version":
+		return []string{"version " + direction}
+	case "publishedversion":
+		return []string{"published_version " + direction}
+	default:
+		return []string{"updated_at DESC"}
+	}
+}
+
+func normalizeDraftSortKey(sortBy string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
 }
 
 func (s *Service) GetByID(id string) (*models.DraftModel, error) {
@@ -317,12 +374,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 func (h *Handler) list(c *gin.Context) {
 	q := pagination.FromContext(c)
-	refType := c.Query("refType")
-	var rtPtr *string
-	if refType != "" {
-		rtPtr = &refType
+	var lq ListQuery
+	if err := c.ShouldBindQuery(&lq); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
-	items, pag, err := h.svc.List(q, rtPtr)
+	items, pag, err := h.svc.List(q, lq)
 	if err != nil {
 		response.InternalError(c, err)
 		return

@@ -38,6 +38,12 @@ type UpdateNoteDTO struct {
 	Images       []models.Image   `json:"images"`
 }
 
+type ListQuery struct {
+	Year      *int    `form:"year"`
+	SortBy    *string `form:"sortBy"`
+	SortOrder *int    `form:"sortOrder"`
+}
+
 type noteResponse struct {
 	ID           string           `json:"id"`
 	NID          int              `json:"nid"`

@@ -29,8 +29,7 @@ func (s *Service) SetSlugTracker(st *slugtracker.Service) { s.slugTracker = st }
 // List returns a paginated list of posts.
 func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.PostModel, response.Pagination, error) {
 	tx := s.db.Model(&models.PostModel{}).
-		Preload("Category").
-		Order("pin_order DESC, created_at DESC")
+		Preload("Category")
 
 	if lq.Year != nil {
 		tx = tx.Where("YEAR(created_at) = ?", *lq.Year)
@@ -43,9 +42,68 @@ func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.PostModel, re
 		tx = tx.Where("JSON_CONTAINS(tags, ?)", fmt.Sprintf("%q", *lq.Tag))
 	}
 
+	orders, needsCategoryJoin := postListOrders(lq)
+	if needsCategoryJoin && lq.Category == nil {
+		tx = tx.Joins("LEFT JOIN categories ON categories.id = posts.category_id")
+	}
+	for _, order := range orders {
+		tx = tx.Order(order)
+	}
+
 	var posts []models.PostModel
 	pag, err := pagination.Paginate(tx, q, &posts)
 	return posts, pag, err
+}
+
+func postListOrders(lq ListQuery) ([]string, bool) {
+	sortBy := ""
+	if lq.SortBy != nil {
+		sortBy = normalizePostSortKey(*lq.SortBy)
+	}
+	if sortBy == "" {
+		return []string{"pin_order DESC", "created_at DESC"}, false
+	}
+
+	direction := "DESC"
+	if lq.SortOrder != nil && *lq.SortOrder == 1 {
+		direction = "ASC"
+	}
+
+	switch sortBy {
+	case "created", "createdat":
+		return []string{"created_at " + direction}, false
+	case "modified", "updated", "updatedat":
+		return []string{"updated_at " + direction}, false
+	case "title":
+		return []string{"title " + direction}, false
+	case "slug":
+		return []string{"slug " + direction}, false
+	case "summary":
+		return []string{"summary " + direction}, false
+	case "copyright":
+		return []string{"copyright " + direction}, false
+	case "ispublished":
+		return []string{"is_published " + direction}, false
+	case "allowcomment":
+		return []string{"allow_comment " + direction}, false
+	case "pin":
+		return []string{"pin " + direction}, false
+	case "pinorder":
+		return []string{"pin_order " + direction}, false
+	case "read", "readcount", "countread":
+		return []string{"read_count " + direction}, false
+	case "like", "likecount", "countlike":
+		return []string{"like_count " + direction}, false
+	case "category", "categoryname":
+		return []string{"categories.name " + direction}, true
+	default:
+		return []string{"pin_order DESC", "created_at DESC"}, false
+	}
+}
+
+func normalizePostSortKey(sortBy string) string {
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
 }
 
 // GetBySlug fetches a single post by slug.
