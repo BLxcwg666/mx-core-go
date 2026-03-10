@@ -80,16 +80,20 @@ func (s *Sender) Send(msg Message) error {
 	if !s.cfg.Enable {
 		return nil
 	}
+	provider := "smtp"
 	var err error
 	if s.cfg.UseResend && s.cfg.ResendKey != "" {
+		provider = "resend"
 		err = s.sendResend(msg)
 	} else {
 		err = s.sendSMTP(msg)
 	}
 	if err != nil {
 		s.logger.Warn("邮件发送失败", zap.Strings("to", msg.To), zap.String("subject", msg.Subject), zap.Error(err))
+		return err
 	}
-	return err
+	s.logger.Info("邮件发送成功", zap.Strings("to", msg.To), zap.String("subject", msg.Subject), zap.String("provider", provider))
+	return nil
 }
 
 // sendSMTP sends via SMTP and supports implicit TLS / SOCKS5 proxy.

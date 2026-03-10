@@ -118,7 +118,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	subscribeSvc := subscribe.NewService(db)
 
 	// Notification service (email, bark push, webhook, newsletter).
-	notifySvc := notify.New(db, cfgSvc, webhookSvc, barkSvc, subscribeSvc)
+	notifySvc := notify.New(db, cfgSvc, webhookSvc, barkSvc, subscribeSvc, notify.WithLogger(a.logger))
 
 	// Image sync service.
 	imageSyncSvc := imagesync.NewService(db, cfgSvc)
@@ -146,7 +146,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	}))
 
 	// Infrastructure
-	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW)
+	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW, a.logger)
 	aggregate.RegisterRoutes(api, db, cfgSvc, a.hub, rc)
 	ack.NewHandler(db, a.hub).RegisterRoutes(api)
 	if apiPrefix != "" {
@@ -269,8 +269,8 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Extras
 	say.NewHandler(say.NewService(db), a.hub).RegisterRoutes(api, authMW)
-	link.NewHandler(link.NewService(db), cfgSvc, a.hub).RegisterRoutes(api, authMW)
-	subscribe.NewHandler(subscribeSvc, cfgSvc).RegisterRoutes(api, authMW)
+	link.NewHandler(link.NewService(db, link.WithLogger(a.logger)), cfgSvc, a.hub).RegisterRoutes(api, authMW)
+	subscribe.NewHandler(subscribeSvc, cfgSvc, subscribe.WithLogger(a.logger)).RegisterRoutes(api, authMW)
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)

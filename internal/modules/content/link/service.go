@@ -20,7 +20,11 @@ type Service struct {
 }
 
 func NewService(db *gorm.DB, opts ...ServiceOption) *Service {
-	return &Service{db: db, logger: zap.NewNop()}
+	s := &Service{db: db, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // ServiceOption configures a link Service.

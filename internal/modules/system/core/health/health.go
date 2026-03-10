@@ -18,6 +18,7 @@ import (
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
 	"github.com/mx-space/core/internal/pkg/nativelog"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -29,7 +30,12 @@ type logItem struct {
 	Created  int64  `json:"created"`
 }
 
-func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, sched *cron.Scheduler, cfgSvc *appconfigs.Service, authMW gin.HandlerFunc) {
+func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, sched *cron.Scheduler, cfgSvc *appconfigs.Service, authMW gin.HandlerFunc, logger *zap.Logger) {
+	mailLogger := zap.NewNop()
+	if logger != nil {
+		mailLogger = logger.Named("HealthService")
+	}
+
 	rg.GET("/health", func(c *gin.Context) {
 		sqlDB, err := db.DB()
 		dbOK := err == nil && sqlDB.Ping() == nil
@@ -97,7 +103,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, sched *cron.Scheduler, cfg
 			return
 		}
 
-		sender := pkgmail.New(mailCfg)
+		sender := pkgmail.New(mailCfg, pkgmail.WithLogger(mailLogger))
 		if err := sender.Send(pkgmail.Message{
 			To:      []string{owner.Mail},
 			Subject: "Mix Space 邮件测试",

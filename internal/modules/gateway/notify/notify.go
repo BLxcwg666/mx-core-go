@@ -14,6 +14,7 @@ import (
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/bark"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -25,16 +26,34 @@ type Service struct {
 	barkSvc      *bark.Service
 	subscribeSvc *subscribe.Service
 	imageSyncFn  func(contentID, contentType string) error
+	logger       *zap.Logger
 }
 
 // New creates a new notification service.
-func New(db *gorm.DB, cfgSvc *appconfigs.Service, webhookSvc *webhook.Service, barkSvc *bark.Service, subscribeSvc *subscribe.Service) *Service {
-	return &Service{
+func New(db *gorm.DB, cfgSvc *appconfigs.Service, webhookSvc *webhook.Service, barkSvc *bark.Service, subscribeSvc *subscribe.Service, opts ...Option) *Service {
+	s := &Service{
 		db:           db,
 		cfgSvc:       cfgSvc,
 		webhookSvc:   webhookSvc,
 		barkSvc:      barkSvc,
 		subscribeSvc: subscribeSvc,
+		logger:       zap.NewNop(),
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// Option configures a notification service.
+type Option func(*Service)
+
+// WithLogger sets the logger for the notification service.
+func WithLogger(l *zap.Logger) Option {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l.Named("NotifyService")
+		}
 	}
 }
 
@@ -72,7 +91,7 @@ func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) 
 	if sendOwnerEmail && cfg.MailOptions.Enable && masterMail != "" {
 		refTitle := s.getRefTitle(cm.RefType, cm.RefID)
 		articleURL := s.buildCommentURL(cfg, cm.RefType, cm.RefID, cm.ID)
-		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
+		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg), pkgmail.WithLogger(s.logger))
 		_ = sender.SendCommentNotify(masterMail, pkgmail.CommentNotifyData{
 			Title:       refTitle,
 			Content:     cm.Text,
@@ -108,7 +127,7 @@ func (s *Service) OnMasterReply(reply *models.CommentModel, parent *models.Comme
 		master, _, masterAvatar := s.getMasterInfo()
 		refTitle := s.getRefTitle(reply.RefType, reply.RefID)
 		articleURL := s.buildCommentURL(cfg, reply.RefType, reply.RefID, reply.ID)
-		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
+		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg), pkgmail.WithLogger(s.logger))
 		_ = sender.SendReplyNotify(parentMail, pkgmail.ReplyNotifyData{
 			Title:           refTitle,
 			OriginalContent: parent.Text,
@@ -190,7 +209,7 @@ func (s *Service) sendNewsletter(cfg *config.FullConfig, title, text, detailURL 
 		preview = preview[:300] + "..."
 	}
 
-	sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
+	sender := pkgmail.New(pkgmail.BuildMailConfig(cfg), pkgmail.WithLogger(s.logger))
 	for _, sub := range subs {
 		unsubBaseURL := s.buildSubscribeActionURL(cfg, "/subscribe/unsubscribe")
 		unsubURL := ""

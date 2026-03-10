@@ -13,6 +13,7 @@ import (
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -128,10 +129,27 @@ func (s *Service) GetSubscribers(bit int) ([]models.SubscribeModel, error) {
 type Handler struct {
 	svc    *Service
 	cfgSvc *appconfigs.Service
+	logger *zap.Logger
 }
 
-func NewHandler(svc *Service, cfgSvc *appconfigs.Service) *Handler {
-	return &Handler{svc: svc, cfgSvc: cfgSvc}
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service, opts ...HandlerOption) *Handler {
+	h := &Handler{svc: svc, cfgSvc: cfgSvc, logger: zap.NewNop()}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// HandlerOption configures a subscribe Handler.
+type HandlerOption func(*Handler)
+
+// WithLogger sets the logger for the subscribe handler.
+func WithLogger(l *zap.Logger) HandlerOption {
+	return func(h *Handler) {
+		if l != nil {
+			h.logger = l.Named("SubscribeService")
+		}
+	}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -203,7 +221,7 @@ func (h *Handler) sendVerifyEmail(to, token string) error {
 	}
 
 	mailCfg := pkgmail.BuildMailConfig(cfg)
-	sender := pkgmail.New(mailCfg)
+	sender := pkgmail.New(mailCfg, pkgmail.WithLogger(h.logger))
 	return sender.SendSubscribeVerify(to, pkgmail.SubscribeVerifyData{
 		VerifyURL: verifyURL,
 	})
