@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
@@ -82,6 +84,7 @@ func normalizeHTTPCacheOptions(opts HTTPCacheOptions) HTTPCacheOptions {
 
 func HTTPCache(rdb *redis.Client, opts HTTPCacheOptions) gin.HandlerFunc {
 	options := normalizeHTTPCacheOptions(opts)
+	logger := zap.L().Named("HTTPCache")
 	return func(c *gin.Context) {
 		if options.Disable || rdb == nil || c.Request.Method != http.MethodGet {
 			c.Next()
@@ -138,7 +141,13 @@ func HTTPCache(rdb *redis.Client, opts HTTPCacheOptions) gin.HandlerFunc {
 		if err != nil {
 			return
 		}
-		_ = rdb.Set(c.Request.Context(), cacheKey, raw, options.TTL).Err()
+		if err := rdb.Set(c.Request.Context(), cacheKey, raw, options.TTL).Err(); err != nil {
+			logger.Warn("failed to store cached response",
+				zap.String("key", cacheKey),
+				zap.String("path", c.Request.URL.Path),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
@@ -171,11 +180,24 @@ func PurgeHTTPCache(ctx context.Context, rdb *redis.Client) (int64, error) {
 
 func readCachedResponse(ctx context.Context, rdb *redis.Client, cacheKey string) (cachedHTTPResponse, bool) {
 	raw, err := rdb.Get(ctx, cacheKey).Bytes()
-	if err != nil || len(raw) == 0 {
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			zap.L().Named("HTTPCache").Warn("failed to read cached response",
+				zap.String("key", cacheKey),
+				zap.Error(err),
+			)
+		}
+		return cachedHTTPResponse{}, false
+	}
+	if len(raw) == 0 {
 		return cachedHTTPResponse{}, false
 	}
 	var payload cachedHTTPResponse
 	if err := json.Unmarshal(raw, &payload); err != nil {
+		zap.L().Named("HTTPCache").Warn("failed to decode cached response payload",
+			zap.String("key", cacheKey),
+			zap.Error(err),
+		)
 		return cachedHTTPResponse{}, false
 	}
 	if payload.Status <= 0 {
@@ -186,6 +208,10 @@ func readCachedResponse(ctx context.Context, rdb *redis.Client, cacheKey string)
 	}
 	body, err := base64.StdEncoding.DecodeString(payload.BodyBase64)
 	if err != nil {
+		zap.L().Named("HTTPCache").Warn("failed to decode cached response body",
+			zap.String("key", cacheKey),
+			zap.Error(err),
+		)
 		return cachedHTTPResponse{}, false
 	}
 	payload.Body = body

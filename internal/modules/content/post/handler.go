@@ -9,6 +9,7 @@ import (
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 )
 
 // Handler handles post HTTP requests.
@@ -100,7 +101,11 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		return
 	}
 
-	go func() { _ = h.svc.IncrementReadCount(post.ID) }()
+	go func() {
+		if err := h.svc.IncrementReadCount(post.ID); err != nil {
+			zap.L().Named("PostService").Warn("increment post read count failed", zap.String("id", post.ID), zap.Error(err))
+		}
+	}()
 
 	resp := toResponse(post)
 	h.applyMacros(&resp, isAdmin)
@@ -146,7 +151,11 @@ func (h *Handler) getByCategoryAndSlug(c *gin.Context) {
 		return
 	}
 
-	go func() { _ = h.svc.IncrementReadCount(post.ID) }()
+	go func() {
+		if err := h.svc.IncrementReadCount(post.ID); err != nil {
+			zap.L().Named("PostService").Warn("increment post read count failed", zap.String("id", post.ID), zap.Error(err))
+		}
+	}()
 
 	resp := toResponse(post)
 	h.applyMacros(&resp, isAdmin)
@@ -174,14 +183,16 @@ func (h *Handler) like(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	_ = h.svc.db.Create(&models.ActivityModel{
+	if err := h.svc.db.Create(&models.ActivityModel{
 		Type: "0",
 		Payload: map[string]interface{}{
 			"id":   id,
 			"type": "post",
 			"ip":   c.ClientIP(),
 		},
-	}).Error
+	}).Error; err != nil {
+		zap.L().Named("PostService").Warn("create post like activity failed", zap.String("id", id), zap.String("ip", c.ClientIP()), zap.Error(err))
+	}
 	response.NoContent(c)
 }
 

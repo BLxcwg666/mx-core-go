@@ -66,7 +66,11 @@ func (s *Service) SetImageSync(fn func(contentID, contentType string) error) {
 // It notifies the blog owner via email and Bark, and dispatches a webhook.
 func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) {
 	cfg, err := s.cfgSvc.Get()
-	if err != nil || cfg == nil {
+	if err != nil {
+		s.logger.Warn("load config for comment notification failed", zap.Error(err))
+		return
+	}
+	if cfg == nil {
 		return
 	}
 
@@ -84,7 +88,9 @@ func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) 
 		if len(body) > 100 {
 			body = body[:100] + "..."
 		}
-		_ = s.barkSvc.Push(title, body)
+		if err := s.barkSvc.Push(title, body); err != nil {
+			s.logger.Warn("comment bark notification failed", zap.String("author", cm.Author), zap.Error(err))
+		}
 	}
 
 	// Email notification to admin.
@@ -112,7 +118,11 @@ func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) 
 // It notifies the original commenter via email and dispatches a webhook.
 func (s *Service) OnMasterReply(reply *models.CommentModel, parent *models.CommentModel) {
 	cfg, err := s.cfgSvc.Get()
-	if err != nil || cfg == nil {
+	if err != nil {
+		s.logger.Warn("load config for reply notification failed", zap.Error(err))
+		return
+	}
+	if cfg == nil {
 		return
 	}
 
@@ -144,7 +154,11 @@ func (s *Service) OnMasterReply(reply *models.CommentModel, parent *models.Comme
 // It sends newsletters to subscribers and dispatches a webhook.
 func (s *Service) OnPostCreate(post *models.PostModel) {
 	cfg, err := s.cfgSvc.Get()
-	if err != nil || cfg == nil {
+	if err != nil {
+		s.logger.Warn("load config for post notification failed", zap.Error(err))
+		return
+	}
+	if cfg == nil {
 		return
 	}
 
@@ -154,7 +168,9 @@ func (s *Service) OnPostCreate(post *models.PostModel) {
 
 	// Sync images to S3 if configured.
 	if s.imageSyncFn != nil {
-		_ = s.imageSyncFn(post.ID, "post")
+		if err := s.imageSyncFn(post.ID, "post"); err != nil {
+			s.logger.Warn("post image sync failed", zap.String("id", post.ID), zap.Error(err))
+		}
 	}
 
 	detailURL := s.buildPostURL(cfg, post)
@@ -165,7 +181,11 @@ func (s *Service) OnPostCreate(post *models.PostModel) {
 // It sends newsletters to subscribers and dispatches a webhook.
 func (s *Service) OnNoteCreate(note *models.NoteModel) {
 	cfg, err := s.cfgSvc.Get()
-	if err != nil || cfg == nil {
+	if err != nil {
+		s.logger.Warn("load config for note notification failed", zap.Error(err))
+		return
+	}
+	if cfg == nil {
 		return
 	}
 
@@ -175,7 +195,9 @@ func (s *Service) OnNoteCreate(note *models.NoteModel) {
 
 	// Sync images to S3 if configured.
 	if s.imageSyncFn != nil {
-		_ = s.imageSyncFn(note.ID, "note")
+		if err := s.imageSyncFn(note.ID, "note"); err != nil {
+			s.logger.Warn("note image sync failed", zap.String("id", note.ID), zap.Error(err))
+		}
 	}
 
 	webURL := strings.TrimRight(cfg.URL.WebURL, "/")
@@ -197,7 +219,11 @@ func (s *Service) sendNewsletter(cfg *config.FullConfig, title, text, detailURL 
 		return
 	}
 	subs, err := s.subscribeSvc.GetSubscribers(bit)
-	if err != nil || len(subs) == 0 {
+	if err != nil {
+		s.logger.Warn("load subscribers failed", zap.Int("bit", bit), zap.Error(err))
+		return
+	}
+	if len(subs) == 0 {
 		return
 	}
 

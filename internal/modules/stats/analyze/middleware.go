@@ -6,11 +6,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // Middleware records each non-admin, non-bot public GET request as an analytics event.
 func Middleware(db *gorm.DB) gin.HandlerFunc {
+	logger := zap.L().Named("Analyze")
 	return func(c *gin.Context) {
 		c.Next() // handle request first to get status code
 
@@ -51,13 +53,15 @@ func Middleware(db *gorm.DB) gin.HandlerFunc {
 		referer := c.GetHeader("Referer")
 
 		go func() {
-			_ = db.Create(&models.AnalyzeModel{
+			if err := db.Create(&models.AnalyzeModel{
 				IP:        ip,
 				UA:        ua,
 				Path:      path,
 				Referer:   referer,
 				Timestamp: time.Now(),
-			}).Error
+			}).Error; err != nil {
+				logger.Warn("persist analyze event failed", zap.String("path", path), zap.String("ip", ip), zap.Error(err))
+			}
 		}()
 	}
 }

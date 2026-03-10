@@ -64,6 +64,7 @@ import (
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/response"
 	"github.com/mx-space/core/internal/pkg/taskqueue"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -136,6 +137,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Versioned API
 	api := r.Group(apiPrefix)
+	routesLogger := a.logger.Named("AppRoutes")
 	api.Use(middleware.OptionalAuth(db))
 	api.Use(middleware.HTTPCache(rc.Raw(), middleware.HTTPCacheOptions{
 		TTL:                    15 * time.Second,
@@ -192,6 +194,13 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 		date := time.Now().Format("2006-01-02")
 		key := fmt.Sprintf("mx:like_site:%s:%s", date, ip)
 		set, err := rc.Raw().SetNX(c.Request.Context(), key, 1, 24*time.Hour).Result()
+		if err != nil {
+			routesLogger.Warn("like dedupe redis check failed",
+				zap.String("ip", ip),
+				zap.String("key", key),
+				zap.Error(err),
+			)
+		}
 		if err == nil && !set {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": 0, "code": http.StatusBadRequest, "message": "already liked today"})
 			return
@@ -216,6 +225,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 		cfgSvc.Invalidate()
 		deleted, err := middleware.PurgeHTTPCache(c.Request.Context(), rc.Raw())
 		if err != nil {
+			routesLogger.Error("purge http cache failed", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"ok":      0,
 				"code":    http.StatusInternalServerError,
@@ -228,7 +238,9 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	api.GET("/clean_cache", authMW, cleanCache)
 	api.GET("/clean_catch", authMW, cleanCache) // legacy typo compatibility
 	api.GET("/clean_redis", authMW, func(c *gin.Context) {
-		rc.Raw().FlushDB(c.Request.Context())
+		if err := rc.Raw().FlushDB(c.Request.Context()).Err(); err != nil {
+			routesLogger.Error("flush redis failed", zap.Error(err))
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 

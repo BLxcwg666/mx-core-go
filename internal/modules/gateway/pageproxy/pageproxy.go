@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
+	"go.uber.org/zap"
 )
 
 // Handler serves locally bundled admin dashboard assets under /proxy/*.
@@ -70,6 +71,7 @@ func (h *Handler) proxyDispatchRoute(c *gin.Context) {
 func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
 	canAccess, err := h.checkCanAccessAdminProxy()
 	if err != nil {
+		h.logProxyError(c, "check admin proxy access", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -92,6 +94,7 @@ func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
 			})
 			return
 		}
+		h.logProxyError(c, "read admin entry", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -99,6 +102,7 @@ func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
 	html := string(content)
 	injected, err := h.injectAdminEnv(html)
 	if err != nil {
+		h.logProxyError(c, "inject admin env", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -109,6 +113,7 @@ func (h *Handler) getLocalBundledAdmin(c *gin.Context) {
 func (h *Handler) proxyLocalDev(c *gin.Context) {
 	urls, err := h.getURLs()
 	if err != nil {
+		h.logProxyError(c, "resolve proxy urls", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -148,6 +153,7 @@ func (h *Handler) proxyLocalDev(c *gin.Context) {
 func (h *Handler) proxyAssetRoute(c *gin.Context) {
 	canAccess, err := h.checkCanAccessAdminProxy()
 	if err != nil {
+		h.logProxyError(c, "check admin asset access", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -169,6 +175,7 @@ func (h *Handler) proxyAssetRoute(c *gin.Context) {
 func (h *Handler) proxyCompatAssetRoute(c *gin.Context) {
 	canAccess, err := h.checkCanAccessAdminProxy()
 	if err != nil {
+		h.logProxyError(c, "check compat admin asset access", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -205,11 +212,13 @@ func (h *Handler) serveAssetRelative(c *gin.Context, relative string) {
 
 	adminRoot, err := filepath.Abs(h.adminPath)
 	if err != nil {
+		h.logProxyError(c, "resolve admin root", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
 	targetPath, err := filepath.Abs(fullPath)
 	if err != nil {
+		h.logProxyError(c, "resolve target asset path", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -224,6 +233,7 @@ func (h *Handler) serveAssetRelative(c *gin.Context, relative string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		h.logProxyError(c, "stat admin asset", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
@@ -234,6 +244,18 @@ func (h *Handler) serveAssetRelative(c *gin.Context, relative string) {
 
 	c.Header("Cache-Control", "public, max-age=31536000")
 	c.File(targetPath)
+}
+
+func (h *Handler) logProxyError(c *gin.Context, operation string, err error) {
+	if err == nil {
+		return
+	}
+	zap.L().Named("PageProxy").Error("admin proxy operation failed",
+		zap.String("operation", operation),
+		zap.String("path", c.Request.URL.RequestURI()),
+		zap.String("admin_path", h.adminPath),
+		zap.Error(err),
+	)
 }
 
 type injectedURLs struct {

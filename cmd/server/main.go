@@ -49,6 +49,8 @@ func main() {
 			logger.Warn("native log pipeline unavailable, fallback to zap production logger", zap.Error(err))
 		}
 	}
+	undoGlobals := zap.ReplaceGlobals(logger)
+	defer undoGlobals()
 	defer logger.Sync()
 
 	if !*clusterEnabled && cfg.Cluster {

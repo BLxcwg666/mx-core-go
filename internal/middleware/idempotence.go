@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
@@ -51,6 +52,7 @@ var idempotenceRouteRules = []idempotenceRouteRule{
 
 // Idempotence returns a middleware that prevents duplicate requests for selected routes.
 func Idempotence(rdb *redis.Client) gin.HandlerFunc {
+	logger := zap.L().Named("Idempotence")
 	return func(c *gin.Context) {
 		if !shouldApplyIdempotence(c.Request.Method, c.Request.URL.Path) {
 			c.Next()
@@ -81,11 +83,23 @@ func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 		}
 
 		if !errors.Is(err, redis.Nil) {
+			logger.Warn("redis get failed, skipping idempotence check",
+				zap.String("key", redisKey),
+				zap.String("method", c.Request.Method),
+				zap.String("path", c.Request.URL.Path),
+				zap.Error(err),
+			)
 			c.Next()
 			return
 		}
 
 		if setErr := rdb.Set(ctx, redisKey, "0", idempotenceTTL).Err(); setErr != nil {
+			logger.Warn("failed to create pending idempotence key",
+				zap.String("key", redisKey),
+				zap.String("method", c.Request.Method),
+				zap.String("path", c.Request.URL.Path),
+				zap.Error(setErr),
+			)
 			c.Next()
 			return
 		}
@@ -94,9 +108,25 @@ func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		if status >= 200 && status < 300 {
-			rdb.Set(ctx, redisKey, "1", redis.KeepTTL)
+			if err := rdb.Set(ctx, redisKey, "1", redis.KeepTTL).Err(); err != nil {
+				logger.Warn("failed to mark idempotence key completed",
+					zap.String("key", redisKey),
+					zap.String("method", c.Request.Method),
+					zap.String("path", c.Request.URL.Path),
+					zap.Int("status", status),
+					zap.Error(err),
+				)
+			}
 		} else {
-			rdb.Del(ctx, redisKey)
+			if err := rdb.Del(ctx, redisKey).Err(); err != nil {
+				logger.Warn("failed to clear idempotence key",
+					zap.String("key", redisKey),
+					zap.String("method", c.Request.Method),
+					zap.String("path", c.Request.URL.Path),
+					zap.Int("status", status),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -77,7 +78,11 @@ func (h *Handler) getByNID(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
-	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
+	go func() {
+		if err := h.svc.IncrementReadCount(note.ID); err != nil {
+			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
+		}
+	}()
 	resp := toResponse(note)
 	h.applyMacros(&resp, isAdmin)
 	if isTruthy(c.Query("single")) {
@@ -117,7 +122,11 @@ func (h *Handler) getByID(c *gin.Context) {
 		response.ForbiddenMsg(c, "不要偷看人家的小心思啦~")
 		return
 	}
-	go func() { _ = h.svc.IncrementReadCount(note.ID) }()
+	go func() {
+		if err := h.svc.IncrementReadCount(note.ID); err != nil {
+			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
+		}
+	}()
 	resp := toResponse(note)
 	h.applyMacros(&resp, middleware.IsAuthenticated(c))
 	response.OK(c, resp)
@@ -211,14 +220,16 @@ func (h *Handler) like(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	_ = h.svc.db.Create(&models.ActivityModel{
+	if err := h.svc.db.Create(&models.ActivityModel{
 		Type: "0",
 		Payload: map[string]interface{}{
 			"id":   id,
 			"type": "note",
 			"ip":   c.ClientIP(),
 		},
-	}).Error
+	}).Error; err != nil {
+		zap.L().Named("NoteService").Warn("create note like activity failed", zap.String("id", id), zap.String("ip", c.ClientIP()), zap.Error(err))
+	}
 	response.NoContent(c)
 }
 

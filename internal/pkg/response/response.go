@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 var notFoundMessages = []string{
@@ -138,6 +139,14 @@ func MethodNotAllowed(c *gin.Context) {
 
 // InternalError sends a 500 error response.
 func InternalError(c *gin.Context, err error) {
+	if err != nil {
+		zap.L().Named("HTTPResponse").Error("request failed",
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.Request.URL.RequestURI()),
+			zap.String("ip", c.ClientIP()),
+			zap.Error(err),
+		)
+	}
 	c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"ok": 0, "code": http.StatusInternalServerError, "message": err.Error()})
 }
 

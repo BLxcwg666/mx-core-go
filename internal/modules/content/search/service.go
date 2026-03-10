@@ -373,6 +373,7 @@ func (s *Service) IndexAll() error {
 func (s *Service) IndexDocument(id, title, text, docType, slug string, nid int) {
 	client, err := s.ensureClient()
 	if err != nil {
+		s.logger.Warn("MeiliSearch client unavailable for incremental index", zap.String("id", id), zap.String("type", docType), zap.Error(err))
 		return
 	}
 	doc := map[string]interface{}{"id": id, "title": title, "text": text, "type": docType}
@@ -382,7 +383,9 @@ func (s *Service) IndexDocument(id, title, text, docType, slug string, nid int) 
 	if nid > 0 {
 		doc["nid"] = nid
 	}
-	_ = client.AddDocuments([]map[string]interface{}{doc})
+	if err := client.AddDocuments([]map[string]interface{}{doc}); err != nil {
+		s.logger.Warn("MeiliSearch incremental index failed", zap.String("id", id), zap.String("type", docType), zap.Error(err))
+	}
 }
 
 // GetAllDocuments returns all published documents (posts+notes+pages) as SearchResults.
@@ -427,7 +430,12 @@ func (s *Service) GetAllDocuments() ([]SearchResult, error) {
 
 // DeleteDocument removes a document from the index (call after delete).
 func (s *Service) DeleteDocument(id string) {
-	if client, err := s.ensureClient(); err == nil {
-		_ = client.DeleteDocument(id)
+	client, err := s.ensureClient()
+	if err != nil {
+		s.logger.Warn("MeiliSearch client unavailable for delete", zap.String("id", id), zap.Error(err))
+		return
+	}
+	if err := client.DeleteDocument(id); err != nil {
+		s.logger.Warn("MeiliSearch document delete failed", zap.String("id", id), zap.Error(err))
 	}
 }
