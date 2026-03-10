@@ -47,6 +47,9 @@ func Load(configPath string) (*AppConfig, error) {
 	if cfg.MeiliSearch.Port < 1 || cfg.MeiliSearch.Port > 65535 {
 		return nil, fmt.Errorf("invalid meilisearch.port %d in %q, expected 1-65535", cfg.MeiliSearch.Port, path)
 	}
+	if cfg.TrustedProxy.Enable && len(cfg.TrustedProxy.Proxies) == 0 {
+		return nil, fmt.Errorf("trusted_proxy.proxies in %q must contain at least one IP or CIDR when trusted_proxy.enable=true", path)
+	}
 
 	return &cfg, nil
 }
@@ -71,6 +74,9 @@ func defaultAppConfig() AppConfig {
 			Port: defaultRedisPort,
 			DB:   defaultRedisDB,
 		},
+		TrustedProxy: TrustedProxyRuntimeConfig{
+			Headers: []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"},
+		},
 		MeiliSearch: MeiliSearchRuntimeConfig{
 			Host:      defaultMeiliHost,
 			Port:      defaultMeiliPort,
@@ -79,6 +85,7 @@ func defaultAppConfig() AppConfig {
 	}
 	cfg.Database = normalizeDatabaseConfig(cfg.Database)
 	cfg.Redis = normalizeRedisConfig(cfg.Redis)
+	cfg.TrustedProxy = normalizeTrustedProxyConfig(cfg.TrustedProxy)
 	cfg.DSN = cfg.Database.DSNValue()
 	cfg.RedisURL = cfg.Redis.URLValue()
 	return cfg
@@ -142,6 +149,15 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	if raw.LogRotateKeep != nil {
 		v := *raw.LogRotateKeep
 		cfg.LogRotateKeep = &v
+	}
+	if raw.TrustedProxy.Enable != nil {
+		cfg.TrustedProxy.Enable = *raw.TrustedProxy.Enable
+	}
+	if raw.TrustedProxy.Headers != nil {
+		cfg.TrustedProxy.Headers = normalizeHeaderNames(raw.TrustedProxy.Headers)
+	}
+	if raw.TrustedProxy.Proxies != nil {
+		cfg.TrustedProxy.Proxies = normalizeStringList(raw.TrustedProxy.Proxies)
 	}
 
 	switch {
@@ -217,6 +233,7 @@ func applyRawAppConfig(cfg *AppConfig, raw rawAppConfig) {
 	cfg.RedisURL = cfg.Redis.URLValue()
 	cfg.MXAdmin = normalizeAdminAssetPath(cfg.MXAdmin)
 	cfg.Paths = normalizeRuntimePaths(cfg.Paths)
+	cfg.TrustedProxy = normalizeTrustedProxyConfig(cfg.TrustedProxy)
 
 	cfg.Env = normalizeEnv(cfg.Env)
 }

@@ -65,6 +65,24 @@ jwt_secret: YOUR_JWT_SECRET
 # Optional server timezone. Supports IANA names (e.g. Asia/Shanghai) or offsets (e.g. +08:00).
 timezone: Asia/Shanghai
 
+# Trusted reverse proxy strategy for resolving the real client IP.
+# - `enable`: when false, mx-core-go ignores forwarded client IP headers and only uses RemoteAddr.
+# - `headers`: checked from top to bottom; the first valid header wins.
+# - `proxies`: the immediate peer must match one of these IP/CIDR entries before any header is trusted.
+trusted_proxy:
+  enable: false
+  headers:
+    - CF-Connecting-IP
+    - X-Forwarded-For
+    - X-Real-IP
+  proxies: []
+  # proxies:
+  #   - 127.0.0.1
+  #   - ::1
+  #   - 10.0.0.0/8
+  #   - 172.16.0.0/12
+  #   - 192.168.0.0/16
+
 # Startup MeiliSearch defaults (runtime fallback when DB config fields are empty).
 meilisearch:
   # Optional but i recommend to use

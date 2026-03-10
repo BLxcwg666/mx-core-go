@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 func normalizeDatabaseConfig(cfg DatabaseRuntimeConfig) DatabaseRuntimeConfig {
 	cfg.DSN = strings.TrimSpace(cfg.DSN)
@@ -76,6 +79,15 @@ func normalizeRedisConfig(cfg RedisRuntimeConfig) RedisRuntimeConfig {
 	return cfg
 }
 
+func normalizeTrustedProxyConfig(cfg TrustedProxyRuntimeConfig) TrustedProxyRuntimeConfig {
+	cfg.Headers = normalizeHeaderNames(cfg.Headers)
+	if len(cfg.Headers) == 0 {
+		cfg.Headers = []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"}
+	}
+	cfg.Proxies = normalizeStringList(cfg.Proxies)
+	return cfg
+}
+
 func normalizeRedisRawURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -106,14 +118,7 @@ func normalizeMeiliConfig(cfg MeiliSearchRuntimeConfig) MeiliSearchRuntimeConfig
 }
 
 func normalizeOrigins(origins []string) []string {
-	out := make([]string, 0, len(origins))
-	for _, origin := range origins {
-		trimmed := strings.TrimSpace(origin)
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
+	return normalizeStringList(origins)
 }
 
 func normalizeEnv(env string) string {
@@ -152,4 +157,69 @@ func copyStringMap(input map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+func normalizeStringList(input []string) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
+	for _, item := range input {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeHeaderNames(headers []string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(headers))
+	seen := make(map[string]struct{}, len(headers))
+	for _, header := range headers {
+		canonical := normalizeHeaderName(strings.TrimSpace(header))
+		if canonical == "" {
+			continue
+		}
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeHeaderName(header string) string {
+	switch strings.ToLower(strings.TrimSpace(header)) {
+	case "":
+		return ""
+	case "cf-connecting-ip":
+		return "CF-Connecting-IP"
+	case "x-forwarded-for":
+		return "X-Forwarded-For"
+	case "x-real-ip":
+		return "X-Real-IP"
+	case "true-client-ip":
+		return "True-Client-IP"
+	case "fly-client-ip":
+		return "Fly-Client-IP"
+	default:
+		return http.CanonicalHeaderKey(header)
+	}
 }

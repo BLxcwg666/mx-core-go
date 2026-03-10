@@ -96,6 +96,9 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
+	if err := applyTrustedProxySettings(router, cfg); err != nil {
+		return nil, fmt.Errorf("trusted proxy settings: %w", err)
+	}
 	router.Use(middleware.Logger(logger, cfg.IsDev()))
 	router.Use(middleware.ErrorReporter(logger))
 	router.Use(middleware.Recovery(logger))

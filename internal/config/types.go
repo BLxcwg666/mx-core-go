@@ -2,22 +2,23 @@ package config
 
 // AppConfig holds runtime startup configuration loaded from YAML.
 type AppConfig struct {
-	Port           int                      `yaml:"port"`
-	DSN            string                   `yaml:"dsn"` // MySQL DSN
-	RedisURL       string                   `yaml:"redis_url"`
-	Database       DatabaseRuntimeConfig    `yaml:"database"`
-	Redis          RedisRuntimeConfig       `yaml:"redis"`
-	Env            string                   `yaml:"env"` // "development" | "production"
-	Cluster        bool                     `yaml:"cluster"`
-	ClusterWorkers int                      `yaml:"cluster_workers"`
-	MXAdmin        string                   `yaml:"mx-admin"`
-	Paths          RuntimePathsConfig       `yaml:"paths"`
-	LogRotateSize  *int                     `yaml:"log_rotate_size_mb"`
-	LogRotateKeep  *int                     `yaml:"log_rotate_keep"`
-	AllowedOrigins []string                 `yaml:"allowed_origins"`
-	JWTSecret      string                   `yaml:"jwt_secret"`
-	Timezone       string                   `yaml:"timezone"`
-	MeiliSearch    MeiliSearchRuntimeConfig `yaml:"meilisearch"`
+	Port           int                       `yaml:"port"`
+	DSN            string                    `yaml:"dsn"` // MySQL DSN
+	RedisURL       string                    `yaml:"redis_url"`
+	Database       DatabaseRuntimeConfig     `yaml:"database"`
+	Redis          RedisRuntimeConfig        `yaml:"redis"`
+	TrustedProxy   TrustedProxyRuntimeConfig `yaml:"trusted_proxy"`
+	Env            string                    `yaml:"env"` // "development" | "production"
+	Cluster        bool                      `yaml:"cluster"`
+	ClusterWorkers int                       `yaml:"cluster_workers"`
+	MXAdmin        string                    `yaml:"mx-admin"`
+	Paths          RuntimePathsConfig        `yaml:"paths"`
+	LogRotateSize  *int                      `yaml:"log_rotate_size_mb"`
+	LogRotateKeep  *int                      `yaml:"log_rotate_keep"`
+	AllowedOrigins []string                  `yaml:"allowed_origins"`
+	JWTSecret      string                    `yaml:"jwt_secret"`
+	Timezone       string                    `yaml:"timezone"`
+	MeiliSearch    MeiliSearchRuntimeConfig  `yaml:"meilisearch"`
 }
 
 type DatabaseRuntimeConfig struct {
@@ -48,6 +49,12 @@ type RedisRuntimeConfig struct {
 	Params   map[string]string `yaml:"params"`
 }
 
+type TrustedProxyRuntimeConfig struct {
+	Enable  bool     `yaml:"enable"`
+	Headers []string `yaml:"headers"`
+	Proxies []string `yaml:"proxies"`
+}
+
 type MeiliSearchRuntimeConfig struct {
 	Enable    bool   `yaml:"enable"`
 	HasEnable bool   `yaml:"-"`
@@ -65,56 +72,57 @@ type RuntimePathsConfig struct {
 }
 
 type rawAppConfig struct {
-	Port               int                  `yaml:"port"`
-	DSN                string               `yaml:"dsn"`
-	DatabaseURL        string               `yaml:"database_url"`
-	RedisURL           string               `yaml:"redis_url"`
-	Database           rawDatabaseConfig    `yaml:"database"`
-	Redis              rawRedisConfig       `yaml:"redis"`
-	DBHost             string               `yaml:"db_host"`
-	DBPort             int                  `yaml:"db_port"`
-	DBUser             string               `yaml:"db_user"`
-	DBPassword         string               `yaml:"db_password"`
-	DBName             string               `yaml:"db_name"`
-	DBCharset          string               `yaml:"db_charset"`
-	DBLoc              string               `yaml:"db_loc"`
-	DBParseTime        *bool                `yaml:"db_parse_time"`
-	RedisHost          string               `yaml:"redis_host"`
-	RedisPort          int                  `yaml:"redis_port"`
-	RedisUsername      string               `yaml:"redis_username"`
-	RedisPassword      string               `yaml:"redis_password"`
-	RedisDB            *int                 `yaml:"redis_db"`
-	RedisTLS           *bool                `yaml:"redis_tls"`
-	Env                string               `yaml:"env"`
-	NodeEnv            string               `yaml:"node_env"`
-	Cluster            *bool                `yaml:"cluster"`
-	ClusterWorkers     int                  `yaml:"cluster_workers"`
-	MXAdmin            string               `yaml:"mx-admin"`
-	MXAdminSnake       string               `yaml:"mx_admin"`
-	Paths              rawPathsConfig       `yaml:"paths"`
-	LogDir             string               `yaml:"log_dir"`
-	LogsDir            string               `yaml:"logs_dir"`
-	LogRotateSize      *int                 `yaml:"log_rotate_size_mb"`
-	LogRotateKeep      *int                 `yaml:"log_rotate_keep"`
-	BackupDir          string               `yaml:"backup_dir"`
-	BackupsDir         string               `yaml:"backups_dir"`
-	StaticDir          string               `yaml:"static_dir"`
-	StaticsDir         string               `yaml:"statics_dir"`
-	AllowedOrigins     []string             `yaml:"allowed_origins"`
-	CORSAllowedOrigins []string             `yaml:"cors_allowed_origins"`
-	JWTSecret          string               `yaml:"jwt_secret"`
-	JWTSecretLegacy    string               `yaml:"jwtsecret"`
-	Timezone           string               `yaml:"timezone"`
-	TimeZone           string               `yaml:"time_zone"`
-	TZ                 string               `yaml:"tz"`
-	MeiliSearch        rawMeiliSearchConfig `yaml:"meilisearch"`
-	MeiliEnable        *bool                `yaml:"meili_enable"`
-	MeiliURL           string               `yaml:"meili_url"`
-	MeiliHost          string               `yaml:"meili_host"`
-	MeiliPort          int                  `yaml:"meili_port"`
-	MeiliAPIKey        string               `yaml:"meili_api_key"`
-	MeiliMasterKey     string               `yaml:"meili_master_key"`
-	MeiliIndexName     string               `yaml:"meili_index_name"`
+	Port               int                   `yaml:"port"`
+	DSN                string                `yaml:"dsn"`
+	DatabaseURL        string                `yaml:"database_url"`
+	RedisURL           string                `yaml:"redis_url"`
+	Database           rawDatabaseConfig     `yaml:"database"`
+	Redis              rawRedisConfig        `yaml:"redis"`
+	TrustedProxy       rawTrustedProxyConfig `yaml:"trusted_proxy"`
+	DBHost             string                `yaml:"db_host"`
+	DBPort             int                   `yaml:"db_port"`
+	DBUser             string                `yaml:"db_user"`
+	DBPassword         string                `yaml:"db_password"`
+	DBName             string                `yaml:"db_name"`
+	DBCharset          string                `yaml:"db_charset"`
+	DBLoc              string                `yaml:"db_loc"`
+	DBParseTime        *bool                 `yaml:"db_parse_time"`
+	RedisHost          string                `yaml:"redis_host"`
+	RedisPort          int                   `yaml:"redis_port"`
+	RedisUsername      string                `yaml:"redis_username"`
+	RedisPassword      string                `yaml:"redis_password"`
+	RedisDB            *int                  `yaml:"redis_db"`
+	RedisTLS           *bool                 `yaml:"redis_tls"`
+	Env                string                `yaml:"env"`
+	NodeEnv            string                `yaml:"node_env"`
+	Cluster            *bool                 `yaml:"cluster"`
+	ClusterWorkers     int                   `yaml:"cluster_workers"`
+	MXAdmin            string                `yaml:"mx-admin"`
+	MXAdminSnake       string                `yaml:"mx_admin"`
+	Paths              rawPathsConfig        `yaml:"paths"`
+	LogDir             string                `yaml:"log_dir"`
+	LogsDir            string                `yaml:"logs_dir"`
+	LogRotateSize      *int                  `yaml:"log_rotate_size_mb"`
+	LogRotateKeep      *int                  `yaml:"log_rotate_keep"`
+	BackupDir          string                `yaml:"backup_dir"`
+	BackupsDir         string                `yaml:"backups_dir"`
+	StaticDir          string                `yaml:"static_dir"`
+	StaticsDir         string                `yaml:"statics_dir"`
+	AllowedOrigins     []string              `yaml:"allowed_origins"`
+	CORSAllowedOrigins []string              `yaml:"cors_allowed_origins"`
+	JWTSecret          string                `yaml:"jwt_secret"`
+	JWTSecretLegacy    string                `yaml:"jwtsecret"`
+	Timezone           string                `yaml:"timezone"`
+	TimeZone           string                `yaml:"time_zone"`
+	TZ                 string                `yaml:"tz"`
+	MeiliSearch        rawMeiliSearchConfig  `yaml:"meilisearch"`
+	MeiliEnable        *bool                 `yaml:"meili_enable"`
+	MeiliURL           string                `yaml:"meili_url"`
+	MeiliHost          string                `yaml:"meili_host"`
+	MeiliPort          int                   `yaml:"meili_port"`
+	MeiliAPIKey        string                `yaml:"meili_api_key"`
+	MeiliMasterKey     string                `yaml:"meili_master_key"`
+	MeiliIndexName     string                `yaml:"meili_index_name"`
 }
 
 type rawDatabaseConfig struct {
@@ -143,6 +151,12 @@ type rawRedisConfig struct {
 	TLS      *bool             `yaml:"tls"`
 	Scheme   string            `yaml:"scheme"`
 	Params   map[string]string `yaml:"params"`
+}
+
+type rawTrustedProxyConfig struct {
+	Enable  *bool    `yaml:"enable"`
+	Headers []string `yaml:"headers"`
+	Proxies []string `yaml:"proxies"`
 }
 
 type rawMeiliSearchConfig struct {
