@@ -96,7 +96,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
-	router.Use(middleware.Logger(logger))
+	router.Use(middleware.Logger(logger, cfg.IsDev()))
 	router.Use(middleware.ErrorReporter(logger))
 	router.Use(middleware.Recovery(logger))
 

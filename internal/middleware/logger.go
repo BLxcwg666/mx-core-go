@@ -10,9 +10,14 @@ import (
 )
 
 // Logger returns a Gin middleware that logs each request
-func Logger(log *zap.Logger) gin.HandlerFunc {
+func Logger(log *zap.Logger, isDev bool) gin.HandlerFunc {
 	named := log.Named("LoggingInterceptor")
 	return func(c *gin.Context) {
+		if !isDev {
+			c.Next()
+			return
+		}
+
 		start := time.Now()
 		path := c.Request.URL.Path
 		if raw := c.Request.URL.RawQuery; raw != "" {
