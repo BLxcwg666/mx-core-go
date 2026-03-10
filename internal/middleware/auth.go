@@ -76,6 +76,9 @@ func ValidateTokenClaims(db *gorm.DB, rawToken string) (*jwt.Claims, error) {
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(claims.UserID) == "" {
+		return nil, errors.New("invalid token user")
+	}
 	active, err := sessionpkg.IsActive(db, claims.UserID, claims.SessionID)
 	if err != nil {
 		return nil, err

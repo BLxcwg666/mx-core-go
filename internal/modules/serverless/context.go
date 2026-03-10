@@ -59,7 +59,7 @@ func (h *Handler) buildRuntimeContext(c *gin.Context, snippet *models.SnippetMod
 		URL:             urlText,
 		IP:              ip,
 		Body:            body,
-		IsAuthenticated: hasFunctionAccess(c),
+		IsAuthenticated: h.hasFunctionAccess(c),
 		Secret:          parseSnippetSecret(snippet.Secret),
 		Model: map[string]interface{}{
 			"id":        snippet.ID,

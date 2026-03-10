@@ -11,7 +11,6 @@ import (
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -144,7 +143,7 @@ func (h *Handler) run(c *gin.Context) {
 		response.BadRequest(c, "函数已被禁用")
 		return
 	}
-	if snippet.Private && !hasFunctionAccess(c) {
+	if snippet.Private && !h.hasFunctionAccess(c) {
 		response.ForbiddenMsg(c, "没有权限运行该函数")
 		return
 	}
@@ -167,7 +166,7 @@ func (h *Handler) run(c *gin.Context) {
 	h.writeServerlessResponse(c, out)
 }
 
-func hasFunctionAccess(c *gin.Context) bool {
+func (h *Handler) hasFunctionAccess(c *gin.Context) bool {
 	if middleware.IsAuthenticated(c) {
 		return true
 	}
@@ -178,6 +177,6 @@ func hasFunctionAccess(c *gin.Context) bool {
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		token = strings.TrimSpace(token[7:])
 	}
-	_, err := jwtpkg.Parse(token)
+	_, err := middleware.ValidateTokenClaims(h.db, token)
 	return err == nil
 }

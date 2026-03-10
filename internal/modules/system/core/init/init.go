@@ -88,6 +88,11 @@ func (h *Handler) patchConfigKey(c *gin.Context) {
 
 // POST /init/restore — upload and restore from backup ZIP
 func (h *Handler) restore(c *gin.Context) {
+	if isInitialized(h.db) {
+		response.ForbiddenMsg(c, "已经完成初始化，请登录后恢复备份")
+		return
+	}
+
 	file, err := c.FormFile("file")
 	if err != nil {
 		response.BadRequest(c, "missing file")

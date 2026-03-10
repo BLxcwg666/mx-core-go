@@ -16,6 +16,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	jwtSecretPlaceholder = "YOUR_JWT_SECRET"
+	jwtSecretBuiltIn     = "YOUR_JWT_SECRET"
+)
+
 func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 	_ = os.Setenv(nativelog.EnvLogDir, cfg.LogDir())
 	if sizeMB, ok := cfg.LogRotateSizeMB(); ok {
@@ -27,12 +32,25 @@ func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 	_ = os.Setenv(backup.EnvBackupDir, cfg.BackupDir())
 	_ = os.Setenv(file.EnvStaticDir, cfg.StaticDir())
 
-	if secret := strings.TrimSpace(cfg.JWTSecret); secret != "" {
-		jwtpkg.SetSecret(secret)
-	} else {
+	secret := strings.TrimSpace(cfg.JWTSecret)
+	switch {
+	case secret == "":
+		if !cfg.IsDev() {
+			return fmt.Errorf("jwt_secret must be set in production")
+		}
 		if cluster.ShouldLogBootstrap() {
 			logger.Warn("jwt_secret is empty, using built-in default secret")
 		}
+	case secret == jwtSecretPlaceholder || secret == jwtSecretBuiltIn:
+		if !cfg.IsDev() {
+			return fmt.Errorf("jwt_secret must be changed from the default placeholder before running in production")
+		}
+		jwtpkg.SetSecret(secret)
+		if cluster.ShouldLogBootstrap() {
+			logger.Warn("jwt_secret is using a development placeholder value")
+		}
+	default:
+		jwtpkg.SetSecret(secret)
 	}
 
 	tz := strings.TrimSpace(cfg.Timezone)
