@@ -17,6 +17,7 @@ import (
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/database"
 	"github.com/mx-space/core/internal/pkg/cluster"
+	"github.com/mx-space/core/internal/pkg/httpserver"
 	"github.com/mx-space/core/internal/pkg/nativelog"
 	"github.com/mx-space/core/internal/pkg/prettylog"
 	"github.com/mx-space/core/internal/pkg/proctitle"
@@ -92,10 +93,7 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 		return fmt.Errorf("initialize app: %w", err)
 	}
 
-	srv := &http.Server{
-		Addr:    application.Addr(),
-		Handler: application.Router(),
-	}
+	srv := httpserver.New(application.Addr(), application.Router())
 
 	useReusePort := clusterEnabled && cluster.IsWorker() && cluster.WorkerListenAddr() == ""
 	listenAddr := srv.Addr

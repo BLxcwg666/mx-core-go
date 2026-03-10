@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mx-space/core/internal/pkg/httpserver"
 	"go.uber.org/zap"
 )
 
@@ -117,10 +118,7 @@ func runMasterWindows(logger *zap.Logger, requestedWorkers int, listenAddr strin
 	}
 	proxyHandler := buildProxyHandler(targetPicker, logger)
 
-	srv := &http.Server{
-		Addr:    listenAddr,
-		Handler: proxyHandler,
-	}
+	srv := httpserver.New(listenAddr, proxyHandler)
 
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
