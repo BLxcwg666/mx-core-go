@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
@@ -44,7 +45,7 @@ func (s *Service) SetImageSync(fn func(contentID, contentType string) error) {
 
 // OnCommentCreate is called when a non-admin user creates a comment.
 // It notifies the blog owner via email and Bark, and dispatches a webhook.
-func (s *Service) OnCommentCreate(cm *models.CommentModel) {
+func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) {
 	cfg, err := s.cfgSvc.Get()
 	if err != nil || cfg == nil {
 		return
@@ -68,9 +69,9 @@ func (s *Service) OnCommentCreate(cm *models.CommentModel) {
 	}
 
 	// Email notification to admin.
-	if cfg.MailOptions.Enable && masterMail != "" {
+	if sendOwnerEmail && cfg.MailOptions.Enable && masterMail != "" {
 		refTitle := s.getRefTitle(cm.RefType, cm.RefID)
-		articleURL := s.buildRefURL(cfg, cm.RefType, cm.RefID)
+		articleURL := s.buildCommentURL(cfg, cm.RefType, cm.RefID, cm.ID)
 		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
 		_ = sender.SendCommentNotify(masterMail, pkgmail.CommentNotifyData{
 			Title:       refTitle,
@@ -106,7 +107,7 @@ func (s *Service) OnMasterReply(reply *models.CommentModel, parent *models.Comme
 	if cfg.MailOptions.Enable && parentMail != "" {
 		master, _, masterAvatar := s.getMasterInfo()
 		refTitle := s.getRefTitle(reply.RefType, reply.RefID)
-		articleURL := s.buildRefURL(cfg, reply.RefType, reply.RefID)
+		articleURL := s.buildCommentURL(cfg, reply.RefType, reply.RefID, reply.ID)
 		sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
 		_ = sender.SendReplyNotify(parentMail, pkgmail.ReplyNotifyData{
 			Title:           refTitle,
@@ -160,6 +161,12 @@ func (s *Service) OnNoteCreate(note *models.NoteModel) {
 
 	webURL := strings.TrimRight(cfg.URL.WebURL, "/")
 	detailURL := fmt.Sprintf("%s/notes/%d", webURL, note.NID)
+	if strings.TrimSpace(note.Password) != "" {
+		return
+	}
+	if note.PublicAt != nil && note.PublicAt.After(time.Now()) {
+		return
+	}
 	s.sendNewsletter(cfg, note.Title, note.Text, detailURL, subscribe.SubscribeNoteCreateBit)
 }
 
@@ -176,7 +183,6 @@ func (s *Service) sendNewsletter(cfg *config.FullConfig, title, text, detailURL 
 	}
 
 	master, _, masterAvatar := s.getMasterInfo()
-	webURL := strings.TrimRight(cfg.URL.WebURL, "/")
 
 	// Truncate text for newsletter preview.
 	preview := text
@@ -186,7 +192,11 @@ func (s *Service) sendNewsletter(cfg *config.FullConfig, title, text, detailURL 
 
 	sender := pkgmail.New(pkgmail.BuildMailConfig(cfg))
 	for _, sub := range subs {
-		unsubURL := fmt.Sprintf("%s/api/v2/subscribe/unsubscribe?token=%s", webURL, sub.CancelToken)
+		unsubBaseURL := s.buildSubscribeActionURL(cfg, "/subscribe/unsubscribe")
+		unsubURL := ""
+		if unsubBaseURL != "" {
+			unsubURL = fmt.Sprintf("%s?token=%s", unsubBaseURL, sub.CancelToken)
+		}
 		_ = sender.SendNewsletter(sub.Email, pkgmail.NewsletterData{
 			OwnerName:      master,
 			OwnerAvatar:    masterAvatar,
@@ -197,6 +207,14 @@ func (s *Service) sendNewsletter(cfg *config.FullConfig, title, text, detailURL 
 			SiteName:       cfg.SEO.Title,
 		})
 	}
+}
+
+func (s *Service) buildCommentURL(cfg *config.FullConfig, refType models.RefType, refID, commentID string) string {
+	articleURL := s.buildRefURL(cfg, refType, refID)
+	if articleURL == "" || strings.TrimSpace(commentID) == "" {
+		return articleURL
+	}
+	return articleURL + "#comments-" + commentID
 }
 
 // getMasterInfo returns (name, mail, avatar) for the first registered user (the master).
@@ -287,4 +305,24 @@ func (s *Service) buildPostURL(cfg *config.FullConfig, post *models.PostModel) s
 		categorySlug = "uncategorized"
 	}
 	return fmt.Sprintf("%s/posts/%s/%s", webURL, categorySlug, post.Slug)
+}
+
+func (s *Service) buildSubscribeActionURL(cfg *config.FullConfig, path string) string {
+	if cfg == nil {
+		return ""
+	}
+	baseURL := strings.TrimRight(firstNonEmpty(cfg.URL.ServerURL, cfg.URL.WebURL), "/")
+	if baseURL == "" {
+		return ""
+	}
+	return baseURL + "/api/v2" + path
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }

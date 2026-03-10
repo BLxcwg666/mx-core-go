@@ -589,7 +589,7 @@ func (h *Handler) create(c *gin.Context) {
 	h.fillAvatarForComment(cm)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
-		go h.notifySvc.OnCommentCreate(cm)
+		go h.notifySvc.OnCommentCreate(cm, true)
 	}
 	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	response.Created(c, toResponse(cm, false))
@@ -731,7 +731,7 @@ func (h *Handler) reply(c *gin.Context) {
 	isAuthenticated := middleware.IsAuthenticated(c)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
-		go h.notifySvc.OnCommentCreate(cm)
+		go h.notifySvc.OnCommentCreate(cm, !h.shouldAuditComment())
 	}
 	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	payload, err := h.buildReplyPayload(cm.ID, false)
@@ -920,7 +920,7 @@ func (h *Handler) createOnRef(c *gin.Context) {
 	h.fillAvatarForComment(cm)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
-		go h.notifySvc.OnCommentCreate(cm)
+		go h.notifySvc.OnCommentCreate(cm, true)
 	}
 	h.emitCommentCreate(cm, isAuthenticated, isSpam)
 	response.Created(c, toResponse(cm, false))

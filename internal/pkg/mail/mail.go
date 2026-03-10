@@ -32,6 +32,7 @@ type Message struct {
 	Subject string
 	HTML    string
 	Text    string
+	Headers map[string]string
 }
 
 // Sender sends emails via SMTP or Resend.
@@ -92,16 +93,48 @@ func (s *Sender) sendSMTP(msg Message) error {
 	}
 
 	var body bytes.Buffer
+	writeHeader := func(key, value string) {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return
+		}
+		body.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
+	}
 	body.WriteString("MIME-Version: 1.0\r\n")
 	body.WriteString(fmt.Sprintf("From: %s\r\n", from))
 	body.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(msg.To, ", ")))
 	body.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
-	body.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	if s.cfg.ReplyTo != "" {
-		body.WriteString(fmt.Sprintf("Reply-To: %s\r\n", s.cfg.ReplyTo))
+		writeHeader("Reply-To", s.cfg.ReplyTo)
 	}
-	body.WriteString("\r\n")
-	body.WriteString(msg.HTML)
+	for key, value := range msg.Headers {
+		writeHeader(key, value)
+	}
+	hasHTML := strings.TrimSpace(msg.HTML) != ""
+	hasText := strings.TrimSpace(msg.Text) != ""
+	if hasHTML && hasText {
+		boundary := fmt.Sprintf("mix-space-%d", time.Now().UnixNano())
+		body.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=%q\r\n", boundary))
+		body.WriteString("\r\n")
+		body.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		body.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		body.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+		body.WriteString(msg.Text)
+		body.WriteString("\r\n")
+		body.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		body.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		body.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+		body.WriteString(msg.HTML)
+		body.WriteString("\r\n")
+		body.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	} else if hasHTML {
+		body.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		body.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+		body.WriteString(msg.HTML)
+	} else {
+		body.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+		body.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+		body.WriteString(msg.Text)
+	}
 
 	auth := smtp.PlainAuth("", s.cfg.User, s.cfg.Pass, host)
 	return smtp.SendMail(addr, auth, from, msg.To, body.Bytes())
@@ -114,12 +147,21 @@ func (s *Sender) sendResend(msg Message) error {
 		from = s.cfg.User
 	}
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payloadBody := map[string]interface{}{
 		"from":    from,
 		"to":      msg.To,
 		"subject": msg.Subject,
-		"html":    msg.HTML,
-	})
+	}
+	if strings.TrimSpace(msg.HTML) != "" {
+		payloadBody["html"] = msg.HTML
+	}
+	if strings.TrimSpace(msg.Text) != "" {
+		payloadBody["text"] = msg.Text
+	}
+	if len(msg.Headers) > 0 {
+		payloadBody["headers"] = msg.Headers
+	}
+	payload, _ := json.Marshal(payloadBody)
 
 	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewReader(payload))
 	if err != nil {
@@ -416,9 +458,16 @@ func (s *Sender) SendNewsletter(to string, data NewsletterData) error {
 	if err != nil {
 		return err
 	}
+	var headers map[string]string
+	if strings.TrimSpace(data.UnsubscribeURL) != "" {
+		headers = map[string]string{
+			"List-Unsubscribe": fmt.Sprintf("<%s>", data.UnsubscribeURL),
+		}
+	}
 	return s.Send(Message{
 		To:      []string{to},
 		Subject: fmt.Sprintf("[%s] 发布了新内容~", siteName),
 		HTML:    html,
+		Headers: headers,
 	})
 }

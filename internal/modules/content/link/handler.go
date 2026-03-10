@@ -332,7 +332,7 @@ func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkSt
 		URL:        l.URL,
 		StateLabel: stateLabel,
 		Reason:     reason,
-	})
+	}, buildLinkAuditText(stateLabel, reason))
 }
 
 func (h *Handler) sendPassNotification(l *models.LinkModel) {
@@ -340,7 +340,7 @@ func (h *Handler) sendPassNotification(l *models.LinkModel) {
 		Name:        l.Name,
 		URL:         l.URL,
 		Description: l.Description,
-	})
+	}, buildLinkPassText(l))
 }
 
 func (h *Handler) sendApplyNotification(l *models.LinkModel, authorName string) {
@@ -371,10 +371,10 @@ func (h *Handler) sendApplyNotification(l *models.LinkModel, authorName string) 
 		Name:        l.Name,
 		URL:         l.URL,
 		Description: l.Description,
-	})
+	}, buildLinkApplyText(authorName, l))
 }
 
-func (h *Handler) sendLinkNotification(to, subject, tplText string, data any) error {
+func (h *Handler) sendLinkNotification(to, subject, tplText string, data any, plainText string) error {
 	if h.cfgSvc == nil || strings.TrimSpace(to) == "" {
 		return nil
 	}
@@ -382,10 +382,10 @@ func (h *Handler) sendLinkNotification(to, subject, tplText string, data any) er
 	if err != nil || cfg == nil || !cfg.MailOptions.Enable {
 		return err
 	}
-	return h.sendLinkNotificationWithConfig(cfg, to, subject, tplText, data)
+	return h.sendLinkNotificationWithConfig(cfg, to, subject, tplText, data, plainText)
 }
 
-func (h *Handler) sendLinkNotificationWithConfig(cfg *coreconfig.FullConfig, to, subject, tplText string, data any) error {
+func (h *Handler) sendLinkNotificationWithConfig(cfg *coreconfig.FullConfig, to, subject, tplText string, data any, plainText string) error {
 	if cfg == nil || strings.TrimSpace(to) == "" {
 		return nil
 	}
@@ -402,5 +402,28 @@ func (h *Handler) sendLinkNotificationWithConfig(cfg *coreconfig.FullConfig, to,
 		To:      []string{to},
 		Subject: subject,
 		HTML:    buf.String(),
+		Text:    plainText,
 	})
+}
+
+func buildLinkAuditText(stateLabel, reason string) string {
+	text := "申请结果：" + stateLabel
+	if trimmedReason := strings.TrimSpace(reason); trimmedReason != "" {
+		text += "\n原因：" + trimmedReason
+	}
+	return text
+}
+
+func buildLinkPassText(l *models.LinkModel) string {
+	if l == nil {
+		return ""
+	}
+	return fmt.Sprintf("你的友链申请：%s, %s 已通过", l.Name, l.URL)
+}
+
+func buildLinkApplyText(authorName string, l *models.LinkModel) string {
+	if l == nil {
+		return ""
+	}
+	return fmt.Sprintf("来自 %s 的友链请求：\n站点标题：%s\n站点网站：%s\n站点描述：%s", authorName, l.Name, l.URL, l.Description)
 }
