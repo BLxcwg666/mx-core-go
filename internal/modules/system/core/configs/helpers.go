@@ -161,6 +161,9 @@ func normalizeMailOptions(v interface{}) interface{} {
 	if secure, ok := smtpMap["secure"]; ok {
 		optionsMap["secure"] = secure
 	}
+	if socks5, ok := smtpMap["socks5"]; ok {
+		optionsMap["socks5"] = socks5
+	}
 
 	if len(optionsMap) > 0 {
 		smtpMap["options"] = optionsMap
@@ -169,6 +172,7 @@ func normalizeMailOptions(v interface{}) interface{} {
 	delete(smtpMap, "host")
 	delete(smtpMap, "port")
 	delete(smtpMap, "secure")
+	delete(smtpMap, "socks5")
 
 	mailMap["smtp"] = smtpMap
 	return mailMap

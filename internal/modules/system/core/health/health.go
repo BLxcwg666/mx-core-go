@@ -88,20 +88,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, sched *cron.Scheduler, cfg
 			return
 		}
 
-		mailCfg := pkgmail.Config{
-			Enable: cfg.MailOptions.Enable,
-			From:   cfg.MailOptions.From,
-		}
-		if cfg.MailOptions.SMTP != nil {
-			mailCfg.Host = cfg.MailOptions.SMTP.Options.Host
-			mailCfg.Port = cfg.MailOptions.SMTP.Options.Port
-			mailCfg.User = cfg.MailOptions.SMTP.User
-			mailCfg.Pass = cfg.MailOptions.SMTP.Pass
-		}
-		if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" {
-			mailCfg.UseResend = true
-			mailCfg.ResendKey = cfg.MailOptions.Resend.APIKey
-		}
+		mailCfg := pkgmail.BuildMailConfig(cfg)
 
 		var owner struct{ Mail string }
 		db.Table("users").Select("mail").Scan(&owner)

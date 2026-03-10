@@ -2,28 +2,42 @@ package mail
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	stdmail "net/mail"
 	"net/smtp"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/net/proxy"
 )
 
 // Config holds mail provider settings (matches FullConfig.Mail).
 type Config struct {
-	Enable    bool   `json:"enable"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	User      string `json:"user"`
-	Pass      string `json:"pass"`
-	From      string `json:"from"`
-	ReplyTo   string `json:"reply_to"`
-	UseResend bool   `json:"use_resend"`
-	ResendKey string `json:"resend_key"`
+	Enable    bool               `json:"enable"`
+	Host      string             `json:"host"`
+	Port      int                `json:"port"`
+	Secure    bool               `json:"secure"`
+	User      string             `json:"user"`
+	Pass      string             `json:"pass"`
+	From      string             `json:"from"`
+	ReplyTo   string             `json:"reply_to"`
+	Socks5    *SOCKS5ProxyConfig `json:"socks5,omitempty"`
+	UseResend bool               `json:"use_resend"`
+	ResendKey string             `json:"resend_key"`
+}
+
+type SOCKS5ProxyConfig struct {
+	Enable bool   `json:"enable"`
+	Host   string `json:"host"`
+	Port   int    `json:"port"`
+	User   string `json:"user"`
+	Pass   string `json:"pass"`
 }
 
 // Message is a single email to send.
@@ -78,20 +92,91 @@ func (s *Sender) Send(msg Message) error {
 	return err
 }
 
-// sendSMTP sends via net/smtp.
+// sendSMTP sends via SMTP and supports implicit TLS / SOCKS5 proxy.
 func (s *Sender) sendSMTP(msg Message) error {
-	host := s.cfg.Host
+	host := strings.TrimSpace(s.cfg.Host)
+	if host == "" {
+		return fmt.Errorf("smtp host is required")
+	}
 	port := s.cfg.Port
 	if port == 0 {
-		port = 587
+		if s.cfg.Secure {
+			port = 465
+		} else {
+			port = 587
+		}
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 
-	from := s.cfg.From
-	if from == "" {
-		from = s.cfg.User
+	fromHeader := strings.TrimSpace(s.cfg.From)
+	if fromHeader == "" {
+		fromHeader = strings.TrimSpace(s.cfg.User)
+	}
+	if fromHeader == "" {
+		return fmt.Errorf("smtp from address is required")
+	}
+	recipients := normalizeRecipients(msg.To)
+	if len(recipients) == 0 {
+		return fmt.Errorf("email recipient is required")
+	}
+	envelopeFrom := envelopeAddress(fromHeader)
+	body := buildMessageBytes(fromHeader, recipients, msg, s.cfg.ReplyTo)
+
+	conn, err := s.dialSMTP(addr, host)
+	if err != nil {
+		return s.friendlySMTPError(err, port)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return s.friendlySMTPError(err, port)
+	}
+	defer client.Close()
+
+	if !s.cfg.Secure {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return s.friendlySMTPError(err, port)
+			}
+		}
 	}
 
+	if strings.TrimSpace(s.cfg.User) != "" {
+		if ok, _ := client.Extension("AUTH"); !ok {
+			return s.friendlySMTPError(fmt.Errorf("smtp server does not support AUTH"), port)
+		}
+		auth := smtp.PlainAuth("", s.cfg.User, s.cfg.Pass, host)
+		if err := client.Auth(auth); err != nil {
+			return s.friendlySMTPError(err, port)
+		}
+	}
+
+	if err := client.Mail(envelopeFrom); err != nil {
+		return s.friendlySMTPError(err, port)
+	}
+	for _, to := range recipients {
+		if err := client.Rcpt(to); err != nil {
+			return s.friendlySMTPError(err, port)
+		}
+	}
+	wc, err := client.Data()
+	if err != nil {
+		return s.friendlySMTPError(err, port)
+	}
+	if _, err := wc.Write(body); err != nil {
+		_ = wc.Close()
+		return s.friendlySMTPError(err, port)
+	}
+	if err := wc.Close(); err != nil {
+		return s.friendlySMTPError(err, port)
+	}
+	if err := client.Quit(); err != nil {
+		return s.friendlySMTPError(err, port)
+	}
+	return nil
+}
+
+func buildMessageBytes(from string, to []string, msg Message, replyTo string) []byte {
 	var body bytes.Buffer
 	writeHeader := func(key, value string) {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
@@ -101,10 +186,10 @@ func (s *Sender) sendSMTP(msg Message) error {
 	}
 	body.WriteString("MIME-Version: 1.0\r\n")
 	body.WriteString(fmt.Sprintf("From: %s\r\n", from))
-	body.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(msg.To, ", ")))
+	body.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(to, ", ")))
 	body.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
-	if s.cfg.ReplyTo != "" {
-		writeHeader("Reply-To", s.cfg.ReplyTo)
+	if replyTo != "" {
+		writeHeader("Reply-To", replyTo)
 	}
 	for key, value := range msg.Headers {
 		writeHeader(key, value)
@@ -135,9 +220,100 @@ func (s *Sender) sendSMTP(msg Message) error {
 		body.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
 		body.WriteString(msg.Text)
 	}
+	return body.Bytes()
+}
 
-	auth := smtp.PlainAuth("", s.cfg.User, s.cfg.Pass, host)
-	return smtp.SendMail(addr, auth, from, msg.To, body.Bytes())
+func (s *Sender) dialSMTP(addr, host string) (net.Conn, error) {
+	dialer, err := s.smtpDialer()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if !s.cfg.Secure {
+		return conn, nil
+	}
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+func (s *Sender) smtpDialer() (proxy.Dialer, error) {
+	baseDialer := &net.Dialer{Timeout: 15 * time.Second}
+	if s.cfg.Socks5 == nil || !s.cfg.Socks5.Enable {
+		return baseDialer, nil
+	}
+	host := strings.TrimSpace(s.cfg.Socks5.Host)
+	if host == "" {
+		return nil, fmt.Errorf("socks5 host is required")
+	}
+	port := s.cfg.Socks5.Port
+	if port == 0 {
+		port = 1080
+	}
+	var auth *proxy.Auth
+	user := strings.TrimSpace(s.cfg.Socks5.User)
+	if user != "" || s.cfg.Socks5.Pass != "" {
+		auth = &proxy.Auth{User: user, Password: s.cfg.Socks5.Pass}
+	}
+	return proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", host, port), auth, baseDialer)
+}
+
+func normalizeRecipients(to []string) []string {
+	recipients := make([]string, 0, len(to))
+	for _, item := range to {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			recipients = append(recipients, trimmed)
+		}
+	}
+	return recipients
+}
+
+func envelopeAddress(raw string) string {
+	if addr, err := stdmail.ParseAddress(strings.TrimSpace(raw)); err == nil && addr.Address != "" {
+		return addr.Address
+	}
+	return strings.TrimSpace(raw)
+}
+
+func (s *Sender) friendlySMTPError(err error, port int) error {
+	if err == nil {
+		return nil
+	}
+	raw := err.Error()
+	lower := strings.ToLower(raw)
+	host := strings.TrimSpace(s.cfg.Host)
+	proxyHint := ""
+	if s.cfg.Socks5 != nil && s.cfg.Socks5.Enable {
+		proxyHint = fmt.Sprintf("，以及代理 %s:%d 是好的吗？", strings.TrimSpace(s.cfg.Socks5.Host), defaultProxyPort(s.cfg.Socks5.Port))
+	}
+
+	switch {
+	case strings.Contains(lower, "first record does not look like a tls handshake"):
+		return fmt.Errorf("TLS 握手失败：端口和加密模式配错了？（当前端口 %d，secure=%t；通常 465=true，587=false）", port, s.cfg.Secure)
+	case strings.Contains(lower, "does not support auth"):
+		return fmt.Errorf("SMTP 服务器不支持 AUTH 登录，看看服务器配置，或当前端口/加密模式配错了？")
+	case strings.Contains(lower, "535") || strings.Contains(lower, "authentication failed"):
+		return fmt.Errorf("SMTP 认证失败：用户名/密码/授权码肯定有一个不对啦（原始错误：%s）", raw)
+	case strings.Contains(lower, "connection refused"):
+		return fmt.Errorf("无法连接 SMTP 服务器 %s:%d，网坏了？%s", host, port, proxyHint)
+	case strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "context deadline exceeded"):
+		return fmt.Errorf("连接 SMTP 服务器 %s:%d 超时，网坏了？%s", host, port, proxyHint)
+	default:
+		return err
+	}
+}
+
+func defaultProxyPort(port int) int {
+	if port == 0 {
+		return 1080
+	}
+	return port
 }
 
 // sendResend sends via the Resend HTTP API.

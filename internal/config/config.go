@@ -420,6 +420,13 @@ func DefaultFullConfig() FullConfig {
 					Host:   "",
 					Port:   465,
 					Secure: true,
+					Socks5: &SMTPProxyConfig{
+						Enable: false,
+						Host:   "",
+						Port:   1080,
+						User:   "",
+						Pass:   "",
+					},
 				},
 			},
 			Resend: &ResendConfig{

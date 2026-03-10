@@ -5,6 +5,59 @@ import (
 	"strings"
 )
 
+type rawSMTPProxyConfig struct {
+	Enable   *bool  `json:"enable"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Pass     string `json:"pass"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func normalizeSMTPProxyConfig(proxyCfg *SMTPProxyConfig) *SMTPProxyConfig {
+	if proxyCfg == nil {
+		return nil
+	}
+	next := *proxyCfg
+	next.Host = strings.TrimSpace(next.Host)
+	next.User = strings.TrimSpace(next.User)
+	if next.Port == 0 {
+		next.Port = 1080
+	}
+	return &next
+}
+
+func mergeSMTPProxyConfig(current *SMTPProxyConfig, raw *rawSMTPProxyConfig) *SMTPProxyConfig {
+	next := normalizeSMTPProxyConfig(current)
+	if next == nil {
+		next = &SMTPProxyConfig{Port: 1080}
+	}
+	if raw == nil {
+		return next
+	}
+	if raw.Enable != nil {
+		next.Enable = *raw.Enable
+	}
+	if trimmedHost := strings.TrimSpace(raw.Host); trimmedHost != "" {
+		next.Host = trimmedHost
+	}
+	if raw.Port != 0 {
+		next.Port = raw.Port
+	}
+	if trimmedUser := strings.TrimSpace(raw.User); trimmedUser != "" {
+		next.User = trimmedUser
+	} else if trimmedUser := strings.TrimSpace(raw.Username); trimmedUser != "" {
+		next.User = trimmedUser
+	}
+	if raw.Pass != "" {
+		next.Pass = raw.Pass
+	} else if raw.Password != "" {
+		next.Pass = raw.Password
+	}
+	return normalizeSMTPProxyConfig(next)
+}
+
 func (s SMTPConfig) MarshalJSON() ([]byte, error) {
 	host := strings.TrimSpace(s.Options.Host)
 	port := s.Options.Port
@@ -12,24 +65,28 @@ func (s SMTPConfig) MarshalJSON() ([]byte, error) {
 		port = 465
 	}
 	secure := s.Options.Secure
+	socks5 := normalizeSMTPProxyConfig(s.Options.Socks5)
 
 	return json.Marshal(struct {
-		User    string      `json:"user"`
-		Pass    string      `json:"pass"`
-		Host    string      `json:"host"`
-		Port    int         `json:"port"`
-		Secure  bool        `json:"secure"`
-		Options SMTPOptions `json:"options"`
+		User    string           `json:"user"`
+		Pass    string           `json:"pass"`
+		Host    string           `json:"host"`
+		Port    int              `json:"port"`
+		Secure  bool             `json:"secure"`
+		Socks5  *SMTPProxyConfig `json:"socks5,omitempty"`
+		Options SMTPOptions      `json:"options"`
 	}{
 		User:   strings.TrimSpace(s.User),
 		Pass:   s.Pass,
 		Host:   host,
 		Port:   port,
 		Secure: secure,
+		Socks5: socks5,
 		Options: SMTPOptions{
 			Host:   host,
 			Port:   port,
 			Secure: secure,
+			Socks5: socks5,
 		},
 	})
 }
@@ -39,18 +96,21 @@ func (s *SMTPConfig) UnmarshalJSON(data []byte) error {
 	if next.Options.Port == 0 {
 		next.Options.Port = 465
 	}
+	next.Options.Socks5 = normalizeSMTPProxyConfig(next.Options.Socks5)
 
 	var raw struct {
 		User    string `json:"user"`
 		Pass    string `json:"pass"`
 		Options *struct {
-			Host   string `json:"host"`
-			Port   int    `json:"port"`
-			Secure *bool  `json:"secure"`
+			Host   string              `json:"host"`
+			Port   int                 `json:"port"`
+			Secure *bool               `json:"secure"`
+			Socks5 *rawSMTPProxyConfig `json:"socks5"`
 		} `json:"options"`
-		Host   string `json:"host"`
-		Port   int    `json:"port"`
-		Secure *bool  `json:"secure"`
+		Host   string              `json:"host"`
+		Port   int                 `json:"port"`
+		Secure *bool               `json:"secure"`
+		Socks5 *rawSMTPProxyConfig `json:"socks5"`
 		Auth   *struct {
 			User string `json:"user"`
 			Pass string `json:"pass"`
@@ -83,6 +143,7 @@ func (s *SMTPConfig) UnmarshalJSON(data []byte) error {
 		if raw.Options.Secure != nil {
 			next.Options.Secure = *raw.Options.Secure
 		}
+		next.Options.Socks5 = mergeSMTPProxyConfig(next.Options.Socks5, raw.Options.Socks5)
 	} else {
 		if strings.TrimSpace(raw.Host) != "" {
 			next.Options.Host = strings.TrimSpace(raw.Host)
@@ -94,10 +155,12 @@ func (s *SMTPConfig) UnmarshalJSON(data []byte) error {
 			next.Options.Secure = *raw.Secure
 		}
 	}
+	next.Options.Socks5 = mergeSMTPProxyConfig(next.Options.Socks5, raw.Socks5)
 
 	if next.Options.Port == 0 {
 		next.Options.Port = 465
 	}
+	next.Options.Socks5 = normalizeSMTPProxyConfig(next.Options.Socks5)
 	*s = next
 	return nil
 }

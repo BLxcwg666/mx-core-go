@@ -208,10 +208,19 @@ type MailOptions struct {
 	Resend   *ResendConfig `json:"resend"`
 }
 
-type SMTPOptions struct {
+type SMTPProxyConfig struct {
+	Enable bool   `json:"enable"`
 	Host   string `json:"host"`
 	Port   int    `json:"port"`
-	Secure bool   `json:"secure"`
+	User   string `json:"user"`
+	Pass   string `json:"pass"`
+}
+
+type SMTPOptions struct {
+	Host   string           `json:"host"`
+	Port   int              `json:"port"`
+	Secure bool             `json:"secure"`
+	Socks5 *SMTPProxyConfig `json:"socks5,omitempty"`
 }
 
 type SMTPConfig struct {

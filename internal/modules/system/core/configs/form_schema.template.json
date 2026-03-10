@@ -320,6 +320,56 @@
                   "ui": {
                     "component": "switch"
                   }
+                },
+                {
+                  "key": "socks5",
+                  "title": "SOCKS5 代理",
+                  "ui": {
+                    "component": "input"
+                  },
+                  "description": "当前网络无法直连 SMTP 服务器时，可通过 SOCKS5 代理建立连接",
+                  "fields": [
+                    {
+                      "key": "enable",
+                      "title": "启用 SOCKS5 代理",
+                      "ui": {
+                        "component": "switch"
+                      }
+                    },
+                    {
+                      "key": "host",
+                      "title": "代理主机",
+                      "ui": {
+                        "component": "input",
+                        "halfGrid": true
+                      }
+                    },
+                    {
+                      "key": "port",
+                      "title": "代理端口",
+                      "description": "默认 1080",
+                      "ui": {
+                        "component": "number",
+                        "halfGrid": true
+                      }
+                    },
+                    {
+                      "key": "user",
+                      "title": "代理用户名",
+                      "ui": {
+                        "component": "input",
+                        "halfGrid": true
+                      }
+                    },
+                    {
+                      "key": "pass",
+                      "title": "代理密码",
+                      "ui": {
+                        "component": "password",
+                        "halfGrid": true
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -782,7 +832,14 @@
         "options": {
           "host": "",
           "port": 465,
-          "secure": true
+          "secure": true,
+          "socks5": {
+            "enable": false,
+            "host": "",
+            "port": 1080,
+            "user": "",
+            "pass": ""
+          }
         }
       },
       "resend": {
