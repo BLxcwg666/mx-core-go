@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -64,11 +65,36 @@ func (h *Handler) checkLogged(c *gin.Context) {
 }
 
 func (h *Handler) allowLogin(c *gin.Context) {
-	var passkeyCount int64
-	_ = h.svc.db.Model(&models.AuthnModel{}).Count(&passkeyCount).Error
+	var passkeyItems []models.AuthnModel
+	_ = h.svc.db.Select("credential_json").Find(&passkeyItems).Error
+	passkeyEnabled := false
+	for _, item := range passkeyItems {
+		if strings.TrimSpace(item.CredentialJSON) != "" {
+			passkeyEnabled = true
+			break
+		}
+	}
 
 	passwordEnabled := true
 	enabledProviders := map[string]bool{}
+	linkedProviders := map[string]bool{}
+	owner, _ := h.svc.GetOwner()
+	ownerSocialIDs := map[string]interface{}{}
+	if owner != nil {
+		ownerSocialIDs = parseSocialIDs(owner.SocialIDs)
+
+		var oauthAccounts []models.OAuth2Token
+		_ = h.svc.db.
+			Select("provider, provider_uid").
+			Where("user_id = ?", owner.ID).
+			Find(&oauthAccounts).Error
+		for _, account := range oauthAccounts {
+			provider := strings.ToLower(strings.TrimSpace(account.Provider))
+			if provider != "" && strings.TrimSpace(account.ProviderUID) != "" {
+				linkedProviders[provider] = true
+			}
+		}
+	}
 	if h.cfgSvc != nil {
 		if cfg, err := h.cfgSvc.Get(); err == nil && cfg != nil {
 			passwordEnabled = !cfg.AuthSecurity.DisablePasswordLogin
@@ -87,12 +113,32 @@ func (h *Handler) allowLogin(c *gin.Context) {
 
 	res := gin.H{
 		"password": passwordEnabled,
-		"passkey":  passkeyCount > 0,
+		"passkey":  passkeyEnabled,
 	}
 	for providerType, enabled := range enabledProviders {
-		res[providerType] = enabled
+		if !enabled {
+			continue
+		}
+		if linkedProviders[providerType] || hasLinkedSocialID(ownerSocialIDs, providerType) {
+			res[providerType] = true
+		}
 	}
 	response.OK(c, res)
+}
+
+func hasLinkedSocialID(ids map[string]interface{}, providerType string) bool {
+	if len(ids) == 0 || strings.TrimSpace(providerType) == "" {
+		return false
+	}
+	for key, value := range ids {
+		if !strings.EqualFold(strings.TrimSpace(key), providerType) {
+			continue
+		}
+		if strings.TrimSpace(fmt.Sprint(value)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) login(c *gin.Context) {
