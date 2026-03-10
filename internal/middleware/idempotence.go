@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/pkg/response"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -74,11 +75,7 @@ func Idempotence(rdb *redis.Client) gin.HandlerFunc {
 			if val == "0" {
 				msg = "相同请求正在处理中..."
 			}
-			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
-				"ok":      0,
-				"code":    http.StatusConflict,
-				"message": msg,
-			})
+			response.Conflict(c, msg)
 			return
 		}
 

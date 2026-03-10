@@ -98,6 +98,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	router.HandleMethodNotAllowed = true
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger(logger))
+	router.Use(middleware.ErrorReporter(logger))
 
 	corsConfig := cors.Config{
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

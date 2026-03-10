@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/pkg/bark"
+	"github.com/mx-space/core/internal/pkg/response"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -64,15 +64,12 @@ func RateLimit(rdb *redis.Client, barkSvc *bark.Service) gin.HandlerFunc {
 				zap.String("path", path),
 				zap.Int64("count", count),
 			)
+			response.MarkErrorLogged(c)
 			if barkSvc != nil {
 				go barkSvc.ThrottlePush(ip, path)
 			}
 			c.Header("Retry-After", "1")
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"ok":      0,
-				"code":    http.StatusTooManyRequests,
-				"message": "等..等一下，太快了 ∑(っ °Д °;)っ",
-			})
+			response.TooManyRequests(c, "等..等一下，太快了 ∑(っ °Д °;)っ")
 			return
 		}
 

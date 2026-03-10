@@ -9,6 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	contextResponseMessageKey = "mx:response:message"
+	contextErrorLoggedKey     = "mx:response:error_logged"
+)
+
 var notFoundMessages = []string{
 	"真不巧，内容走丢了 o(╥﹏╥)o",
 	"电波无法到达 ωω",
@@ -92,22 +97,22 @@ func NoContent(c *gin.Context) {
 
 // BadRequest sends a 400 error response.
 func BadRequest(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"ok": 0, "code": http.StatusBadRequest, "message": message})
+	abortWithMessage(c, http.StatusBadRequest, message)
 }
 
 // Unauthorized sends a 401 error response.
 func Unauthorized(c *gin.Context) {
-	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"ok": 0, "code": http.StatusUnauthorized, "message": "你好像还没登录呢 ((/- -)/"})
+	abortWithMessage(c, http.StatusUnauthorized, "你好像还没登录呢 ((/- -)/")
 }
 
 // Forbidden sends a 403 error response.
 func Forbidden(c *gin.Context) {
-	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"ok": 0, "code": http.StatusForbidden, "message": "坏！不给你看"})
+	abortWithMessage(c, http.StatusForbidden, "坏！不给你看")
 }
 
 // ForbiddenMsg sends a 403 error response with a custom message.
 func ForbiddenMsg(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"ok": 0, "code": http.StatusForbidden, "message": message})
+	abortWithMessage(c, http.StatusForbidden, message)
 }
 
 // NotFound sends a 404 error response.
@@ -116,12 +121,12 @@ func NotFound(c *gin.Context) {
 	if len(notFoundMessages) > 0 {
 		msg = notFoundMessages[rand.IntN(len(notFoundMessages))]
 	}
-	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"ok": 0, "code": http.StatusNotFound, "message": msg})
+	abortWithMessage(c, http.StatusNotFound, msg)
 }
 
 // NotFoundMsg sends a 404 error with a custom message.
 func NotFoundMsg(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"ok": 0, "code": http.StatusNotFound, "message": message})
+	abortWithMessage(c, http.StatusNotFound, message)
 }
 
 // MethodNotAllowed sends a 405 error response.
@@ -130,32 +135,83 @@ func MethodNotAllowed(c *gin.Context) {
 	if len(methodNotAllowedMessages) > 0 {
 		msg = methodNotAllowedMessages[rand.IntN(len(methodNotAllowedMessages))]
 	}
-	c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{
-		"ok":      0,
-		"code":    http.StatusMethodNotAllowed,
-		"message": msg,
-	})
+	abortWithMessage(c, http.StatusMethodNotAllowed, msg)
 }
 
 // InternalError sends a 500 error response.
 func InternalError(c *gin.Context, err error) {
+	message := http.StatusText(http.StatusInternalServerError)
 	if err != nil {
+		message = err.Error()
 		zap.L().Named("HTTPResponse").Error("request failed",
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.Request.URL.RequestURI()),
 			zap.String("ip", c.ClientIP()),
 			zap.Error(err),
 		)
+		MarkErrorLogged(c)
 	}
-	c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"ok": 0, "code": http.StatusInternalServerError, "message": err.Error()})
+	abortWithMessage(c, http.StatusInternalServerError, message)
 }
 
 // UnprocessableEntity sends a 422 error response.
 func UnprocessableEntity(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{"ok": 0, "code": http.StatusUnprocessableEntity, "message": message})
+	abortWithMessage(c, http.StatusUnprocessableEntity, message)
 }
 
 // Conflict sends a 409 error response.
 func Conflict(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusConflict, gin.H{"ok": 0, "code": http.StatusConflict, "message": message})
+	abortWithMessage(c, http.StatusConflict, message)
+}
+
+// TooManyRequests sends a 429 error response.
+func TooManyRequests(c *gin.Context, message string) {
+	abortWithMessage(c, http.StatusTooManyRequests, message)
+}
+
+// SetResponseMessage stores the response message for downstream logging middleware.
+func SetResponseMessage(c *gin.Context, message string) {
+	if c == nil {
+		return
+	}
+	c.Set(contextResponseMessageKey, message)
+}
+
+// ResponseMessage returns the stored response message.
+func ResponseMessage(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	v, ok := c.Get(contextResponseMessageKey)
+	if !ok {
+		return ""
+	}
+	message, _ := v.(string)
+	return message
+}
+
+// MarkErrorLogged marks the current request as already logged.
+func MarkErrorLogged(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(contextErrorLoggedKey, true)
+}
+
+// ErrorLogged reports whether the current request already emitted an error log.
+func ErrorLogged(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	v, ok := c.Get(contextErrorLoggedKey)
+	if !ok {
+		return false
+	}
+	logged, _ := v.(bool)
+	return logged
+}
+
+func abortWithMessage(c *gin.Context, status int, message string) {
+	SetResponseMessage(c, message)
+	c.AbortWithStatusJSON(status, gin.H{"ok": 0, "code": status, "message": message})
 }
