@@ -63,21 +63,44 @@ func parseReadLikeType(raw string) int {
 
 func loadStatCounterFromOptions(db *gorm.DB, names ...string) (int64, bool) {
 	type optionValue struct {
+		Name  string
 		Value string
 	}
+	if db == nil || len(names) == 0 {
+		return 0, false
+	}
+
+	orderedNames := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		trimmed := strings.TrimSpace(name)
 		if trimmed == "" {
 			continue
 		}
-		var row optionValue
-		if err := db.Model(&models.OptionModel{}).
-			Select("value").
-			Where("name = ?", trimmed).
-			First(&row).Error; err != nil {
+		if _, ok := seen[trimmed]; ok {
 			continue
 		}
-		if v, ok := parseOptionCounter(row.Value); ok {
+		seen[trimmed] = struct{}{}
+		orderedNames = append(orderedNames, trimmed)
+	}
+	if len(orderedNames) == 0 {
+		return 0, false
+	}
+
+	var rows []optionValue
+	if err := db.Model(&models.OptionModel{}).
+		Select("name, value").
+		Where("name IN ?", orderedNames).
+		Find(&rows).Error; err != nil {
+		return 0, false
+	}
+
+	valuesByName := make(map[string]string, len(rows))
+	for _, row := range rows {
+		valuesByName[strings.TrimSpace(row.Name)] = row.Value
+	}
+	for _, name := range orderedNames {
+		if v, ok := parseOptionCounter(valuesByName[name]); ok {
 			return v, true
 		}
 	}
@@ -189,5 +212,91 @@ func detectBrowser(ua string) string {
 		return "WeChat"
 	default:
 		return "Unknown"
+	}
+}
+
+type aggregateTotalRow struct {
+	Total int64 `gorm:"column:total"`
+}
+
+type aggregateBucketCount struct {
+	Bucket string `gorm:"column:bucket"`
+	Count  int64  `gorm:"column:count"`
+}
+
+func loadTextLengthTotal(tx *gorm.DB, column string) (int64, error) {
+	if tx == nil {
+		return 0, nil
+	}
+	expr := aggregateTextLengthExpr(tx, column)
+	var row aggregateTotalRow
+	if err := tx.Select("COALESCE(SUM(" + expr + "), 0) AS total").Scan(&row).Error; err != nil {
+		return 0, err
+	}
+	return row.Total, nil
+}
+
+func loadBucketCounts(tx *gorm.DB, timeColumn string, start, end time.Time, granularity string) (map[string]int64, error) {
+	counts := map[string]int64{}
+	if tx == nil {
+		return counts, nil
+	}
+	expr := aggregateTimeBucketExpr(tx, timeColumn, granularity)
+	var rows []aggregateBucketCount
+	if err := tx.
+		Where(timeColumn+" >= ? AND "+timeColumn+" < ?", start, end).
+		Select(expr + " AS bucket, COUNT(*) AS count").
+		Group(expr).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts = make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Bucket] = row.Count
+	}
+	return counts, nil
+}
+
+func aggregateTextLengthExpr(db *gorm.DB, column string) string {
+	column = strings.TrimSpace(column)
+	if column == "" {
+		column = "text"
+	}
+	switch strings.ToLower(strings.TrimSpace(db.Dialector.Name())) {
+	case "sqlite", "sqlite3":
+		return "LENGTH(COALESCE(" + column + ", ''))"
+	default:
+		return "CHAR_LENGTH(COALESCE(" + column + ", ''))"
+	}
+}
+
+func aggregateTimeBucketExpr(db *gorm.DB, column, granularity string) string {
+	column = strings.TrimSpace(column)
+	if column == "" {
+		column = "created_at"
+	}
+	granularity = strings.ToLower(strings.TrimSpace(granularity))
+	switch strings.ToLower(strings.TrimSpace(db.Dialector.Name())) {
+	case "postgres":
+		switch granularity {
+		case "day":
+			return "TO_CHAR(" + column + ", 'YYYY-MM-DD')"
+		default:
+			return "TO_CHAR(" + column + ", 'YYYY-MM')"
+		}
+	case "sqlite", "sqlite3":
+		switch granularity {
+		case "day":
+			return "strftime('%Y-%m-%d', " + column + ")"
+		default:
+			return "strftime('%Y-%m', " + column + ")"
+		}
+	default:
+		switch granularity {
+		case "day":
+			return "DATE_FORMAT(" + column + ", '%Y-%m-%d')"
+		default:
+			return "DATE_FORMAT(" + column + ", '%Y-%m')"
+		}
 	}
 }

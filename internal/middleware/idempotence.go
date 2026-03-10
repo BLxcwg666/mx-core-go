@@ -1,17 +1,18 @@
 package middleware
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/pkg/requestbody"
 	"github.com/mx-space/core/internal/pkg/response"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -190,11 +191,10 @@ func resolveIdempotenceKey(c *gin.Context) (string, error) {
 		return hdr, nil
 	}
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := requestbody.Read(c)
 	if err != nil {
 		return "", err
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	ua := c.Request.UserAgent()
 	ip := c.ClientIP()
@@ -204,9 +204,22 @@ func resolveIdempotenceKey(c *gin.Context) (string, error) {
 		return "", nil
 	}
 
-	raw := c.Request.Method + "|" + c.Request.URL.String() + "|" + string(body) + "|" + ua + "|" + ip + "|" + authToken
-	h := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(h[:]), nil
+	h := sha256.New()
+	writeIdempotenceHashPart(h, c.Request.Method)
+	writeIdempotenceHashPart(h, c.Request.URL.String())
+	if len(body) > 0 {
+		_, _ = h.Write(body)
+	}
+	_, _ = h.Write([]byte{0})
+	writeIdempotenceHashPart(h, ua)
+	writeIdempotenceHashPart(h, ip)
+	writeIdempotenceHashPart(h, authToken)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeIdempotenceHashPart(h hash.Hash, value string) {
+	_, _ = io.WriteString(h, value)
+	_, _ = h.Write([]byte{0})
 }
 
 func resolveIdempotenceAuthToken(c *gin.Context) string {

@@ -1,14 +1,13 @@
 package serverless
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/pkg/requestbody"
 )
 
 func (h *Handler) buildRuntimeContext(c *gin.Context, snippet *models.SnippetModel) runtimeContext {
@@ -74,11 +73,10 @@ func parseRequestBody(c *gin.Context) interface{} {
 	if c.Request == nil || c.Request.Body == nil {
 		return nil
 	}
-	raw, err := io.ReadAll(c.Request.Body)
+	raw, err := requestbody.Read(c)
 	if err != nil {
 		return nil
 	}
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(raw))
 	if len(raw) == 0 {
 		return nil
 	}

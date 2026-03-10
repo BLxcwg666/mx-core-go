@@ -147,7 +147,33 @@ func (h *Hub) unregisterClient(c clientMeta) {
 }
 
 func (h *Hub) updateDailyOnlineStats(currentOnline int) {
-	if currentOnline < 0 {
+	if currentOnline < 0 || h.rc == nil {
+		return
+	}
+
+	h.onlineStatsMu.Lock()
+	if currentOnline > h.onlineStatsPendingMax {
+		h.onlineStatsPendingMax = currentOnline
+	}
+	h.onlineStatsPendingTotal++
+	if h.onlineStatsTimer != nil {
+		h.onlineStatsMu.Unlock()
+		return
+	}
+	h.onlineStatsTimer = time.AfterFunc(onlineStatsFlushDelay, h.flushDailyOnlineStats)
+	h.onlineStatsMu.Unlock()
+}
+
+func (h *Hub) flushDailyOnlineStats() {
+	h.onlineStatsMu.Lock()
+	pendingMaxOnline := h.onlineStatsPendingMax
+	totalIncrements := h.onlineStatsPendingTotal
+	h.onlineStatsPendingMax = 0
+	h.onlineStatsPendingTotal = 0
+	h.onlineStatsTimer = nil
+	h.onlineStatsMu.Unlock()
+
+	if totalIncrements <= 0 {
 		return
 	}
 
@@ -156,12 +182,12 @@ func (h *Hub) updateDailyOnlineStats(currentOnline int) {
 
 	dateKey := shortDateKey(time.Now())
 
-	maxOnline := 0
+	storedMaxOnline := 0
 	currentMax, err := h.rc.Raw().HGet(ctx, redisKeyMaxOnlineCount, dateKey).Result()
 	switch {
 	case err == nil:
 		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(currentMax)); parseErr == nil {
-			maxOnline = parsed
+			storedMaxOnline = parsed
 		}
 	case err == redis.Nil:
 		// no-op
@@ -171,13 +197,13 @@ func (h *Hub) updateDailyOnlineStats(currentOnline int) {
 		}
 	}
 
-	if currentOnline > maxOnline {
-		if err := h.rc.Raw().HSet(ctx, redisKeyMaxOnlineCount, dateKey, currentOnline).Err(); err != nil && h.logger != nil {
+	if pendingMaxOnline > storedMaxOnline {
+		if err := h.rc.Raw().HSet(ctx, redisKeyMaxOnlineCount, dateKey, pendingMaxOnline).Err(); err != nil && h.logger != nil {
 			h.logger.Warn("gateway set max online failed", zap.Error(err))
 		}
 	}
 
-	if err := h.rc.Raw().HIncrBy(ctx, redisKeyMaxOnlineCountTotal, dateKey, 1).Err(); err != nil && h.logger != nil {
+	if err := h.rc.Raw().HIncrBy(ctx, redisKeyMaxOnlineCountTotal, dateKey, totalIncrements).Err(); err != nil && h.logger != nil {
 		h.logger.Warn("gateway incr online total failed", zap.Error(err))
 	}
 }

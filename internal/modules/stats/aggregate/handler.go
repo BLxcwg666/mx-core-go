@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
@@ -447,42 +446,42 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 	})
 
 	rg.GET("/aggregate/count_site_words", func(c *gin.Context) {
-		var totalWords int64
-		var posts []models.PostModel
-		db.Select("text").Find(&posts)
-		for _, p := range posts {
-			totalWords += int64(utf8.RuneCountInString(p.Text))
+		postWords, err := loadTextLengthTotal(db.Model(&models.PostModel{}), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
 		}
-		var notes []models.NoteModel
-		db.Select("text").Find(&notes)
-		for _, n := range notes {
-			totalWords += int64(utf8.RuneCountInString(n.Text))
+		noteWords, err := loadTextLengthTotal(db.Model(&models.NoteModel{}), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
 		}
-		var pages []models.PageModel
-		db.Select("text").Find(&pages)
-		for _, pg := range pages {
-			totalWords += int64(utf8.RuneCountInString(pg.Text))
+		pageWords, err := loadTextLengthTotal(db.Model(&models.PageModel{}), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
 		}
+		totalWords := postWords + noteWords + pageWords
 		response.OK(c, wordCountResponse{Words: totalWords, Count: totalWords})
 	})
 
 	rg.GET("/aggregate/stat/category-distribution", func(c *gin.Context) {
-		var categories []models.CategoryModel
-		db.Where("type = ?", 0).Order("created_at ASC").Find(&categories)
-
 		type row struct {
 			ID    string `json:"id"`
 			Name  string `json:"name"`
 			Slug  string `json:"slug"`
 			Count int64  `json:"count"`
 		}
-		out := make([]row, 0, len(categories))
-		for _, cat := range categories {
-			var count int64
-			db.Model(&models.PostModel{}).Where("category_id = ?", cat.ID).Count(&count)
-			out = append(out, row{
-				ID: cat.ID, Name: cat.Name, Slug: cat.Slug, Count: count,
-			})
+		var out []row
+		if err := db.Model(&models.CategoryModel{}).
+			Select("categories.id, categories.name, categories.slug, COUNT(posts.id) AS count").
+			Joins("LEFT JOIN posts ON posts.category_id = categories.id AND posts.deleted_at IS NULL").
+			Where("categories.type = ?", 0).
+			Group("categories.id, categories.name, categories.slug, categories.created_at").
+			Order("categories.created_at ASC").
+			Scan(&out).Error; err != nil {
+			response.InternalError(c, err)
+			return
 		}
 		response.OK(c, out)
 	})
@@ -522,7 +521,19 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 	})
 
 	rg.GET("/aggregate/stat/publication-trend", func(c *gin.Context) {
-		start := time.Now().AddDate(0, -11, 0)
+		start := time.Now().In(time.Local)
+		start = time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.Local).AddDate(0, -11, 0)
+		end := start.AddDate(1, 12, 0)
+		postCounts, err := loadBucketCounts(db.Model(&models.PostModel{}), "created_at", start, end, "month")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		noteCounts, err := loadBucketCounts(db.Model(&models.NoteModel{}), "created_at", start, end, "month")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
 		type trend struct {
 			Date  string `json:"date"`
 			Posts int64  `json:"posts"`
@@ -530,16 +541,12 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		}
 		out := make([]trend, 0, 12)
 		for i := 0; i < 12; i++ {
-			monthStart := time.Date(start.Year(), start.Month()+time.Month(i), 1, 0, 0, 0, 0, time.Local)
-			monthEnd := monthStart.AddDate(0, 1, 0)
-			var postsCount int64
-			var notesCount int64
-			db.Model(&models.PostModel{}).Where("created_at >= ? AND created_at < ?", monthStart, monthEnd).Count(&postsCount)
-			db.Model(&models.NoteModel{}).Where("created_at >= ? AND created_at < ?", monthStart, monthEnd).Count(&notesCount)
+			monthStart := start.AddDate(0, i, 0)
+			monthKey := monthStart.Format("2006-01")
 			out = append(out, trend{
-				Date:  monthStart.Format("2006-01"),
-				Posts: postsCount,
-				Notes: notesCount,
+				Date:  monthKey,
+				Posts: postCounts[monthKey],
+				Notes: noteCounts[monthKey],
 			})
 		}
 		response.OK(c, out)
@@ -590,22 +597,24 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 	})
 
 	rg.GET("/aggregate/stat/comment-activity", func(c *gin.Context) {
+		start := beginningOfDay(time.Now().AddDate(0, 0, -29))
+		end := start.AddDate(0, 0, 30)
+		counts, err := loadBucketCounts(db.Model(&models.CommentModel{}), "created_at", start, end, "day")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
 		type dayCount struct {
 			Date  string `json:"date"`
 			Count int64  `json:"count"`
 		}
 		out := make([]dayCount, 0, 30)
-		start := time.Now().AddDate(0, 0, -29)
 		for i := 0; i < 30; i++ {
-			dayStart := time.Date(start.Year(), start.Month(), start.Day()+i, 0, 0, 0, 0, time.Local)
-			dayEnd := dayStart.AddDate(0, 0, 1)
-			var count int64
-			db.Model(&models.CommentModel{}).
-				Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).
-				Count(&count)
+			dayStart := start.AddDate(0, 0, i)
+			dayKey := dayStart.Format("2006-01-02")
 			out = append(out, dayCount{
-				Date:  dayStart.Format("2006-01-02"),
-				Count: count,
+				Date:  dayKey,
+				Count: counts[dayKey],
 			})
 		}
 		response.OK(c, out)

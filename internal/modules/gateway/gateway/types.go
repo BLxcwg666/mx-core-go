@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"sync"
+	"time"
 
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	socketio "github.com/zishang520/socket.io/v2/socket"
@@ -28,6 +29,7 @@ const (
 	messageUpdateLang = "updateLang"
 
 	nativeLogSnapshotChunkSize = 32 * 1024
+	onlineStatsFlushDelay      = time.Second
 )
 
 // Message is the envelope used by hub broadcasts and Redis fan-out.
@@ -69,6 +71,11 @@ type Hub struct {
 
 	logSubMu sync.Mutex
 	logSubs  map[string]adminLogSubscription
+
+	onlineStatsMu           sync.Mutex
+	onlineStatsTimer        *time.Timer
+	onlineStatsPendingMax   int
+	onlineStatsPendingTotal int64
 
 	broadcast  chan Message
 	register   chan clientMeta

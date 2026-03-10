@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,6 +23,8 @@ const (
 	defaultHTTPCacheMaxBody   = 1 << 20 // 1 MiB
 	staleWhileRevalidateValue = 60
 )
+
+var httpCacheBinaryMagic = []byte("MXHC1")
 
 type HTTPCacheOptions struct {
 	TTL                    time.Duration
@@ -135,12 +139,9 @@ func HTTPCache(rdb *redis.Client, opts HTTPCacheOptions) gin.HandlerFunc {
 		payload := cachedHTTPResponse{
 			Status:      status,
 			ContentType: c.Writer.Header().Get("Content-Type"),
-			BodyBase64:  base64.StdEncoding.EncodeToString(buffer.body),
+			Body:        buffer.body,
 		}
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
+		raw := marshalCachedResponse(payload)
 		if err := rdb.Set(c.Request.Context(), cacheKey, raw, options.TTL).Err(); err != nil {
 			logger.Warn("failed to store cached response",
 				zap.String("key", cacheKey),
@@ -192,6 +193,56 @@ func readCachedResponse(ctx context.Context, rdb *redis.Client, cacheKey string)
 	if len(raw) == 0 {
 		return cachedHTTPResponse{}, false
 	}
+	if payload, ok := unmarshalCachedResponse(raw); ok {
+		return payload, true
+	}
+	return decodeLegacyCachedResponse(cacheKey, raw)
+}
+
+func marshalCachedResponse(payload cachedHTTPResponse) []byte {
+	if payload.Status <= 0 {
+		payload.Status = http.StatusOK
+	}
+
+	contentType := payload.ContentType
+	body := payload.Body
+	totalLen := len(httpCacheBinaryMagic) + 2 + 4 + len(contentType) + len(body)
+	raw := make([]byte, totalLen)
+	offset := copy(raw, httpCacheBinaryMagic)
+	binary.BigEndian.PutUint16(raw[offset:offset+2], uint16(payload.Status))
+	offset += 2
+	binary.BigEndian.PutUint32(raw[offset:offset+4], uint32(len(contentType)))
+	offset += 4
+	offset += copy(raw[offset:], contentType)
+	copy(raw[offset:], body)
+	return raw
+}
+
+func unmarshalCachedResponse(raw []byte) (cachedHTTPResponse, bool) {
+	minimumLen := len(httpCacheBinaryMagic) + 2 + 4
+	if len(raw) < minimumLen || !bytes.Equal(raw[:len(httpCacheBinaryMagic)], httpCacheBinaryMagic) {
+		return cachedHTTPResponse{}, false
+	}
+
+	offset := len(httpCacheBinaryMagic)
+	status := int(binary.BigEndian.Uint16(raw[offset : offset+2]))
+	offset += 2
+	contentTypeLen := int(binary.BigEndian.Uint32(raw[offset : offset+4]))
+	offset += 4
+	if len(raw) < offset+contentTypeLen {
+		return cachedHTTPResponse{}, false
+	}
+
+	payload := cachedHTTPResponse{
+		Status:      status,
+		ContentType: string(raw[offset : offset+contentTypeLen]),
+		Body:        raw[offset+contentTypeLen:],
+	}
+	normalizeCachedResponse(&payload)
+	return payload, true
+}
+
+func decodeLegacyCachedResponse(cacheKey string, raw []byte) (cachedHTTPResponse, bool) {
 	var payload cachedHTTPResponse
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		zap.L().Named("HTTPCache").Warn("failed to decode cached response payload",
@@ -199,12 +250,6 @@ func readCachedResponse(ctx context.Context, rdb *redis.Client, cacheKey string)
 			zap.Error(err),
 		)
 		return cachedHTTPResponse{}, false
-	}
-	if payload.Status <= 0 {
-		payload.Status = http.StatusOK
-	}
-	if payload.ContentType == "" {
-		payload.ContentType = "application/json; charset=utf-8"
 	}
 	body, err := base64.StdEncoding.DecodeString(payload.BodyBase64)
 	if err != nil {
@@ -215,7 +260,17 @@ func readCachedResponse(ctx context.Context, rdb *redis.Client, cacheKey string)
 		return cachedHTTPResponse{}, false
 	}
 	payload.Body = body
+	normalizeCachedResponse(&payload)
 	return payload, true
+}
+
+func normalizeCachedResponse(payload *cachedHTTPResponse) {
+	if payload.Status <= 0 {
+		payload.Status = http.StatusOK
+	}
+	if payload.ContentType == "" {
+		payload.ContentType = "application/json; charset=utf-8"
+	}
 }
 
 func shouldSkipCachePath(path string, patterns []string) bool {
