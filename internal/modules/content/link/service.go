@@ -155,9 +155,17 @@ func (s *Service) Delete(id string) error {
 	return s.db.Delete(&models.LinkModel{}, "id = ?", id).Error
 }
 
-// Approve sets link state to Pass.
-func (s *Service) Approve(id string) error {
-	return s.db.Model(&models.LinkModel{}).Where("id = ?", id).Update("state", models.LinkPass).Error
+// Approve sets link state to Pass and returns the updated link.
+func (s *Service) Approve(id string) (*models.LinkModel, error) {
+	l, err := s.GetByID(id)
+	if err != nil || l == nil {
+		return l, err
+	}
+	if err := s.db.Model(l).Update("state", models.LinkPass).Error; err != nil {
+		return nil, err
+	}
+	l.State = models.LinkPass
+	return l, nil
 }
 
 // StateCount returns counts per state.

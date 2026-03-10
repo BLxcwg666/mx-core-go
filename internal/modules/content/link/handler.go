@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	coreconfig "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
@@ -175,6 +176,9 @@ func (h *Handler) create(c *gin.Context) {
 	if !isAdmin && h.hub != nil {
 		h.hub.BroadcastAdmin("LINK_APPLY", toResponse(l, true))
 	}
+	if !isAdmin && h.cfgSvc != nil {
+		go h.sendApplyNotification(l, dto.Author)
+	}
 	response.Created(c, toResponse(l, isAdmin))
 }
 
@@ -199,9 +203,17 @@ func (h *Handler) health(c *gin.Context) {
 
 // PATCH /links/audit/:id — approve link
 func (h *Handler) audit(c *gin.Context) {
-	if err := h.svc.Approve(c.Param("id")); err != nil {
+	l, err := h.svc.Approve(c.Param("id"))
+	if err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if l == nil {
+		response.NotFoundMsg(c, "友链不存在")
+		return
+	}
+	if l.Email != "" && h.cfgSvc != nil {
+		go h.sendPassNotification(l)
 	}
 	response.NoContent(c)
 }
@@ -305,10 +317,6 @@ func (h *Handler) delete(c *gin.Context) {
 }
 
 func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkState, reason string) {
-	cfg, err := h.cfgSvc.Get()
-	if err != nil || cfg == nil || !cfg.MailOptions.Enable {
-		return
-	}
 	stateLabel := map[models.LinkState]string{
 		models.LinkPass:    "通过",
 		models.LinkReject:  "拒绝",
@@ -319,37 +327,80 @@ func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkSt
 	if stateLabel == "" {
 		stateLabel = strconv.Itoa(int(state))
 	}
-	tpl, err := template.New("").Parse(linkAuditTpl)
-	if err != nil {
-		return
-	}
-	var buf strings.Builder
-	if err := tpl.Execute(&buf, linkAuditData{
+	_ = h.sendLinkNotification(l.Email, "嘿!~, 主人已处理你的友链申请!~", linkAuditTpl, linkAuditData{
 		Name:       l.Name,
 		URL:        l.URL,
 		StateLabel: stateLabel,
 		Reason:     reason,
-	}); err != nil {
+	})
+}
+
+func (h *Handler) sendPassNotification(l *models.LinkModel) {
+	_ = h.sendLinkNotification(l.Email, "嘿!~, 主人已通过你的友链申请!~", linkPassTpl, linkPassData{
+		Name:        l.Name,
+		URL:         l.URL,
+		Description: l.Description,
+	})
+}
+
+func (h *Handler) sendApplyNotification(l *models.LinkModel, authorName string) {
+	if h.cfgSvc == nil {
 		return
 	}
-	mailCfg := pkgmail.Config{
-		Enable: cfg.MailOptions.Enable,
-		From:   cfg.MailOptions.From,
+	cfg, err := h.cfgSvc.Get()
+	if err != nil || cfg == nil || !cfg.MailOptions.Enable {
+		return
 	}
-	if cfg.MailOptions.SMTP != nil {
-		mailCfg.Host = cfg.MailOptions.SMTP.Options.Host
-		mailCfg.Port = cfg.MailOptions.SMTP.Options.Port
-		mailCfg.User = cfg.MailOptions.SMTP.User
-		mailCfg.Pass = cfg.MailOptions.SMTP.Pass
+	var owner models.UserModel
+	if err := h.svc.db.Select("mail").First(&owner).Error; err != nil {
+		return
 	}
-	if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" {
-		mailCfg.UseResend = true
-		mailCfg.ResendKey = cfg.MailOptions.Resend.APIKey
+	if strings.TrimSpace(owner.Mail) == "" {
+		return
 	}
-	sender := pkgmail.New(mailCfg)
-	_ = sender.Send(pkgmail.Message{
-		To:      []string{l.Email},
-		Subject: "嘿!~, 主人已处理你的友链申请!~",
+	authorName = strings.TrimSpace(authorName)
+	if authorName == "" {
+		authorName = l.Name
+	}
+	siteTitle := strings.TrimSpace(cfg.SEO.Title)
+	if siteTitle == "" {
+		siteTitle = "Mx Space"
+	}
+	_ = h.sendLinkNotificationWithConfig(cfg, owner.Mail, fmt.Sprintf("[%s] 新的朋友 %s", siteTitle, authorName), linkApplyTpl, linkApplyData{
+		AuthorName:  authorName,
+		Name:        l.Name,
+		URL:         l.URL,
+		Description: l.Description,
+	})
+}
+
+func (h *Handler) sendLinkNotification(to, subject, tplText string, data any) error {
+	if h.cfgSvc == nil || strings.TrimSpace(to) == "" {
+		return nil
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil || cfg == nil || !cfg.MailOptions.Enable {
+		return err
+	}
+	return h.sendLinkNotificationWithConfig(cfg, to, subject, tplText, data)
+}
+
+func (h *Handler) sendLinkNotificationWithConfig(cfg *coreconfig.FullConfig, to, subject, tplText string, data any) error {
+	if cfg == nil || strings.TrimSpace(to) == "" {
+		return nil
+	}
+	tpl, err := template.New("").Parse(tplText)
+	if err != nil {
+		return err
+	}
+	var buf strings.Builder
+	if err := tpl.Execute(&buf, data); err != nil {
+		return err
+	}
+	sender := pkgmail.New(pkgmail.BuildMailConfig(cfg), pkgmail.WithLogger(h.svc.logger))
+	return sender.Send(pkgmail.Message{
+		To:      []string{to},
+		Subject: subject,
 		HTML:    buf.String(),
 	})
 }
