@@ -2,6 +2,10 @@ package auth
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
@@ -18,6 +23,8 @@ import (
 	sessionpkg "github.com/mx-space/core/internal/pkg/session"
 	"gorm.io/gorm"
 )
+
+const oauthStateTTL = 10 * time.Minute
 
 // OAuthHandler handles social OAuth2 login flows.
 type OAuthHandler struct {
@@ -56,7 +63,7 @@ func (h *OAuthHandler) listProviders(c *gin.Context) {
 	providers := make([]string, 0)
 	for _, p := range cfg.OAuth.Providers {
 		providerType := strings.TrimSpace(p.Type)
-		if p.Enabled && providerType != "" && oauthClientID(cfg.OAuth.Public, providerType) != "" {
+		if p.Enabled && providerType != "" && oauthClientID(cfg.OAuth.Public, providerType) != "" && oauthClientSecret(cfg.OAuth.Secrets, providerType) != "" {
 			providers = append(providers, providerType)
 		}
 	}
@@ -134,6 +141,12 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 		return
 	}
 
+	state, err := parseOAuthState(c.Query("state"), providerID, clientSecret)
+	if err != nil {
+		response.BadRequest(c, "invalid oauth state")
+		return
+	}
+
 	accessToken, err := exchangeCode(providerID, code, clientID, clientSecret, callbackURI(c, providerID))
 	if err != nil {
 		response.InternalError(c, fmt.Errorf("token exchange failed: %w", err))
@@ -143,6 +156,10 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 	socialUser, err := fetchSocialUser(providerID, accessToken)
 	if err != nil {
 		response.InternalError(c, fmt.Errorf("failed to fetch user info: %w", err))
+		return
+	}
+	if strings.TrimSpace(socialUser.ID) == "" {
+		response.ForbiddenMsg(c, "OAuth 账号信息无效")
 		return
 	}
 
@@ -159,22 +176,40 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 	var existing models.OAuth2Token
 	h.db.Where("user_id = ? AND provider = ?", owner.ID, providerID).First(&existing)
 
-	now := time.Now()
-	oauthRecord := models.OAuth2Token{
-		UserID:      owner.ID,
-		Provider:    providerID,
-		ProviderUID: socialUser.ID,
-		AccessToken: accessToken,
-		LastUsed:    &now,
+	currentUserID := h.currentAuthenticatedUserID(c)
+	allowLink := currentUserID != "" && currentUserID == owner.ID
+	linkedByRecord := existing.ID != "" && strings.TrimSpace(existing.ProviderUID) != "" && strings.TrimSpace(existing.ProviderUID) == strings.TrimSpace(socialUser.ID)
+	linkedByProfile := ownerHasLinkedSocialID(owner.SocialIDs, providerID, socialUser.ID)
+	if !allowLink && !linkedByRecord && !linkedByProfile {
+		response.ForbiddenMsg(c, "社交账号未绑定到当前站点主人")
+		return
 	}
+
+	now := time.Now()
 	if existing.ID != "" {
-		h.db.Model(&existing).Updates(map[string]interface{}{
-			"provider_uid": socialUser.ID,
+		updates := map[string]interface{}{
 			"access_token": accessToken,
 			"last_used":    now,
-		})
+		}
+		if allowLink || linkedByRecord || linkedByProfile {
+			updates["provider_uid"] = socialUser.ID
+		}
+		if err := h.db.Model(&existing).Updates(updates).Error; err != nil {
+			response.InternalError(c, err)
+			return
+		}
 	} else {
-		h.db.Create(&oauthRecord)
+		oauthRecord := models.OAuth2Token{
+			UserID:      owner.ID,
+			Provider:    providerID,
+			ProviderUID: socialUser.ID,
+			AccessToken: accessToken,
+			LastUsed:    &now,
+		}
+		if err := h.db.Create(&oauthRecord).Error; err != nil {
+			response.InternalError(c, err)
+			return
+		}
 	}
 
 	token, _, err := sessionpkg.Issue(h.db, owner.ID, c.ClientIP(), c.Request.UserAgent(), sessionpkg.DefaultTTL)
@@ -184,8 +219,8 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 	}
 	setAuthTokenCookie(c, token)
 
-	if callbackURL := strings.TrimSpace(c.Query("state")); callbackURL != "" {
-		if redirectWithToken(c, callbackURL, token) {
+	if state.CallbackURL != "" {
+		if redirectWithToken(c, state.CallbackURL, token) {
 			return
 		}
 	}
@@ -231,7 +266,7 @@ func callbackURI(c *gin.Context, provider string) string {
 	return fmt.Sprintf("%s://%s%s/callback/%s", scheme, c.Request.Host, basePath, provider)
 }
 
-func oauthDef(providerID, clientID, callbackURL string, c *gin.Context) *oauthProviderDef {
+func oauthDef(providerID, clientID, stateToken string, c *gin.Context) *oauthProviderDef {
 	redirectURI := callbackURI(c, providerID)
 	switch providerID {
 	case "github":
@@ -239,8 +274,8 @@ func oauthDef(providerID, clientID, callbackURL string, c *gin.Context) *oauthPr
 		params.Set("client_id", clientID)
 		params.Set("redirect_uri", redirectURI)
 		params.Set("scope", "user:email")
-		if callbackURL != "" {
-			params.Set("state", callbackURL)
+		if stateToken != "" {
+			params.Set("state", stateToken)
 		}
 		return &oauthProviderDef{
 			AuthURL: "https://github.com/login/oauth/authorize?" + params.Encode(),
@@ -252,8 +287,8 @@ func oauthDef(providerID, clientID, callbackURL string, c *gin.Context) *oauthPr
 		params.Set("response_type", "code")
 		params.Set("scope", "openid email profile")
 		params.Set("access_type", "offline")
-		if callbackURL != "" {
-			params.Set("state", callbackURL)
+		if stateToken != "" {
+			params.Set("state", stateToken)
 		}
 		return &oauthProviderDef{
 			AuthURL: "https://accounts.google.com/o/oauth2/v2/auth?" + params.Encode(),
@@ -267,11 +302,20 @@ func (h *OAuthHandler) resolveProvider(c *gin.Context, providerID, callbackURL s
 	if err != nil {
 		return nil, err
 	}
+	validatedCallbackURL, err := validateOAuthCallbackURL(callbackURL, c, cfg)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range cfg.OAuth.Providers {
 		providerType := strings.TrimSpace(p.Type)
 		clientID := oauthClientID(cfg.OAuth.Public, providerType)
-		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" {
-			return oauthDef(providerType, clientID, callbackURL, c), nil
+		clientSecret := oauthClientSecret(cfg.OAuth.Secrets, providerType)
+		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" && clientSecret != "" {
+			stateToken, err := buildOAuthState(providerType, validatedCallbackURL, clientSecret)
+			if err != nil {
+				return nil, err
+			}
+			return oauthDef(providerType, clientID, stateToken, c), nil
 		}
 	}
 	return nil, nil
@@ -287,6 +331,187 @@ func redirectWithToken(c *gin.Context, callbackURL, token string) bool {
 	target.RawQuery = q.Encode()
 	c.Redirect(http.StatusTemporaryRedirect, target.String())
 	return true
+}
+
+type oauthStatePayload struct {
+	Provider    string `json:"provider"`
+	CallbackURL string `json:"callback_url,omitempty"`
+	IssuedAt    int64  `json:"issued_at"`
+	Nonce       string `json:"nonce"`
+}
+
+func buildOAuthState(providerID, callbackURL, signingKey string) (string, error) {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	if providerID == "" || strings.TrimSpace(signingKey) == "" {
+		return "", fmt.Errorf("oauth state signing secret is unavailable")
+	}
+	nonce, err := randomOAuthStateNonce()
+	if err != nil {
+		return "", err
+	}
+	payloadBytes, err := json.Marshal(oauthStatePayload{
+		Provider:    providerID,
+		CallbackURL: strings.TrimSpace(callbackURL),
+		IssuedAt:    time.Now().Unix(),
+		Nonce:       nonce,
+	})
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, []byte(signingKey))
+	_, _ = mac.Write(payloadBytes)
+	return base64.RawURLEncoding.EncodeToString(payloadBytes) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func parseOAuthState(rawState, providerID, signingKey string) (*oauthStatePayload, error) {
+	stateToken := strings.TrimSpace(rawState)
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	if stateToken == "" || providerID == "" || strings.TrimSpace(signingKey) == "" {
+		return nil, fmt.Errorf("oauth state is invalid")
+	}
+	parts := strings.Split(stateToken, ".")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("oauth state is invalid")
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	providedMAC, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	mac := hmac.New(sha256.New, []byte(signingKey))
+	_, _ = mac.Write(payloadBytes)
+	if !hmac.Equal(providedMAC, mac.Sum(nil)) {
+		return nil, fmt.Errorf("oauth state signature mismatch")
+	}
+	var payload oauthStatePayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil, err
+	}
+	if strings.ToLower(strings.TrimSpace(payload.Provider)) != providerID {
+		return nil, fmt.Errorf("oauth state provider mismatch")
+	}
+	issuedAt := time.Unix(payload.IssuedAt, 0)
+	if payload.IssuedAt == 0 || time.Since(issuedAt) > oauthStateTTL || issuedAt.After(time.Now().Add(30*time.Second)) {
+		return nil, fmt.Errorf("oauth state expired")
+	}
+	return &payload, nil
+}
+
+func randomOAuthStateNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func validateOAuthCallbackURL(raw string, c *gin.Context, cfg *appcfg.FullConfig) (string, error) {
+	callbackURL := strings.TrimSpace(raw)
+	if callbackURL == "" {
+		return "", nil
+	}
+	target, err := url.Parse(callbackURL)
+	if err != nil || target == nil {
+		return "", fmt.Errorf("invalid callback url")
+	}
+	if target.Scheme == "" && target.Host == "" {
+		if !strings.HasPrefix(target.Path, "/") {
+			return "", fmt.Errorf("invalid callback url")
+		}
+		return target.String(), nil
+	}
+	if !strings.EqualFold(target.Scheme, "http") && !strings.EqualFold(target.Scheme, "https") {
+		return "", fmt.Errorf("invalid callback url scheme")
+	}
+	allowedOrigins := oauthAllowedCallbackOrigins(c, cfg)
+	if _, ok := allowedOrigins[normalizeOAuthOrigin(target)]; !ok {
+		return "", fmt.Errorf("callback url origin not allowed")
+	}
+	return target.String(), nil
+}
+
+func oauthAllowedCallbackOrigins(c *gin.Context, cfg *appcfg.FullConfig) map[string]struct{} {
+	allowed := map[string]struct{}{}
+	addOAuthOrigin(allowed, c.GetHeader("Origin"))
+	addOAuthOrigin(allowed, requestOrigin(c))
+	if cfg != nil {
+		addOAuthOrigin(allowed, cfg.URL.AdminURL)
+		addOAuthOrigin(allowed, cfg.URL.WebURL)
+		addOAuthOrigin(allowed, cfg.URL.ServerURL)
+	}
+	return allowed
+}
+
+func addOAuthOrigin(dest map[string]struct{}, raw string) {
+	origin := normalizeOAuthOriginString(raw)
+	if origin == "" {
+		return
+	}
+	dest[origin] = struct{}{}
+}
+
+func normalizeOAuthOriginString(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	target, err := url.Parse(text)
+	if err != nil || target == nil {
+		return ""
+	}
+	return normalizeOAuthOrigin(target)
+}
+
+func normalizeOAuthOrigin(target *url.URL) string {
+	if target == nil || target.Scheme == "" || target.Host == "" {
+		return ""
+	}
+	return strings.ToLower(target.Scheme) + "://" + strings.ToLower(target.Host)
+}
+
+func requestOrigin(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	scheme := "https"
+	if c.Request.TLS == nil {
+		scheme = "http"
+	}
+	if strings.TrimSpace(c.Request.Host) == "" {
+		return ""
+	}
+	return scheme + "://" + c.Request.Host
+}
+
+func (h *OAuthHandler) currentAuthenticatedUserID(c *gin.Context) string {
+	rawToken := extractAuthTokenFromRequest(c)
+	if rawToken == "" {
+		return ""
+	}
+	claims, err := middleware.ValidateTokenClaims(h.db, rawToken)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(claims.UserID)
+}
+
+func ownerHasLinkedSocialID(raw, providerID, socialUserID string) bool {
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(providerID) == "" || strings.TrimSpace(socialUserID) == "" {
+		return false
+	}
+	ids := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return false
+	}
+	for key, value := range ids {
+		if strings.EqualFold(strings.TrimSpace(key), providerID) && strings.TrimSpace(fmt.Sprint(value)) == strings.TrimSpace(socialUserID) {
+			return true
+		}
+	}
+	return false
 }
 
 func setAuthTokenCookie(c *gin.Context, token string) {
