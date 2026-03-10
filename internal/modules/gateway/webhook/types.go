@@ -22,13 +22,13 @@ type UpdateWebhookDTO struct {
 
 // webhookResponse is the outbound representation of a webhook (no secret).
 type webhookResponse struct {
-	ID         string    `json:"id"`
-	PayloadURL string    `json:"payloadUrl"`
-	Events     []string  `json:"events"`
-	Enabled    bool      `json:"enabled"`
-	Scope      int       `json:"scope"`
-	Created    time.Time `json:"created"`
-	Modified   time.Time `json:"modified"`
+	ID         string     `json:"id"`
+	PayloadURL string     `json:"payloadUrl"`
+	Events     []string   `json:"events"`
+	Enabled    bool       `json:"enabled"`
+	Scope      int        `json:"scope"`
+	Created    time.Time  `json:"created"`
+	Modified   *time.Time `json:"modified"`
 }
 
 // webhookEventEnum is the canonical list of supported event names.

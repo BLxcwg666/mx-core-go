@@ -73,7 +73,7 @@ type commentResponse struct {
 	Ref           interface{}            `json:"ref,omitempty"`
 	EditedAt      *time.Time             `json:"edited_at"`
 	Created       time.Time              `json:"created"`
-	Modified      time.Time              `json:"modified"`
+	Modified      *time.Time             `json:"modified"`
 }
 
 type commentParentResponse struct {
@@ -88,6 +88,11 @@ func toResponse(c *models.CommentModel, isAdmin bool) commentResponse {
 	for i, ch := range c.Children {
 		children[i] = toResponse(&ch, isAdmin)
 	}
+	var modified *time.Time
+	if !c.UpdatedAt.IsZero() && c.UpdatedAt.Year() > 1 {
+		m := c.UpdatedAt
+		modified = &m
+	}
 	r := commentResponse{
 		ID: c.ID, RefType: refTypeForResponse(c.RefType), RefID: c.RefID,
 		Author: c.Author, URL: c.URL, Text: c.Text,
@@ -96,7 +101,7 @@ func toResponse(c *models.CommentModel, isAdmin bool) commentResponse {
 		Pin: c.Pin, IsWhispers: c.IsWhispers, Avatar: c.Avatar,
 		Meta: c.Meta, ReaderID: c.ReaderID, Source: c.Source,
 		Location: c.Location, EditedAt: c.EditedAt,
-		Created: c.CreatedAt, Modified: c.UpdatedAt,
+		Created: c.CreatedAt, Modified: modified,
 	}
 	if isAdmin {
 		r.IP = c.IP

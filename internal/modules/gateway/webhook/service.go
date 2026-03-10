@@ -276,10 +276,15 @@ func toResponse(w *models.WebhookModel) webhookResponse {
 	if events == nil {
 		events = []string{}
 	}
+	var modified *time.Time
+	if !w.UpdatedAt.IsZero() && w.UpdatedAt.Year() > 1 {
+		m := w.UpdatedAt
+		modified = &m
+	}
 	return webhookResponse{
 		ID: w.ID, PayloadURL: w.PayloadURL, Events: events,
 		Enabled: w.Enabled, Scope: w.Scope,
-		Created: w.CreatedAt, Modified: w.UpdatedAt,
+		Created: w.CreatedAt, Modified: modified,
 	}
 }
 

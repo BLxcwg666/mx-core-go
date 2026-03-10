@@ -50,7 +50,7 @@ type pageResponse struct {
 	AllowComment bool                   `json:"allowComment"`
 	Images       []models.Image         `json:"images"`
 	Created      time.Time              `json:"created"`
-	Modified     time.Time              `json:"modified"`
+	Modified     *time.Time             `json:"modified"`
 }
 
 func toResponse(p *models.PageModel) pageResponse {
@@ -58,11 +58,16 @@ func toResponse(p *models.PageModel) pageResponse {
 	if images == nil {
 		images = []models.Image{}
 	}
+	var modified *time.Time
+	if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
+		m := p.UpdatedAt
+		modified = &m
+	}
 	return pageResponse{
 		ID: p.ID, Slug: p.Slug, Title: p.Title, Text: p.Text,
 		Subtitle: p.Subtitle, Order: p.Order, Meta: p.Meta,
 		AllowComment: p.AllowComment, Images: images,
-		Created: p.CreatedAt, Modified: p.UpdatedAt,
+		Created: p.CreatedAt, Modified: modified,
 	}
 }
 

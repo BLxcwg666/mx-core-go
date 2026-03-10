@@ -36,13 +36,13 @@ type Service struct {
 }
 
 type CategoryListItem struct {
-	ID       string    `json:"id"`
-	Type     int       `json:"type"`
-	Count    int64     `json:"count"`
-	Name     string    `json:"name"`
-	Slug     string    `json:"slug"`
-	Created  time.Time `json:"created"`
-	Modified time.Time `json:"modified"`
+	ID       string     `json:"id"`
+	Type     int        `json:"type"`
+	Count    int64      `json:"count"`
+	Name     string     `json:"name"`
+	Slug     string     `json:"slug"`
+	Created  time.Time  `json:"created"`
+	Modified *time.Time `json:"modified"`
 }
 
 type TagSummary struct {
@@ -66,11 +66,11 @@ type TagPostLite struct {
 }
 
 type CategoryPostLite struct {
-	ID       string    `json:"id"       gorm:"column:id"`
-	Title    string    `json:"title"    gorm:"column:title"`
-	Slug     string    `json:"slug"     gorm:"column:slug"`
-	Created  time.Time `json:"created"  gorm:"column:created"`
-	Modified time.Time `json:"modified" gorm:"column:modified"`
+	ID       string     `json:"id"       gorm:"column:id"`
+	Title    string     `json:"title"    gorm:"column:title"`
+	Slug     string     `json:"slug"     gorm:"column:slug"`
+	Created  time.Time  `json:"created"  gorm:"column:created"`
+	Modified *time.Time `json:"modified" gorm:"column:modified"`
 }
 
 type CategoryDetail struct {
@@ -80,7 +80,7 @@ type CategoryDetail struct {
 	Type     int                `json:"type"`
 	Count    int                `json:"count"`
 	Created  time.Time          `json:"created"`
-	Modified time.Time          `json:"modified"`
+	Modified *time.Time         `json:"modified"`
 	Children []CategoryPostLite `json:"children"`
 }
 
@@ -104,6 +104,11 @@ func (s *Service) ListCategories() ([]CategoryListItem, error) {
 
 	items := make([]CategoryListItem, 0, len(cats))
 	for _, cat := range cats {
+		var modified *time.Time
+		if !cat.UpdatedAt.IsZero() && cat.UpdatedAt.Year() > 1 {
+			m := cat.UpdatedAt
+			modified = &m
+		}
 		items = append(items, CategoryListItem{
 			ID:       cat.ID,
 			Type:     cat.Type,
@@ -111,7 +116,7 @@ func (s *Service) ListCategories() ([]CategoryListItem, error) {
 			Name:     cat.Name,
 			Slug:     cat.Slug,
 			Created:  cat.CreatedAt,
-			Modified: cat.UpdatedAt,
+			Modified: modified,
 		})
 	}
 	return items, nil
@@ -239,6 +244,11 @@ func (s *Service) GetDetailByQuery(query string) (*CategoryDetail, error) {
 		children = []CategoryPostLite{}
 	}
 
+	var modified *time.Time
+	if !cat.UpdatedAt.IsZero() && cat.UpdatedAt.Year() > 1 {
+		m := cat.UpdatedAt
+		modified = &m
+	}
 	return &CategoryDetail{
 		ID:       cat.ID,
 		Name:     cat.Name,
@@ -246,7 +256,7 @@ func (s *Service) GetDetailByQuery(query string) (*CategoryDetail, error) {
 		Type:     cat.Type,
 		Count:    len(children),
 		Created:  cat.CreatedAt,
-		Modified: cat.UpdatedAt,
+		Modified: modified,
 		Children: children,
 	}, nil
 }

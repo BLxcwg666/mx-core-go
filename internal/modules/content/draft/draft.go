@@ -45,7 +45,7 @@ type draftResponse struct {
 	PublishedVersion *int                   `json:"publishedVersion"`
 	HistoryCount     int                    `json:"historyCount"`
 	Created          time.Time              `json:"created"`
-	Updated          time.Time              `json:"updated"`
+	Updated          *time.Time             `json:"updated"`
 }
 
 func toResponse(d *models.DraftModel) draftResponse {
@@ -53,13 +53,18 @@ func toResponse(d *models.DraftModel) draftResponse {
 	if images == nil {
 		images = []models.Image{}
 	}
+	var updated *time.Time
+	if !d.UpdatedAt.IsZero() && d.UpdatedAt.Year() > 1 {
+		u := d.UpdatedAt
+		updated = &u
+	}
 	return draftResponse{
 		ID: d.ID, RefType: d.RefType, RefID: d.RefID,
 		Title: d.Title, Text: d.Text, Images: images, Meta: d.Meta,
 		TypeSpecificData: d.TypeSpecificData,
 		Version:          d.Version, PublishedVersion: d.PublishedVersion,
 		HistoryCount: len(d.History),
-		Created:      d.CreatedAt, Updated: d.UpdatedAt,
+		Created:      d.CreatedAt, Updated: updated,
 	}
 }
 

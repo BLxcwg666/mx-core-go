@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
@@ -200,7 +201,11 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			pin := p.Pin
 			pinOrder := p.PinOrder
 			created := p.CreatedAt
-			modified := p.UpdatedAt
+			var modified *time.Time
+			if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
+				m := p.UpdatedAt
+				modified = &m
+			}
 			results = append(results, SearchResult{
 				ID:          p.ID,
 				Title:       p.Title,
@@ -208,7 +213,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 				Type:        "post",
 				Slug:        p.Slug,
 				Created:     &created,
-				Modified:    &modified,
+				Modified:    modified,
 				CategoryID:  p.CategoryID,
 				Category:    p.Category,
 				Copyright:   &copyright,
@@ -246,14 +251,18 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			isPublished := n.IsPublished
 			bookmark := n.Bookmark
 			created := n.CreatedAt
-			modified := n.UpdatedAt
+			var modified *time.Time
+			if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
+				m := n.UpdatedAt
+				modified = &m
+			}
 			results = append(results, SearchResult{
 				ID:          n.ID,
 				Title:       n.Title,
 				Type:        "note",
 				NID:         n.NID,
 				Created:     &created,
-				Modified:    &modified,
+				Modified:    modified,
 				IsPublished: &isPublished,
 				Mood:        n.Mood,
 				Weather:     n.Weather,
@@ -288,14 +297,18 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			order := pg.Order
 			allowComment := pg.AllowComment
 			created := pg.CreatedAt
-			modified := pg.UpdatedAt
+			var modified *time.Time
+			if !pg.UpdatedAt.IsZero() && pg.UpdatedAt.Year() > 1 {
+				m := pg.UpdatedAt
+				modified = &m
+			}
 			results = append(results, SearchResult{
 				ID:           pg.ID,
 				Title:        pg.Title,
 				Type:         "page",
 				Slug:         pg.Slug,
 				Created:      &created,
-				Modified:     &modified,
+				Modified:     modified,
 				Subtitle:     pg.Subtitle,
 				Order:        &order,
 				AllowComment: &allowComment,

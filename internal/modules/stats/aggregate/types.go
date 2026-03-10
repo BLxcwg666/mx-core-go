@@ -124,23 +124,23 @@ type topPost struct {
 }
 
 type timelineNote struct {
-	ID       string    `json:"id"`
-	NID      int       `json:"nid"`
-	Title    string    `json:"title"`
-	Weather  string    `json:"weather"`
-	Mood     string    `json:"mood"`
-	Created  time.Time `json:"created"`
-	Modified time.Time `json:"modified"`
-	Bookmark bool      `json:"bookmark"`
+	ID       string     `json:"id"`
+	NID      int        `json:"nid"`
+	Title    string     `json:"title"`
+	Weather  string     `json:"weather"`
+	Mood     string     `json:"mood"`
+	Created  time.Time  `json:"created"`
+	Modified *time.Time `json:"modified"`
+	Bookmark bool       `json:"bookmark"`
 }
 
 type timelinePost struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
-	Slug     string    `json:"slug"`
-	Created  time.Time `json:"created"`
-	Modified time.Time `json:"modified"`
-	URL      string    `json:"url"`
+	ID       string     `json:"id"`
+	Title    string     `json:"title"`
+	Slug     string     `json:"slug"`
+	Created  time.Time  `json:"created"`
+	Modified *time.Time `json:"modified"`
+	URL      string     `json:"url"`
 	Category *struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`

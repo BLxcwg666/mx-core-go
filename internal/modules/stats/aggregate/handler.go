@@ -161,12 +161,17 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 			}
 			postOut := make([]timelinePost, 0, len(posts))
 			for _, p := range posts {
+				var modified *time.Time
+				if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
+					m := p.UpdatedAt
+					modified = &m
+				}
 				item := timelinePost{
 					ID:       p.ID,
 					Title:    p.Title,
 					Slug:     p.Slug,
 					Created:  p.CreatedAt,
-					Modified: p.UpdatedAt,
+					Modified: modified,
 				}
 				if p.Category != nil {
 					item.Category = &struct {
@@ -197,6 +202,11 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 			}
 			noteOut := make([]timelineNote, 0, len(notes))
 			for _, n := range notes {
+				var noteModified *time.Time
+				if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
+					m := n.UpdatedAt
+					noteModified = &m
+				}
 				noteOut = append(noteOut, timelineNote{
 					ID:       n.ID,
 					NID:      n.NID,
@@ -204,7 +214,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 					Weather:  n.Weather,
 					Mood:     n.Mood,
 					Created:  n.CreatedAt,
-					Modified: n.UpdatedAt,
+					Modified: noteModified,
 					Bookmark: n.Bookmark,
 				})
 			}
@@ -308,14 +318,18 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 				categorySlug = p.Category.Slug
 			}
 			created := p.CreatedAt
-			modified := p.UpdatedAt
+			var postModified *time.Time
+			if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
+				m := p.UpdatedAt
+				postModified = &m
+			}
 			images := p.Images
 			if images == nil {
 				images = []models.Image{}
 			}
 			feedItems = append(feedItems, feedItem{
 				Created:  &created,
-				Modified: &modified,
+				Modified: postModified,
 				Link:     baseURL + "/posts/" + categorySlug + "/" + p.Slug,
 				Title:    p.Title,
 				Text:     p.Text,
@@ -337,14 +351,18 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 				continue
 			}
 			created := n.CreatedAt
-			modified := n.UpdatedAt
+			var noteModified *time.Time
+			if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
+				m := n.UpdatedAt
+				noteModified = &m
+			}
 			images := n.Images
 			if images == nil {
 				images = []models.Image{}
 			}
 			feedItems = append(feedItems, feedItem{
 				Created:  &created,
-				Modified: &modified,
+				Modified: noteModified,
 				Link:     baseURL + "/notes/" + strconv.Itoa(n.NID),
 				Title:    n.Title,
 				Text:     n.Text,

@@ -25,18 +25,23 @@ type UpdateSayDTO struct {
 }
 
 type sayResponse struct {
-	ID       string    `json:"id"`
-	Text     string    `json:"text"`
-	Source   string    `json:"source"`
-	Author   string    `json:"author"`
-	Created  time.Time `json:"created"`
-	Modified time.Time `json:"modified"`
+	ID       string     `json:"id"`
+	Text     string     `json:"text"`
+	Source   string     `json:"source"`
+	Author   string     `json:"author"`
+	Created  time.Time  `json:"created"`
+	Modified *time.Time `json:"modified"`
 }
 
 func toResponse(s *models.SayModel) sayResponse {
+	var modified *time.Time
+	if !s.UpdatedAt.IsZero() && s.UpdatedAt.Year() > 1 {
+		m := s.UpdatedAt
+		modified = &m
+	}
 	return sayResponse{
 		ID: s.ID, Text: s.Text, Source: s.Source, Author: s.Author,
-		Created: s.CreatedAt, Modified: s.UpdatedAt,
+		Created: s.CreatedAt, Modified: modified,
 	}
 }
 

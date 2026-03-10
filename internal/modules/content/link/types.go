@@ -43,7 +43,7 @@ type linkResponse struct {
 	State       models.LinkState `json:"state"`
 	Email       string           `json:"email,omitempty"`
 	Created     time.Time        `json:"created"`
-	Modified    time.Time        `json:"modified"`
+	Modified    *time.Time       `json:"modified"`
 }
 
 type HealthResult struct {
@@ -115,10 +115,15 @@ var linkApplyTpl = `<!DOCTYPE html>
 </html>`
 
 func toResponse(l *models.LinkModel, showEmail bool) linkResponse {
+	var modified *time.Time
+	if !l.UpdatedAt.IsZero() && l.UpdatedAt.Year() > 1 {
+		m := l.UpdatedAt
+		modified = &m
+	}
 	r := linkResponse{
 		ID: l.ID, Name: l.Name, URL: l.URL, Avatar: l.Avatar,
 		Description: l.Description, Type: l.Type, State: l.State,
-		Created: l.CreatedAt, Modified: l.UpdatedAt,
+		Created: l.CreatedAt, Modified: modified,
 	}
 	if showEmail {
 		r.Email = l.Email

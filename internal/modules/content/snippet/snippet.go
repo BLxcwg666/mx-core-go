@@ -53,15 +53,20 @@ type snippetResponse struct {
 	Method    string             `json:"method"`
 	BuiltIn   bool               `json:"built_in"`
 	Created   time.Time          `json:"created"`
-	Updated   time.Time          `json:"updated"`
+	Updated   *time.Time         `json:"updated"`
 }
 
 func toResponse(s *models.SnippetModel) snippetResponse {
+	var updated *time.Time
+	if !s.UpdatedAt.IsZero() && s.UpdatedAt.Year() > 1 {
+		u := s.UpdatedAt
+		updated = &u
+	}
 	return snippetResponse{
 		ID: s.ID, Type: normalizeSnippetType(s.Type), Name: s.Name, Reference: s.Reference,
 		Raw: s.Raw, Comment: s.Comment, Private: s.Private, Enable: s.Enable,
 		Schema: s.Schema, Metatype: s.Metatype, Method: s.Method, BuiltIn: s.BuiltIn,
-		Created: s.CreatedAt, Updated: s.UpdatedAt,
+		Created: s.CreatedAt, Updated: updated,
 	}
 }
 
