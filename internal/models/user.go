@@ -47,9 +47,11 @@ func (OAuth2Token) TableName() string { return "oauth2_tokens" }
 // AuthnModel stores WebAuthn/passkey credentials.
 type AuthnModel struct {
 	Base
+	UserID               string `json:"-"                       gorm:"index"`
 	Name                 string `json:"name"                    gorm:"uniqueIndex;not null"`
 	CredentialID         []byte `json:"-"                       gorm:"type:blob"`
 	CredentialPublicKey  []byte `json:"-"                       gorm:"type:blob"`
+	CredentialJSON       string `json:"-"                       gorm:"type:longtext"`
 	Counter              uint32 `json:"counter"`
 	CredentialDeviceType string `json:"credential_device_type"`
 	CredentialBackedUp   bool   `json:"credential_backed_up"`
