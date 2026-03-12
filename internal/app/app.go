@@ -145,9 +145,13 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
 
+	shouldRunCron := cluster.ShouldRunCron()
 	sched := pkgcron.New()
-	if cluster.ShouldRunCron() {
-		registerCronJobs(sched, db, cfg, logger)
+	sched.SetBaseContext(ctx)
+	sched.SetRedisClient(rc)
+	sched.SetEnabled(shouldRunCron)
+	registerCronJobs(sched, db, cfg, logger)
+	if shouldRunCron {
 		go sched.Start(ctx)
 	}
 
