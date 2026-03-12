@@ -84,7 +84,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	appInfo := gin.H{
 		"name":     "mx-space-core",
 		"author":   "libxcnya.so <me@xcnya.cn> / Innei <https://innei.in>",
-		"version":  "1.0.0",
+		"version":  "2.0.0",
 		"homepage": "https://github.com/BLxcwg666/mx-core-go",
 		"issues":   "https://github.com/BLxcwg666/mx-core-go/issues",
 	}
