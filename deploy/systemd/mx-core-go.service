@@ -1,0 +1,24 @@
+[Unit]
+Description=Mix Space Core (Go)
+Documentation=https://github.com/BLxcwg666/mx-core-go
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Adjust these paths if your deployment layout differs.
+User=mx-space
+Group=mx-space
+WorkingDirectory=/opt/mx-core-go
+EnvironmentFile=-/etc/default/mx-core-go
+ExecStart=/opt/mx-core-go/bin/server --config /etc/mx-core-go/config.yml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

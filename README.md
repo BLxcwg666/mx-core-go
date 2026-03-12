@@ -31,6 +31,26 @@
 - 指定配置文件：`go run ./cmd/server --config ./config.yml`（若未指定则使用二进制同级目录的`config.yml`）
 - 集群模式：`go run ./cmd/server --cluster --cluster_workers 2`
 
+## systemd 部署（Linux）
+
+- 可以直接使用 `deploy/systemd/mx-core-go.service`
+- 建议把二进制部署到 `/opt/mx-core-go/bin/server`
+- 建议把配置文件放到 `/etc/mx-core-go/config.yml`
+- 生产环境记得把配置里的 `env` 设为 `production`
+- 可选环境文件：`/etc/default/mx-core-go`（例如设置 `CLUSTER=true`、`CLUSTER_WORKERS=2`）
+- 建议先创建运行用户：`sudo useradd --system --home /opt/mx-core-go --shell /usr/sbin/nologin mx-space`
+- 建议给生产环境配置绝对路径，避免日志、备份、上传目录落到二进制目录下，例如：
+
+```yaml
+paths:
+  logs: /var/log/mx-core-go
+  backups: /var/lib/mx-core-go/backups
+  static: /var/lib/mx-core-go/static
+```
+
+- 安装服务：`sudo cp deploy/systemd/mx-core-go.service /etc/systemd/system/mx-core-go.service`
+- 重载并启动：`sudo systemctl daemon-reload && sudo systemctl enable --now mx-core-go`
+
 # 许可
 
 本项目采用 GNU Affero General Public License v3.0 (AGPLv3) 开源
