@@ -70,11 +70,6 @@ func main() {
 	role := resolveRole(*clusterEnabled)
 	setProcessTitle(role, cfg.Env)
 
-	// Match mx-core: log ENV on startup.
-	if cluster.ShouldLogBootstrap() {
-		logger.Info("ENV: " + resolveEnv(cfg.Env))
-	}
-
 	opts := cluster.Options{
 		Enable:     *clusterEnabled,
 		Workers:    *clusterWorkers,
@@ -88,6 +83,10 @@ func main() {
 }
 
 func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled bool) error {
+	if cluster.ShouldLogServerBootstrap() {
+		logger.Info("ENV: " + resolveEnv(cfg.Env))
+	}
+
 	application, err := app.New(logger, cfg)
 	if err != nil {
 		return fmt.Errorf("initialize app: %w", err)
@@ -108,7 +107,7 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 		return fmt.Errorf("listen %s: %w", listenAddr, err)
 	}
 
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		pid := os.Getpid()
 		prefix := "P"
 		if cluster.IsWorker() {
@@ -147,7 +146,7 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 	case err := <-serveErrCh:
 		return err
 	case <-quit:
-		if cluster.ShouldLogBootstrap() {
+		if cluster.ShouldLogServerBootstrap() {
 			logger.Info("shutting down server...")
 		}
 		application.Shutdown()
@@ -158,7 +157,7 @@ func runHTTPServer(logger *zap.Logger, cfg *config.AppConfig, clusterEnabled boo
 			return fmt.Errorf("forced shutdown: %w", err)
 		}
 		_ = <-serveErrCh
-		if cluster.ShouldLogBootstrap() {
+		if cluster.ShouldLogServerBootstrap() {
 			logger.Info("server exited")
 		}
 		return nil

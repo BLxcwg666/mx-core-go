@@ -38,7 +38,7 @@ func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 		if !cfg.IsDev() {
 			return fmt.Errorf("jwt_secret must be set in production")
 		}
-		if cluster.ShouldLogBootstrap() {
+		if cluster.ShouldLogServerBootstrap() {
 			logger.Warn("jwt_secret is empty, using built-in default secret")
 		}
 	case secret == jwtSecretPlaceholder || secret == jwtSecretBuiltIn:
@@ -46,7 +46,7 @@ func applyRuntimeSettings(cfg *config.AppConfig, logger *zap.Logger) error {
 			return fmt.Errorf("jwt_secret must be changed from the default placeholder before running in production")
 		}
 		jwtpkg.SetSecret(secret)
-		if cluster.ShouldLogBootstrap() {
+		if cluster.ShouldLogServerBootstrap() {
 			logger.Warn("jwt_secret is using a development placeholder value")
 		}
 	default:

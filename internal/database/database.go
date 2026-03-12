@@ -51,7 +51,7 @@ func EnsureSchema(cfg *config.AppConfig) error {
 }
 
 func resolveLogLevel(cfg *config.AppConfig) logger.LogLevel {
-	logLevel := logger.Warn
+	logLevel := logger.Silent
 	if cfg.IsDev() {
 		if cluster.ShouldLogDevDiagnostics() {
 			logLevel = logger.Info

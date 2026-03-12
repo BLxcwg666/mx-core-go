@@ -79,6 +79,17 @@ func ShouldLogBootstrap() bool {
 	return true
 }
 
+// ShouldLogServerBootstrap keeps app/server startup logs visible once among serving processes.
+func ShouldLogServerBootstrap() bool {
+	if IsWorker() {
+		return WorkerID() == 1
+	}
+	if mainCluster, ok := IsMainClusterInstance(); ok {
+		return mainCluster
+	}
+	return true
+}
+
 // ShouldLogDevDiagnostics keeps dev-only framework logs visible once in cluster mode.
 func ShouldLogDevDiagnostics() bool {
 	if IsWorker() {

@@ -43,7 +43,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, err
 	}
 
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		sysLogger := logger.Named("System")
 		logDir := cfg.LogDir()
 		backupDir := cfg.BackupDir()
@@ -54,7 +54,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 	}
 
 	dbLogger := logger.Named("MySQL")
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		dbLogger.Info(prettylog.Green("connecting..."))
 	}
 
@@ -63,12 +63,12 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("database: %w", err)
 	}
 
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		dbLogger.Info(prettylog.Green("readied!"))
 	}
 
 	redisLogger := logger.Named("Redis")
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		redisLogger.Info(prettylog.Green("connecting..."))
 	}
 
@@ -77,7 +77,7 @@ func New(logger *zap.Logger, cfg *config.AppConfig) (*App, error) {
 		return nil, fmt.Errorf("redis: %w", err)
 	}
 
-	if cluster.ShouldLogBootstrap() {
+	if cluster.ShouldLogServerBootstrap() {
 		redisLogger.Info(prettylog.Green("readied!"))
 	}
 
