@@ -42,11 +42,7 @@ type recentlyResponse struct {
 }
 
 func toResponse(r *models.RecentlyModel) recentlyResponse {
-	var modified *time.Time
-	if !r.UpdatedAt.IsZero() && r.UpdatedAt.Year() > 1 {
-		modifiedAt := r.UpdatedAt
-		modified = &modifiedAt
-	}
+	modified := models.NullableModified(r.CreatedAt, r.UpdatedAt)
 	return recentlyResponse{
 		ID: r.ID, Content: r.Content,
 		RefType: r.RefType, RefID: r.RefID,

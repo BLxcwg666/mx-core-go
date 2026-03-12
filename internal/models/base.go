@@ -16,6 +16,14 @@ type Base struct {
 	DeletedAt gorm.DeletedAt `json:"-"        gorm:"index"`
 }
 
+func NullableModified(created, updated time.Time) *time.Time {
+	if updated.IsZero() || updated.Year() <= 1 || !updated.After(created) {
+		return nil
+	}
+	modifiedAt := updated
+	return &modifiedAt
+}
+
 func (b *Base) BeforeCreate(tx *gorm.DB) error {
 	if b.ID == "" {
 		b.ID = uuid.New().String()

@@ -64,11 +64,7 @@ func toResponse(p *models.PageModel) pageResponse {
 	if images == nil {
 		images = []models.Image{}
 	}
-	var modified *time.Time
-	if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
-		m := p.UpdatedAt
-		modified = &m
-	}
+	modified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 	return pageResponse{
 		ID: p.ID, Slug: p.Slug, Title: p.Title, Text: p.Text,
 		Subtitle: p.Subtitle, Order: p.Order, Meta: p.Meta,

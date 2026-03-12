@@ -3,7 +3,6 @@ package search
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
@@ -201,11 +200,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			pin := p.Pin
 			pinOrder := p.PinOrder
 			created := p.CreatedAt
-			var modified *time.Time
-			if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
-				m := p.UpdatedAt
-				modified = &m
-			}
+			modified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 			results = append(results, SearchResult{
 				ID:          p.ID,
 				Title:       p.Title,
@@ -251,11 +246,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			isPublished := n.IsPublished
 			bookmark := n.Bookmark
 			created := n.CreatedAt
-			var modified *time.Time
-			if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
-				m := n.UpdatedAt
-				modified = &m
-			}
+			modified := models.NullableModified(n.CreatedAt, n.UpdatedAt)
 			results = append(results, SearchResult{
 				ID:          n.ID,
 				Title:       n.Title,
@@ -297,11 +288,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 			order := pg.Order
 			allowComment := pg.AllowComment
 			created := pg.CreatedAt
-			var modified *time.Time
-			if !pg.UpdatedAt.IsZero() && pg.UpdatedAt.Year() > 1 {
-				m := pg.UpdatedAt
-				modified = &m
-			}
+			modified := models.NullableModified(pg.CreatedAt, pg.UpdatedAt)
 			results = append(results, SearchResult{
 				ID:           pg.ID,
 				Title:        pg.Title,

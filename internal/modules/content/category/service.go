@@ -104,11 +104,7 @@ func (s *Service) ListCategories() ([]CategoryListItem, error) {
 
 	items := make([]CategoryListItem, 0, len(cats))
 	for _, cat := range cats {
-		var modified *time.Time
-		if !cat.UpdatedAt.IsZero() && cat.UpdatedAt.Year() > 1 {
-			m := cat.UpdatedAt
-			modified = &m
-		}
+		modified := models.NullableModified(cat.CreatedAt, cat.UpdatedAt)
 		items = append(items, CategoryListItem{
 			ID:       cat.ID,
 			Type:     cat.Type,
@@ -244,11 +240,7 @@ func (s *Service) GetDetailByQuery(query string) (*CategoryDetail, error) {
 		children = []CategoryPostLite{}
 	}
 
-	var modified *time.Time
-	if !cat.UpdatedAt.IsZero() && cat.UpdatedAt.Year() > 1 {
-		m := cat.UpdatedAt
-		modified = &m
-	}
+	modified := models.NullableModified(cat.CreatedAt, cat.UpdatedAt)
 	return &CategoryDetail{
 		ID:       cat.ID,
 		Name:     cat.Name,

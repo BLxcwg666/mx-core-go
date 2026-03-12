@@ -204,10 +204,7 @@ func (h *Handler) listAround(c *gin.Context) {
 
 	out := make([]timelineItem, 0, len(items))
 	for _, n := range items {
-		var modified any
-		if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
-			modified = n.UpdatedAt
-		}
+		modified := any(models.NullableModified(n.CreatedAt, n.UpdatedAt))
 		out = append(out, timelineItem{
 			ID:          n.ID,
 			NID:         n.NID,
@@ -352,7 +349,7 @@ func (h *Handler) findAdjacentNoteByCreated(created time.Time, isAdmin, newer bo
 		NID:      note.NID,
 		Title:    note.Title,
 		Created:  note.CreatedAt,
-		Modified: nullableModified(note.UpdatedAt),
+		Modified: models.NullableModified(note.CreatedAt, note.UpdatedAt),
 	}, nil
 }
 

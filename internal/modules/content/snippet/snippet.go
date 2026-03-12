@@ -57,11 +57,7 @@ type snippetResponse struct {
 }
 
 func toResponse(s *models.SnippetModel) snippetResponse {
-	var updated *time.Time
-	if !s.UpdatedAt.IsZero() && s.UpdatedAt.Year() > 1 {
-		u := s.UpdatedAt
-		updated = &u
-	}
+	updated := models.NullableModified(s.CreatedAt, s.UpdatedAt)
 	return snippetResponse{
 		ID: s.ID, Type: normalizeSnippetType(s.Type), Name: s.Name, Reference: s.Reference,
 		Raw: s.Raw, Comment: s.Comment, Private: s.Private, Enable: s.Enable,

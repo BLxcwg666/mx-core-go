@@ -34,11 +34,7 @@ type sayResponse struct {
 }
 
 func toResponse(s *models.SayModel) sayResponse {
-	var modified *time.Time
-	if !s.UpdatedAt.IsZero() && s.UpdatedAt.Year() > 1 {
-		m := s.UpdatedAt
-		modified = &m
-	}
+	modified := models.NullableModified(s.CreatedAt, s.UpdatedAt)
 	return sayResponse{
 		ID: s.ID, Text: s.Text, Source: s.Source, Author: s.Author,
 		Created: s.CreatedAt, Modified: modified,

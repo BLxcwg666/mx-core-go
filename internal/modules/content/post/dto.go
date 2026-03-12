@@ -78,11 +78,7 @@ func toResponse(p *models.PostModel) postResponse {
 	if images == nil {
 		images = []models.Image{}
 	}
-	var modified *time.Time
-	if !p.UpdatedAt.IsZero() {
-		modifiedAt := p.UpdatedAt
-		modified = &modifiedAt
-	}
+	modified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 	return postResponse{
 		ID:           p.ID,
 		Slug:         p.Slug,

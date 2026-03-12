@@ -161,11 +161,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 			}
 			postOut := make([]timelinePost, 0, len(posts))
 			for _, p := range posts {
-				var modified *time.Time
-				if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
-					m := p.UpdatedAt
-					modified = &m
-				}
+				modified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 				item := timelinePost{
 					ID:       p.ID,
 					Title:    p.Title,
@@ -202,11 +198,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 			}
 			noteOut := make([]timelineNote, 0, len(notes))
 			for _, n := range notes {
-				var noteModified *time.Time
-				if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
-					m := n.UpdatedAt
-					noteModified = &m
-				}
+				noteModified := models.NullableModified(n.CreatedAt, n.UpdatedAt)
 				noteOut = append(noteOut, timelineNote{
 					ID:       n.ID,
 					NID:      n.NID,
@@ -318,11 +310,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 				categorySlug = p.Category.Slug
 			}
 			created := p.CreatedAt
-			var postModified *time.Time
-			if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
-				m := p.UpdatedAt
-				postModified = &m
-			}
+			postModified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 			images := p.Images
 			if images == nil {
 				images = []models.Image{}
@@ -351,11 +339,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 				continue
 			}
 			created := n.CreatedAt
-			var noteModified *time.Time
-			if !n.UpdatedAt.IsZero() && n.UpdatedAt.Year() > 1 {
-				m := n.UpdatedAt
-				noteModified = &m
-			}
+			noteModified := models.NullableModified(n.CreatedAt, n.UpdatedAt)
 			images := n.Images
 			if images == nil {
 				images = []models.Image{}

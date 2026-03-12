@@ -115,11 +115,7 @@ var linkApplyTpl = `<!DOCTYPE html>
 </html>`
 
 func toResponse(l *models.LinkModel, showEmail bool) linkResponse {
-	var modified *time.Time
-	if !l.UpdatedAt.IsZero() && l.UpdatedAt.Year() > 1 {
-		m := l.UpdatedAt
-		modified = &m
-	}
+	modified := models.NullableModified(l.CreatedAt, l.UpdatedAt)
 	r := linkResponse{
 		ID: l.ID, Name: l.Name, URL: l.URL, Avatar: l.Avatar,
 		Description: l.Description, Type: l.Type, State: l.State,

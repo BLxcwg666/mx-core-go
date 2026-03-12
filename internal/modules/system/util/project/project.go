@@ -53,11 +53,7 @@ func toResponse(p *models.ProjectModel) projectResponse {
 	if images == nil {
 		images = []string{}
 	}
-	var modified *time.Time
-	if !p.UpdatedAt.IsZero() && p.UpdatedAt.Year() > 1 {
-		modifiedAt := p.UpdatedAt
-		modified = &modifiedAt
-	}
+	modified := models.NullableModified(p.CreatedAt, p.UpdatedAt)
 	return projectResponse{
 		ID: p.ID, Name: p.Name, Description: p.Description,
 		PreviewURL: p.PreviewURL, DocURL: p.DocURL, ProjectURL: p.ProjectURL,

@@ -61,11 +61,7 @@ func toResponse(d *models.DraftModel) draftResponse {
 	if images == nil {
 		images = []models.Image{}
 	}
-	var updated *time.Time
-	if !d.UpdatedAt.IsZero() && d.UpdatedAt.Year() > 1 {
-		u := d.UpdatedAt
-		updated = &u
-	}
+	updated := models.NullableModified(d.CreatedAt, d.UpdatedAt)
 	return draftResponse{
 		ID: d.ID, RefType: d.RefType, RefID: d.RefID,
 		Title: d.Title, Text: d.Text, Images: images, Meta: d.Meta,

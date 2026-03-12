@@ -88,11 +88,7 @@ func toResponse(c *models.CommentModel, isAdmin bool) commentResponse {
 	for i, ch := range c.Children {
 		children[i] = toResponse(&ch, isAdmin)
 	}
-	var modified *time.Time
-	if !c.UpdatedAt.IsZero() && c.UpdatedAt.Year() > 1 {
-		m := c.UpdatedAt
-		modified = &m
-	}
+	modified := models.NullableModified(c.CreatedAt, c.UpdatedAt)
 	r := commentResponse{
 		ID: c.ID, RefType: refTypeForResponse(c.RefType), RefID: c.RefID,
 		Author: c.Author, URL: c.URL, Text: c.Text,

@@ -76,20 +76,12 @@ type noteTopic struct {
 	Modified    *time.Time `json:"modified"`
 }
 
-func nullableModified(t time.Time) *time.Time {
-	if t.IsZero() || t.Year() <= 1 {
-		return nil
-	}
-	modifiedAt := t
-	return &modifiedAt
-}
-
 func toResponse(n *models.NoteModel) noteResponse {
 	images := n.Images
 	if images == nil {
 		images = []models.Image{}
 	}
-	modified := nullableModified(n.UpdatedAt)
+	modified := models.NullableModified(n.CreatedAt, n.UpdatedAt)
 	var topic *noteTopic
 	if n.Topic != nil {
 		topic = &noteTopic{
@@ -100,7 +92,7 @@ func toResponse(n *models.NoteModel) noteResponse {
 			Introduce:   n.Topic.Introduce,
 			Icon:        n.Topic.Icon,
 			Created:     n.Topic.CreatedAt,
-			Modified:    nullableModified(n.Topic.UpdatedAt),
+			Modified:    models.NullableModified(n.Topic.CreatedAt, n.Topic.UpdatedAt),
 		}
 	}
 	return noteResponse{
