@@ -6,9 +6,6 @@ After=network-online.target
 
 [Service]
 Type=simple
-# Adjust these paths if your deployment layout differs.
-User=mx-space
-Group=mx-space
 WorkingDirectory=/opt/mx-core-go
 EnvironmentFile=-/etc/default/mx-core-go
 ExecStart=/opt/mx-core-go/bin/server --config /etc/mx-core-go/config.yml
