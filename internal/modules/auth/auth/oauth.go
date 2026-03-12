@@ -220,7 +220,7 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 	setAuthTokenCookie(c, token)
 
 	if state.CallbackURL != "" {
-		if redirectWithToken(c, state.CallbackURL, token) {
+		if redirectToCallback(c, state.CallbackURL) {
 			return
 		}
 	}
@@ -254,10 +254,7 @@ type socialUserInfo struct {
 }
 
 func callbackURI(c *gin.Context, provider string) string {
-	scheme := "https"
-	if c.Request.TLS == nil {
-		scheme = "http"
-	}
+	scheme := requestScheme(c)
 	basePath := "/auth"
 	fullPath := c.FullPath()
 	if idx := strings.Index(fullPath, "/auth/"); idx >= 0 {
@@ -302,7 +299,7 @@ func (h *OAuthHandler) resolveProvider(c *gin.Context, providerID, callbackURL s
 	if err != nil {
 		return nil, err
 	}
-	validatedCallbackURL, err := validateOAuthCallbackURL(callbackURL, c, cfg)
+	validatedCallbackURL, err := validateOAuthCallbackURL(callbackURL, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -321,14 +318,11 @@ func (h *OAuthHandler) resolveProvider(c *gin.Context, providerID, callbackURL s
 	return nil, nil
 }
 
-func redirectWithToken(c *gin.Context, callbackURL, token string) bool {
+func redirectToCallback(c *gin.Context, callbackURL string) bool {
 	target, err := url.Parse(strings.TrimSpace(callbackURL))
 	if err != nil || target == nil {
 		return false
 	}
-	q := target.Query()
-	q.Set("token", token)
-	target.RawQuery = q.Encode()
 	c.Redirect(http.StatusTemporaryRedirect, target.String())
 	return true
 }
@@ -408,7 +402,7 @@ func randomOAuthStateNonce() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func validateOAuthCallbackURL(raw string, c *gin.Context, cfg *appcfg.FullConfig) (string, error) {
+func validateOAuthCallbackURL(raw string, cfg *appcfg.FullConfig) (string, error) {
 	callbackURL := strings.TrimSpace(raw)
 	if callbackURL == "" {
 		return "", nil
@@ -426,17 +420,15 @@ func validateOAuthCallbackURL(raw string, c *gin.Context, cfg *appcfg.FullConfig
 	if !strings.EqualFold(target.Scheme, "http") && !strings.EqualFold(target.Scheme, "https") {
 		return "", fmt.Errorf("invalid callback url scheme")
 	}
-	allowedOrigins := oauthAllowedCallbackOrigins(c, cfg)
+	allowedOrigins := oauthAllowedCallbackOrigins(cfg)
 	if _, ok := allowedOrigins[normalizeOAuthOrigin(target)]; !ok {
 		return "", fmt.Errorf("callback url origin not allowed")
 	}
 	return target.String(), nil
 }
 
-func oauthAllowedCallbackOrigins(c *gin.Context, cfg *appcfg.FullConfig) map[string]struct{} {
+func oauthAllowedCallbackOrigins(cfg *appcfg.FullConfig) map[string]struct{} {
 	allowed := map[string]struct{}{}
-	addOAuthOrigin(allowed, c.GetHeader("Origin"))
-	addOAuthOrigin(allowed, requestOrigin(c))
 	if cfg != nil {
 		addOAuthOrigin(allowed, cfg.URL.AdminURL)
 		addOAuthOrigin(allowed, cfg.URL.WebURL)
@@ -472,18 +464,40 @@ func normalizeOAuthOrigin(target *url.URL) string {
 	return strings.ToLower(target.Scheme) + "://" + strings.ToLower(target.Host)
 }
 
-func requestOrigin(c *gin.Context) string {
-	if c == nil || c.Request == nil {
-		return ""
+func requestScheme(c *gin.Context) string {
+	if c != nil && c.Request != nil {
+		if proto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); proto != "" {
+			if idx := strings.Index(proto, ","); idx >= 0 {
+				proto = proto[:idx]
+			}
+			switch strings.ToLower(strings.TrimSpace(proto)) {
+			case "https":
+				return "https"
+			case "http":
+				return "http"
+			}
+		}
+
+		forwarded := strings.TrimSpace(c.GetHeader("Forwarded"))
+		for _, part := range strings.Split(forwarded, ";") {
+			part = strings.TrimSpace(part)
+			if !strings.HasPrefix(strings.ToLower(part), "proto=") {
+				continue
+			}
+			proto := strings.Trim(strings.TrimSpace(part[len("proto="):]), `"`)
+			switch strings.ToLower(proto) {
+			case "https":
+				return "https"
+			case "http":
+				return "http"
+			}
+		}
+
+		if c.Request.TLS != nil {
+			return "https"
+		}
 	}
-	scheme := "https"
-	if c.Request.TLS == nil {
-		scheme = "http"
-	}
-	if strings.TrimSpace(c.Request.Host) == "" {
-		return ""
-	}
-	return scheme + "://" + c.Request.Host
+	return "http"
 }
 
 func (h *OAuthHandler) currentAuthenticatedUserID(c *gin.Context) string {
@@ -516,13 +530,15 @@ func ownerHasLinkedSocialID(raw, providerID, socialUserID string) bool {
 
 func setAuthTokenCookie(c *gin.Context, token string) {
 	const maxAge = 14 * 24 * 60 * 60
-	secure := c.Request.TLS != nil
-	c.SetCookie("mx-token", token, maxAge, "/", "", secure, false)
+	secure := requestScheme(c) == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("mx-token", token, maxAge, "/", "", secure, true)
 }
 
 func clearAuthTokenCookie(c *gin.Context) {
-	secure := c.Request.TLS != nil
-	c.SetCookie("mx-token", "", -1, "/", "", secure, false)
+	secure := requestScheme(c) == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("mx-token", "", -1, "/", "", secure, true)
 }
 
 func exchangeCode(providerID, code, clientID, clientSecret, redirectURI string) (string, error) {
