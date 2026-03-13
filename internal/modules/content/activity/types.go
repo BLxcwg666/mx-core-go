@@ -1,7 +1,5 @@
 package activity
 
-import "sync"
-
 const (
 	activityTypeLike         = 0
 	activityTypeReadDuration = 1
@@ -38,11 +36,4 @@ type presenceRecord struct {
 	ConnectedAt   int64
 	JoinedAt      int64
 	IP            string
-}
-
-var presenceStore = struct {
-	mu    sync.RWMutex
-	rooms map[string]map[string]presenceRecord // room -> sid -> record
-}{
-	rooms: map[string]map[string]presenceRecord{},
 }

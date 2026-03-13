@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -559,39 +558,3 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
-
-type authnSessionStore struct {
-	mu sync.RWMutex
-	m  map[string]*gowauthn.SessionData
-}
-
-func (s *authnSessionStore) set(key string, value *gowauthn.SessionData) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.m == nil {
-		s.m = map[string]*gowauthn.SessionData{}
-	}
-	s.m[key] = value
-}
-
-func (s *authnSessionStore) get(key string) (*gowauthn.SessionData, bool) {
-	s.mu.RLock()
-	value := s.m[key]
-	s.mu.RUnlock()
-	if value == nil {
-		return nil, false
-	}
-	if !value.Expires.IsZero() && value.Expires.Before(time.Now()) {
-		s.del(key)
-		return nil, false
-	}
-	return value, true
-}
-
-func (s *authnSessionStore) del(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.m, key)
-}
-
-var authnSessions = &authnSessionStore{m: map[string]*gowauthn.SessionData{}}

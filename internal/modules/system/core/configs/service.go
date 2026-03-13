@@ -1,24 +1,34 @@
 package configs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
+	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
+const (
+	redisConfigVersionKey     = "mx:configs:version"
+	redisConfigVersionTimeout = 2 * time.Second
+)
+
 // Service manages the persisted FullConfig.
 type Service struct {
-	db     *gorm.DB
-	mu     sync.RWMutex
-	cfg    *config.FullConfig
-	logger *zap.Logger
+	db           *gorm.DB
+	mu           sync.RWMutex
+	cfg          *config.FullConfig
+	rc           *pkgredis.Client
+	cacheVersion string
+	logger       *zap.Logger
 }
 
 func NewService(db *gorm.DB, opts ...Option) *Service {
@@ -41,19 +51,35 @@ func WithLogger(l *zap.Logger) Option {
 	}
 }
 
+// WithRedis sets the Redis client used for cross-worker cache invalidation.
+func WithRedis(rc *pkgredis.Client) Option {
+	return func(s *Service) {
+		if rc != nil {
+			s.rc = rc
+		}
+	}
+}
+
 // Get returns the current config, loading from DB if not cached.
 func (s *Service) Get() (*config.FullConfig, error) {
 	s.mu.RLock()
-	if s.cfg != nil {
-		defer s.mu.RUnlock()
-		return s.cfg, nil
-	}
+	cached := s.cfg
+	cacheVersion := s.cacheVersion
 	s.mu.RUnlock()
+
+	if cached != nil {
+		latestVersion, ok := s.readCacheVersion()
+		if !ok || latestVersion == cacheVersion || (latestVersion == "" && cacheVersion == "") {
+			return cached, nil
+		}
+	}
 
 	return s.load()
 }
 
 func (s *Service) load() (*config.FullConfig, error) {
+	cacheVersion, hasCacheVersion := s.readCacheVersion()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -62,6 +88,11 @@ func (s *Service) load() (*config.FullConfig, error) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		defaults := config.DefaultFullConfig()
 		s.cfg = &defaults
+		if hasCacheVersion {
+			s.cacheVersion = cacheVersion
+		} else {
+			s.cacheVersion = ""
+		}
 		_ = s.persist(&defaults)
 		s.logger.Info("Config 已经加载完毕！（使用默认配置）")
 		return s.cfg, nil
@@ -77,6 +108,11 @@ func (s *Service) load() (*config.FullConfig, error) {
 		return nil, err
 	}
 	s.cfg = &cfg
+	if hasCacheVersion {
+		s.cacheVersion = cacheVersion
+	} else {
+		s.cacheVersion = ""
+	}
 	s.logger.Info("Config 已经加载完毕！")
 	return s.cfg, nil
 }
@@ -131,11 +167,18 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 		return nil, errAIReviewProviderNotEnabled
 	}
 
+	if err := s.persist(&updated); err != nil {
+		return nil, err
+	}
+
+	cacheVersion := s.bumpCacheVersion()
+
 	s.mu.Lock()
 	s.cfg = &updated
+	s.cacheVersion = cacheVersion
 	s.mu.Unlock()
 
-	return &updated, s.persist(&updated)
+	return &updated, nil
 }
 
 func (s *Service) persist(cfg *config.FullConfig) error {
@@ -152,7 +195,54 @@ func (s *Service) persist(cfg *config.FullConfig) error {
 
 // Invalidate clears the in-memory config cache, forcing a DB reload on next Get.
 func (s *Service) Invalidate() {
+	cacheVersion := s.bumpCacheVersion()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg = nil
+	s.cacheVersion = cacheVersion
+}
+
+func (s *Service) redisClient() *pkgredis.Client {
+	s.mu.RLock()
+	rc := s.rc
+	s.mu.RUnlock()
+	if rc != nil {
+		return rc
+	}
+	return pkgredis.Default
+}
+
+func (s *Service) readCacheVersion() (string, bool) {
+	rc := s.redisClient()
+	if rc == nil {
+		return "", false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), redisConfigVersionTimeout)
+	defer cancel()
+
+	version, err := rc.Get(ctx, redisConfigVersionKey)
+	if err != nil {
+		s.logger.Warn("读取配置缓存版本失败", zap.Error(err))
+		return "", false
+	}
+	return strings.TrimSpace(version), true
+}
+
+func (s *Service) bumpCacheVersion() string {
+	rc := s.redisClient()
+	if rc == nil {
+		return ""
+	}
+
+	version := time.Now().UTC().Format(time.RFC3339Nano)
+	ctx, cancel := context.WithTimeout(context.Background(), redisConfigVersionTimeout)
+	defer cancel()
+
+	if err := rc.Set(ctx, redisConfigVersionKey, version, 0); err != nil {
+		s.logger.Warn("更新配置缓存版本失败", zap.Error(err))
+		return ""
+	}
+	return version
 }

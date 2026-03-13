@@ -39,12 +39,14 @@ func NewHub(rc *pkgredis.Client, logger *zap.Logger, adminTokenValidator func(st
 
 // Run starts the hub loop and Redis subscriber.
 func (h *Hub) Run(ctx context.Context) {
+	h.initializeClusterState()
 	go h.subscribeRedis(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			h.sio.Close(nil)
+			h.cleanupClusterState()
 			return
 
 		case c := <-h.register:
@@ -103,9 +105,12 @@ func (h *Hub) registerClient(c clientMeta) {
 			h.sidJoinedRooms[c.sid] = map[string]struct{}{}
 		}
 		shouldBroadcastOnline = true
-		currentOnline = len(h.publicSessionCount)
 	}
 	h.mu.Unlock()
+
+	if online, ok := h.clusterUpsertClient(c.sid, c.room, sessionID); ok && c.room == RoomPublic {
+		currentOnline = online
+	}
 
 	if shouldBroadcastOnline {
 		h.BroadcastPublic(eventVisitorOnline, newVisitorEventPayload(currentOnline, ""))
@@ -137,9 +142,12 @@ func (h *Hub) unregisterClient(c clientMeta) {
 	if room == RoomPublic {
 		h.decreasePublicSessionCountLocked(sessionID)
 		shouldBroadcastOffline = true
-		currentOnline = len(h.publicSessionCount)
 	}
 	h.mu.Unlock()
+
+	if online, ok := h.clusterRemoveSID(c.sid); ok && room == RoomPublic {
+		currentOnline = online
+	}
 
 	if shouldBroadcastOffline {
 		h.BroadcastPublic(eventVisitorOffline, newVisitorEventPayload(currentOnline, sessionID))
@@ -261,16 +269,18 @@ func (h *Hub) joinPublicRoom(sid, roomName string) bool {
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	if _, ok := h.sidJoinedRooms[sid]; !ok {
 		h.sidJoinedRooms[sid] = map[string]struct{}{}
 	}
 	if _, exists := h.sidJoinedRooms[sid][roomName]; exists {
+		h.mu.Unlock()
 		return false
 	}
 	h.sidJoinedRooms[sid][roomName] = struct{}{}
 	h.joinedRoomCount[roomName]++
+	h.mu.Unlock()
+
+	h.clusterJoinPublicRoom(sid, roomName)
 	return true
 }
 
@@ -281,13 +291,13 @@ func (h *Hub) leavePublicRoom(sid, roomName string) bool {
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	joined := h.sidJoinedRooms[sid]
 	if len(joined) == 0 {
+		h.mu.Unlock()
 		return false
 	}
 	if _, exists := joined[roomName]; !exists {
+		h.mu.Unlock()
 		return false
 	}
 
@@ -300,6 +310,9 @@ func (h *Hub) leavePublicRoom(sid, roomName string) bool {
 	} else {
 		h.joinedRoomCount[roomName]--
 	}
+	h.mu.Unlock()
+
+	h.clusterLeavePublicRoom(sid, roomName)
 	return true
 }
 
@@ -311,16 +324,16 @@ func (h *Hub) updateClientSession(sid, sessionID string) (string, bool, int) {
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	room, ok := h.sidRoom[sid]
 	if !ok {
 		h.sidSession[sid] = sessionID
-		return sessionID, false, len(h.publicSessionCount)
+		h.mu.Unlock()
+		return sessionID, false, h.ClientCount(RoomPublic)
 	}
 	oldSessionID := normalizeSessionID(h.sidSession[sid], sid)
 	if oldSessionID == sessionID {
-		return oldSessionID, false, len(h.publicSessionCount)
+		h.mu.Unlock()
+		return oldSessionID, false, h.ClientCount(RoomPublic)
 	}
 
 	h.sidSession[sid] = sessionID
@@ -328,7 +341,15 @@ func (h *Hub) updateClientSession(sid, sessionID string) (string, bool, int) {
 		h.decreasePublicSessionCountLocked(oldSessionID)
 		h.increasePublicSessionCountLocked(sessionID)
 	}
-	return sessionID, true, len(h.publicSessionCount)
+	h.mu.Unlock()
+	currentOnline := h.ClientCount(RoomPublic)
+
+	if room == RoomPublic {
+		if online, ok := h.clusterUpdateClientSession(sid, oldSessionID, sessionID); ok {
+			currentOnline = online
+		}
+	}
+	return sessionID, true, currentOnline
 }
 
 func (h *Hub) sessionIDOfSID(sid string) string {
@@ -344,11 +365,19 @@ func (h *Hub) SetSIDIdentity(sid, identity string) {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.sidIdentity[sid] = identity
+	h.mu.Unlock()
+	h.clusterSetSIDIdentity(sid, identity)
 }
 
 func (h *Hub) identityOfSID(sid, fallback string) string {
+	if h.clusterStateEnabled() {
+		if identity, ok := h.clusterIdentityOfSID(sid); ok && identity != "" {
+			return identity
+		}
+		return normalizeSessionID(fallback, sid)
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -360,6 +389,13 @@ func (h *Hub) identityOfSID(sid, fallback string) string {
 }
 
 func (h *Hub) joinedPublicRoomsOfSID(sid string) []string {
+	if h.clusterStateEnabled() {
+		if rooms, ok := h.clusterJoinedRooms(sid); ok {
+			return rooms
+		}
+		return nil
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -375,6 +411,13 @@ func (h *Hub) joinedPublicRoomsOfSID(sid string) []string {
 }
 
 func (h *Hub) PublicRoomCount() map[string]int {
+	if h.clusterStateEnabled() {
+		if out, ok := h.clusterPublicRoomCount(); ok {
+			return out
+		}
+		return map[string]int{}
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -388,6 +431,13 @@ func (h *Hub) PublicRoomCount() map[string]int {
 }
 
 func (h *Hub) HasSID(sid string) bool {
+	if h.clusterStateEnabled() {
+		if hasSID, ok := h.clusterHasSID(sid); ok {
+			return hasSID
+		}
+		return false
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	_, ok := h.sidRoom[sid]
@@ -395,6 +445,13 @@ func (h *Hub) HasSID(sid string) bool {
 }
 
 func (h *Hub) SIDInPublicRoom(sid, roomName string) bool {
+	if h.clusterStateEnabled() {
+		if inRoom, ok := h.clusterSIDInPublicRoom(sid, roomName); ok {
+			return inRoom
+		}
+		return false
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -434,6 +491,13 @@ func (h *Hub) BroadcastPublic(event string, payload interface{}) {
 
 // ClientCount returns the number of connected clients (optionally filtered by room).
 func (h *Hub) ClientCount(room string) int {
+	if h.clusterStateEnabled() {
+		if count, ok := h.clusterClientCount(room); ok {
+			return count
+		}
+		return 0
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
