@@ -214,9 +214,14 @@ func (s *Service) StateCount() map[string]int64 {
 	return counts
 }
 
-func (s *Service) HealthCheck() map[string]HealthResult {
+func (s *Service) HealthCheck(states ...models.LinkState) map[string]HealthResult {
+	targetStates := states
+	if len(targetStates) == 0 {
+		targetStates = []models.LinkState{models.LinkPass, models.LinkOutdate}
+	}
+
 	var links []models.LinkModel
-	s.db.Where("state = ?", models.LinkPass).Find(&links)
+	s.db.Where("state IN ?", targetStates).Find(&links)
 
 	result := make(map[string]HealthResult, len(links))
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -225,21 +230,22 @@ func (s *Service) HealthCheck() map[string]HealthResult {
 		s.logger.Debug(fmt.Sprintf("检查友链 %s 的健康状态：GET -> %s", l.Name, l.URL))
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
-		cancel()
 		if err != nil {
+			cancel()
 			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
 			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
 			continue
 		}
 		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Mix-Space Friend Link Checker; +https://github.com/BLxcwg666/mx-core-go)")
 		resp, err := client.Do(req)
+		cancel()
 		if err != nil {
 			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
 			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
 			continue
 		}
 		resp.Body.Close()
-		if resp.StatusCode >= 400 {
+		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode != http.StatusForbidden {
 			s.logger.Debug(fmt.Sprintf("友链 %s 不可用：HTTP %d", l.Name, resp.StatusCode))
 			result[l.ID] = HealthResult{ID: l.ID, Status: resp.StatusCode,
 				Message: fmt.Sprintf("HTTP %d", resp.StatusCode)}
