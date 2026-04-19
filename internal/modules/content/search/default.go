@@ -28,8 +28,8 @@ func (s *Service) mysqlSearch(q string) ([]SearchResult, error) {
 	}
 
 	var notes []models.NoteModel
-	s.db.
-		Where("is_published = ? AND (title LIKE ? OR text LIKE ?)", true, like, like).
+	publicSearchNotes(s.db).
+		Where("title LIKE ? OR text LIKE ?", like, like).
 		Order("created_at DESC").
 		Select("id, n_id, title").
 		Limit(10).

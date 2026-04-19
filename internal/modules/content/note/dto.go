@@ -77,12 +77,16 @@ type noteTopic struct {
 	Modified    *time.Time `json:"modified"`
 }
 
-func toResponse(n *models.NoteModel) noteResponse {
+func toResponse(n *models.NoteModel, revealProtectedText bool) noteResponse {
 	images := n.Images
 	if images == nil {
 		images = []models.Image{}
 	}
 	modified := models.NullableModified(n.CreatedAt, n.UpdatedAt)
+	text := n.Text
+	if n.Password != "" && !revealProtectedText {
+		text = ""
+	}
 	var topic *noteTopic
 	if n.Topic != nil {
 		topic = &noteTopic{
@@ -100,7 +104,7 @@ func toResponse(n *models.NoteModel) noteResponse {
 		ID:           n.ID,
 		NID:          n.NID,
 		Title:        n.Title,
-		Text:         n.Text,
+		Text:         text,
 		HasPassword:  n.Password != "",
 		IsPublished:  n.IsPublished,
 		AllowComment: n.AllowComment,

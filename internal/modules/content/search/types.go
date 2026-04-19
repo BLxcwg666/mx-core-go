@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mx-space/core/internal/models"
+	"gorm.io/gorm"
 )
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
@@ -49,4 +50,9 @@ type SearchResult struct {
 	Order        *int                   `json:"order,omitempty"`
 	AllowComment *bool                  `json:"allowComment,omitempty"`
 	Meta         map[string]interface{} `json:"meta,omitempty"`
+}
+
+func publicSearchNotes(tx *gorm.DB) *gorm.DB {
+	return tx.Where("is_published = ?", true).
+		Where("password_hash = '' OR password_hash IS NULL")
 }

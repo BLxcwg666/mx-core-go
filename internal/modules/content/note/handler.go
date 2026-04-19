@@ -62,7 +62,7 @@ func (h *Handler) list(c *gin.Context) {
 	}
 	items := make([]noteResponse, len(notes))
 	for i, n := range notes {
-		items[i] = toResponse(&n)
+		items[i] = toResponse(&n, middleware.IsAuthenticated(c))
 	}
 	response.Paged(c, items, pag)
 }
@@ -96,7 +96,7 @@ func (h *Handler) getByNID(c *gin.Context) {
 			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
 		}
 	}()
-	resp := toResponse(note)
+	resp := toResponse(note, true)
 	h.applyMacros(&resp, isAdmin)
 	if isTruthy(c.Query("single")) {
 		response.OK(c, resp)
@@ -148,7 +148,7 @@ func (h *Handler) getByID(c *gin.Context) {
 			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
 		}
 	}()
-	resp := toResponse(note)
+	resp := toResponse(note, true)
 	h.applyMacros(&resp, middleware.IsAuthenticated(c))
 	response.OK(c, resp)
 }
@@ -172,7 +172,7 @@ func (h *Handler) latest(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	resp := toResponse(note)
+	resp := toResponse(note, true)
 	next, err := h.findAdjacentNoteByCreated(resp.Created, isAdmin, false)
 	if err != nil {
 		response.InternalError(c, err)
@@ -198,7 +198,7 @@ func (h *Handler) listByTopic(c *gin.Context) {
 	}
 	out := make([]noteResponse, len(items))
 	for i, n := range items {
-		out[i] = toResponse(&n)
+		out[i] = toResponse(&n, middleware.IsAuthenticated(c))
 	}
 	response.Paged(c, out, pag)
 }
@@ -279,9 +279,9 @@ func (h *Handler) create(c *gin.Context) {
 		go h.notifySvc.OnNoteCreate(note)
 	}
 	if h.hub != nil && note.IsPublished {
-		h.hub.BroadcastPublic("NOTE_CREATE", toResponse(note))
+		h.hub.BroadcastPublic("NOTE_CREATE", toResponse(note, false))
 	}
-	response.Created(c, toResponse(note))
+	response.Created(c, toResponse(note, true))
 }
 
 func (h *Handler) update(c *gin.Context) {
@@ -300,9 +300,9 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	if h.hub != nil && note.IsPublished {
-		h.hub.BroadcastPublic("NOTE_UPDATE", toResponse(note))
+		h.hub.BroadcastPublic("NOTE_UPDATE", toResponse(note, false))
 	}
-	response.OK(c, toResponse(note))
+	response.OK(c, toResponse(note, true))
 }
 
 func (h *Handler) delete(c *gin.Context) {
@@ -317,7 +317,7 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 	if h.hub != nil && note != nil && note.IsPublished {
-		h.hub.BroadcastPublic("NOTE_DELETE", toResponse(note))
+		h.hub.BroadcastPublic("NOTE_DELETE", toResponse(note, false))
 	}
 	response.NoContent(c)
 }

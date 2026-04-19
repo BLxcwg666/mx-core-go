@@ -79,6 +79,7 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 func (s *Service) Search(q string) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
 		if results, err := client.Search(q); err == nil {
+			results = s.filterPublicNoteResults(results)
 			s.hydrateSearchResults(results)
 			s.logger.Debug(fmt.Sprintf("MeiliSearch 搜索命中 %d 条结果", len(results)))
 			return results, servedByMeili, nil
@@ -87,8 +88,50 @@ func (s *Service) Search(q string) ([]SearchResult, string, error) {
 		}
 	}
 	results, err := s.mysqlSearch(q)
+	results = s.filterPublicNoteResults(results)
 	s.hydrateSearchResults(results)
 	return results, servedByMySQL, err
+}
+
+func (s *Service) filterPublicNoteResults(results []SearchResult) []SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	noteIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.Type == "note" && result.ID != "" {
+			noteIDs = append(noteIDs, result.ID)
+		}
+	}
+	if len(noteIDs) == 0 {
+		return results
+	}
+
+	var notes []models.NoteModel
+	if err := publicSearchNotes(s.db).
+		Select("id").
+		Where("id IN ?", noteIDs).
+		Find(&notes).Error; err != nil {
+		return results
+	}
+
+	allowed := make(map[string]struct{}, len(notes))
+	for _, note := range notes {
+		allowed[note.ID] = struct{}{}
+	}
+
+	filtered := results[:0]
+	for _, result := range results {
+		if result.Type != "note" {
+			filtered = append(filtered, result)
+			continue
+		}
+		if _, ok := allowed[result.ID]; ok {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }
 
 func (s *Service) hydrateSearchResults(results []SearchResult) {
@@ -224,7 +267,7 @@ func (s *Service) SearchByType(docType, keyword string, page, size int, isAdmin 
 	case "note":
 		tx := s.db.Model(&models.NoteModel{})
 		if !isAdmin {
-			tx = tx.Where("is_published = ?", true)
+			tx = publicSearchNotes(tx)
 		}
 		if keyword != "" {
 			tx = tx.Where("title LIKE ? OR text LIKE ?", like, like)
@@ -343,7 +386,7 @@ func (s *Service) IndexAll() error {
 	}
 
 	var notes []models.NoteModel
-	s.db.Where("is_published = ?", true).Find(&notes)
+	publicSearchNotes(s.db).Find(&notes)
 	for _, n := range notes {
 		docs = append(docs, map[string]interface{}{
 			"id": n.ID, "title": n.Title, "text": n.Text,

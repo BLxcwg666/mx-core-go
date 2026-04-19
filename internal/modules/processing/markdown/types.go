@@ -17,6 +17,7 @@ type articleSnapshot struct {
 	UpdatedAt time.Time
 	Type      string
 	Category  *models.CategoryModel
+	IsPrivate bool
 }
 
 // importDTO is the request body for POST /markdown/import.

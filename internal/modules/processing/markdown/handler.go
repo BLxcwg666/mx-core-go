@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
@@ -46,6 +48,10 @@ func (h *Handler) renderStructure(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if article.IsPrivate && !hasArticleAccess(c) {
+		response.Forbidden(c)
+		return
+	}
 
 	html := RenderMarkdownContent(article.Text)
 	structure := BuildRenderedMarkdownHTMLStructure(html, article.Title, c.Query("theme"))
@@ -54,7 +60,7 @@ func (h *Handler) renderStructure(c *gin.Context) {
 
 func (h *Handler) loadArticleByID(id string) (*articleSnapshot, error) {
 	var post models.PostModel
-	if err := h.db.Preload("Category").Select("id, title, text, slug, category_id, created_at, updated_at").First(&post, "id = ?", id).Error; err == nil {
+	if err := h.db.Preload("Category").Select("id, title, text, slug, category_id, is_published, created_at, updated_at").First(&post, "id = ?", id).Error; err == nil {
 		return &articleSnapshot{
 			ID:        post.ID,
 			Title:     post.Title,
@@ -64,13 +70,14 @@ func (h *Handler) loadArticleByID(id string) (*articleSnapshot, error) {
 			UpdatedAt: post.UpdatedAt,
 			Type:      "post",
 			Category:  post.Category,
+			IsPrivate: !post.IsPublished,
 		}, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
 	var note models.NoteModel
-	if err := h.db.Select("id, title, text, n_id, created_at, updated_at").First(&note, "id = ?", id).Error; err == nil {
+	if err := h.db.Select("id, title, text, n_id, is_published, password_hash, created_at, updated_at").First(&note, "id = ?", id).Error; err == nil {
 		return &articleSnapshot{
 			ID:        note.ID,
 			Title:     note.Title,
@@ -79,6 +86,7 @@ func (h *Handler) loadArticleByID(id string) (*articleSnapshot, error) {
 			CreatedAt: note.CreatedAt,
 			UpdatedAt: note.UpdatedAt,
 			Type:      "note",
+			IsPrivate: !note.IsPublished || strings.TrimSpace(note.Password) != "",
 		}, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -100,6 +108,21 @@ func (h *Handler) loadArticleByID(id string) (*articleSnapshot, error) {
 	}
 
 	return nil, gorm.ErrRecordNotFound
+}
+
+func hasArticleAccess(c *gin.Context) bool {
+	if middleware.IsAuthenticated(c) {
+		return true
+	}
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		token = strings.TrimSpace(token[7:])
+	}
+	_, err := jwtpkg.Parse(token)
+	return err == nil
 }
 
 // GET /markdown/export?show_title=true&slug=true&yaml=true&with_meta_json=true
