@@ -83,6 +83,14 @@ func (h *Handler) getByNID(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
+	if err := ensureNoteAccess(note, c.Query("password"), isAdmin); err != nil {
+		if errors.Is(err, errNotePasswordRequired) || errors.Is(err, errNotePasswordMismatch) {
+			response.ForbiddenMsg(c, "该日记需要密码访问")
+			return
+		}
+		response.InternalError(c, err)
+		return
+	}
 	go func() {
 		if err := h.svc.IncrementReadCount(note.ID); err != nil {
 			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
@@ -127,6 +135,14 @@ func (h *Handler) getByID(c *gin.Context) {
 		response.ForbiddenMsg(c, "不要偷看人家的小心思啦~")
 		return
 	}
+	if err := ensureNoteAccess(note, c.Query("password"), middleware.IsAuthenticated(c)); err != nil {
+		if errors.Is(err, errNotePasswordRequired) || errors.Is(err, errNotePasswordMismatch) {
+			response.ForbiddenMsg(c, "该日记需要密码访问")
+			return
+		}
+		response.InternalError(c, err)
+		return
+	}
 	go func() {
 		if err := h.svc.IncrementReadCount(note.ID); err != nil {
 			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
@@ -138,7 +154,8 @@ func (h *Handler) getByID(c *gin.Context) {
 }
 
 func (h *Handler) latest(c *gin.Context) {
-	note, err := h.svc.GetLatest(middleware.IsAuthenticated(c))
+	isAdmin := middleware.IsAuthenticated(c)
+	note, err := h.svc.GetLatest(isAdmin)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -147,7 +164,14 @@ func (h *Handler) latest(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
-	isAdmin := middleware.IsAuthenticated(c)
+	if err := ensureNoteAccess(note, c.Query("password"), isAdmin); err != nil {
+		if errors.Is(err, errNotePasswordRequired) || errors.Is(err, errNotePasswordMismatch) {
+			response.ForbiddenMsg(c, "该日记需要密码访问")
+			return
+		}
+		response.InternalError(c, err)
+		return
+	}
 	resp := toResponse(note)
 	next, err := h.findAdjacentNoteByCreated(resp.Created, isAdmin, false)
 	if err != nil {

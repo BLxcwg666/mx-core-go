@@ -19,6 +19,11 @@ type Service struct {
 	db *gorm.DB
 }
 
+var (
+	errNotePasswordRequired = errors.New("note password required")
+	errNotePasswordMismatch = errors.New("note password mismatch")
+)
+
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
@@ -72,7 +77,8 @@ func (s *Service) GetLatest(isAdmin bool) (*models.NoteModel, error) {
 	var note models.NoteModel
 	tx := s.db.Preload("Topic").Order("created_at DESC")
 	if !isAdmin {
-		tx = tx.Where("is_published = ?", true)
+		tx = tx.Where("is_published = ?", true).
+			Where("password_hash = '' OR password_hash IS NULL")
 	}
 	if err := tx.First(&note).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -132,6 +138,22 @@ func noteListOrders(lq ListQuery) []string {
 func normalizeNoteSortKey(sortBy string) string {
 	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
 	return strings.ToLower(replacer.Replace(strings.TrimSpace(sortBy)))
+}
+
+func ensureNoteAccess(note *models.NoteModel, password string, isAdmin bool) error {
+	if note == nil || isAdmin || note.Password == "" {
+		return nil
+	}
+	if password == "" {
+		return errNotePasswordRequired
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(note.Password), []byte(password)); err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return errNotePasswordMismatch
+		}
+		return err
+	}
+	return nil
 }
 
 // ListAround returns notes around the given note id, including itself.

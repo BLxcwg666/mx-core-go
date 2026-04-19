@@ -49,6 +49,7 @@ type noteResponse struct {
 	NID          int              `json:"nid"`
 	Title        string           `json:"title"`
 	Text         string           `json:"text"`
+	HasPassword  bool             `json:"hasPassword"`
 	IsPublished  bool             `json:"isPublished"`
 	AllowComment bool             `json:"allowComment"`
 	PublicAt     *time.Time       `json:"publicAt"`
@@ -100,6 +101,7 @@ func toResponse(n *models.NoteModel) noteResponse {
 		NID:          n.NID,
 		Title:        n.Title,
 		Text:         n.Text,
+		HasPassword:  n.Password != "",
 		IsPublished:  n.IsPublished,
 		AllowComment: n.AllowComment,
 		PublicAt:     n.PublicAt,
