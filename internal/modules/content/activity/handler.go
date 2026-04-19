@@ -319,7 +319,11 @@ func (h *Handler) getPresence(c *gin.Context) {
 	data := map[string]gin.H{}
 	readerIDs := make([]string, 0, len(entries))
 	for _, e := range entries {
-		data[e.Identity] = sanitizePresence(e)
+		key := strings.TrimSpace(e.SID)
+		if key == "" {
+			key = e.Identity
+		}
+		data[key] = sanitizePresence(e)
 		if e.ReaderID != "" {
 			readerIDs = append(readerIDs, e.ReaderID)
 		}

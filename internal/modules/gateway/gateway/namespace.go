@@ -50,7 +50,7 @@ func (h *Hub) registerNamespaces() {
 				}
 				client.Leave(socketio.Room(roomName))
 				if h.leavePublicRoom(sid, roomName) {
-					h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(h.identityOfSID(sid, sessionID), roomName))
+					h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(h.identityOfSID(sid, sessionID), roomName, sid))
 				}
 			case messageUpdateSID:
 				nextSessionID := firstNonEmptyString(
@@ -76,7 +76,7 @@ func (h *Hub) registerNamespaces() {
 			rooms := h.joinedPublicRoomsOfSID(sid)
 			identity := h.identityOfSID(sid, sessionID)
 			for _, roomName := range rooms {
-				h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(identity, roomName))
+				h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(identity, roomName, sid))
 			}
 			h.unregister <- clientMeta{sid: sid, room: RoomPublic, sessionID: sessionID}
 		})
@@ -247,9 +247,10 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func newActivityLeavePresencePayload(identity, roomName string) map[string]interface{} {
+func newActivityLeavePresencePayload(identity, roomName, sid string) map[string]interface{} {
 	return map[string]interface{}{
 		"identity": normalizeSessionID(identity, ""),
 		"roomName": roomName,
+		"sid":      strings.TrimSpace(sid),
 	}
 }
