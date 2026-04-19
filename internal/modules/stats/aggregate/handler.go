@@ -467,6 +467,46 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, wordCountResponse{Words: totalWords, Count: totalWords})
 	})
 
+	rg.GET("/aggregate/site_info", func(c *gin.Context) {
+		now := time.Now()
+		info := siteInfoResponse{}
+
+		if err := publishedPostScope(db.Model(&models.PostModel{})).Count(&info.PostCount).Error; err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		if err := visibleNoteScope(db.Model(&models.NoteModel{}), now).Count(&info.NoteCount).Error; err != nil {
+			response.InternalError(c, err)
+			return
+		}
+
+		postWords, err := loadTextLengthTotal(publishedPostScope(db.Model(&models.PostModel{})), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		noteWords, err := loadTextLengthTotal(visibleNoteScope(db.Model(&models.NoteModel{}), now), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		pageWords, err := loadTextLengthTotal(db.Model(&models.PageModel{}), "text")
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		info.TotalWordCount = postWords + noteWords + pageWords
+
+		firstPublishDate, err := loadFirstPublishDate(db, now)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		info.FirstPublishDate = firstPublishDate
+
+		response.OK(c, info)
+	})
+
 	rg.GET("/aggregate/stat/category-distribution", func(c *gin.Context) {
 		type row struct {
 			ID    string `json:"id"`

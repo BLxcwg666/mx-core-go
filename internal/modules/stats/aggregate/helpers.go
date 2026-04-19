@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -299,4 +300,63 @@ func aggregateTimeBucketExpr(db *gorm.DB, column, granularity string) string {
 			return "DATE_FORMAT(" + column + ", '%Y-%m')"
 		}
 	}
+}
+
+func publishedPostScope(tx *gorm.DB) *gorm.DB {
+	if tx == nil {
+		return nil
+	}
+	return tx.Where("is_published = ?", true)
+}
+
+func visibleNoteScope(tx *gorm.DB, now time.Time) *gorm.DB {
+	if tx == nil {
+		return nil
+	}
+	return tx.Where("is_published = ? AND (public_at IS NULL OR public_at <= ?)", true, now)
+}
+
+func loadFirstPublishDate(db *gorm.DB, now time.Time) (*time.Time, error) {
+	if db == nil {
+		return nil, nil
+	}
+
+	var firstPost struct {
+		CreatedAt time.Time `gorm:"column:created_at"`
+	}
+	if err := publishedPostScope(db.Model(&models.PostModel{})).
+		Select("created_at").
+		Order("created_at ASC").
+		First(&firstPost).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var firstNote struct {
+		CreatedAt time.Time  `gorm:"column:created_at"`
+		PublicAt  *time.Time `gorm:"column:public_at"`
+	}
+	if err := visibleNoteScope(db.Model(&models.NoteModel{}), now).
+		Select("created_at, public_at").
+		Order("COALESCE(public_at, created_at) ASC").
+		First(&firstNote).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var earliest *time.Time
+	if !firstPost.CreatedAt.IsZero() {
+		candidate := firstPost.CreatedAt
+		earliest = &candidate
+	}
+	if !firstNote.CreatedAt.IsZero() {
+		notePublishedAt := firstNote.CreatedAt
+		if firstNote.PublicAt != nil && !firstNote.PublicAt.IsZero() {
+			notePublishedAt = *firstNote.PublicAt
+		}
+		if earliest == nil || notePublishedAt.Before(*earliest) {
+			candidate := notePublishedAt
+			earliest = &candidate
+		}
+	}
+
+	return earliest, nil
 }

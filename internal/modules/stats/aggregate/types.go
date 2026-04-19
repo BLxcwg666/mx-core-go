@@ -98,6 +98,13 @@ type wordCountResponse struct {
 	Count int64 `json:"count"`
 }
 
+type siteInfoResponse struct {
+	PostCount        int64      `json:"postCount"`
+	NoteCount        int64      `json:"noteCount"`
+	TotalWordCount   int64      `json:"totalWordCount"`
+	FirstPublishDate *time.Time `json:"firstPublishDate"`
+}
+
 type readLikeTotal struct {
 	Reads int64 `gorm:"column:read_total"`
 	Likes int64 `gorm:"column:like_total"`
