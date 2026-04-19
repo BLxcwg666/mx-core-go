@@ -61,7 +61,7 @@ func postListOrders(lq ListQuery) ([]string, bool) {
 		sortBy = normalizePostSortKey(*lq.SortBy)
 	}
 	if sortBy == "" {
-		return []string{"pin_order DESC", "created_at DESC"}, false
+		return defaultPostListOrders(), false
 	}
 
 	direction := "DESC"
@@ -73,7 +73,7 @@ func postListOrders(lq ListQuery) ([]string, bool) {
 	case "created", "createdat":
 		return []string{"created_at " + direction}, false
 	case "modified", "updated", "updatedat":
-		return []string{"updated_at " + direction}, false
+		return modifiedPostListOrders(direction), false
 	case "title":
 		return []string{"title " + direction}, false
 	case "slug":
@@ -89,7 +89,7 @@ func postListOrders(lq ListQuery) ([]string, bool) {
 	case "pin":
 		return []string{"pin " + direction}, false
 	case "pinorder":
-		return []string{"pin_order " + direction}, false
+		return []string{normalizedPinOrderOrder(direction)}, false
 	case "read", "readcount", "countread":
 		return []string{"read_count " + direction}, false
 	case "like", "likecount", "countlike":
@@ -97,7 +97,32 @@ func postListOrders(lq ListQuery) ([]string, bool) {
 	case "category", "categoryname":
 		return []string{"categories.name " + direction}, true
 	default:
-		return []string{"pin_order DESC", "created_at DESC"}, false
+		return defaultPostListOrders(), false
+	}
+}
+
+func defaultPostListOrders() []string {
+	return []string{normalizedPinOrderOrder("DESC"), "created_at DESC"}
+}
+
+func normalizedPinOrderOrder(direction string) string {
+	return "COALESCE(pin_order, 0) " + direction
+}
+
+func modifiedPostListOrders(direction string) []string {
+	modifiedExpr := "CASE WHEN updated_at > created_at THEN updated_at END"
+	if direction == "ASC" {
+		return []string{
+			"CASE WHEN updated_at > created_at THEN 1 ELSE 0 END ASC",
+			modifiedExpr + " ASC",
+			"created_at ASC",
+		}
+	}
+
+	return []string{
+		"CASE WHEN updated_at > created_at THEN 0 ELSE 1 END ASC",
+		modifiedExpr + " DESC",
+		"created_at DESC",
 	}
 }
 
