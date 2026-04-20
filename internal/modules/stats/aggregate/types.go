@@ -30,6 +30,18 @@ type aggregateData struct {
 	Count postNoteCount `json:"count,omitempty"`
 }
 
+type publicURLConfig struct {
+	WebURL    string `json:"web_url"`
+	ServerURL string `json:"server_url,omitempty"`
+	WSURL     string `json:"ws_url,omitempty"`
+}
+
+type aggregateSiteData struct {
+	User interface{} `json:"user"`
+	SEO  interface{} `json:"seo"`
+	URL  interface{} `json:"url"`
+}
+
 type postNoteCount struct {
 	Posts  int64 `json:"posts"`
 	Notes  int64 `json:"notes"`

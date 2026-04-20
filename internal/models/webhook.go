@@ -6,7 +6,7 @@ import "time"
 type WebhookModel struct {
 	Base
 	PayloadURL string   `json:"payloadUrl" gorm:"not null"`
-	Events     []string `json:"events"      gorm:"serializer:json"`
+	Events     []string `json:"events"      gorm:"type:longtext;serializer:json"`
 	Enabled    bool     `json:"enabled"     gorm:"default:true"`
 	Secret     string   `json:"-"           gorm:"not null"`
 	Scope      int      `json:"scope"`

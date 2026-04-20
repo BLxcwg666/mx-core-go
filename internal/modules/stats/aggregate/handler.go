@@ -27,6 +27,15 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, data)
 	})
 
+	rg.GET("/aggregate/site", func(c *gin.Context) {
+		data, err := buildAggregateSite(db, cfgSvc)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, data)
+	})
+
 	rg.GET("/aggregate/top", middleware.OptionalAuth(db), func(c *gin.Context) {
 		size := 6
 		if raw := c.Query("size"); raw != "" {

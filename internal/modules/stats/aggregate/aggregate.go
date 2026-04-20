@@ -3,6 +3,7 @@ package aggregate
 import (
 	"encoding/json"
 
+	appconfig "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	"gorm.io/gorm"
@@ -84,7 +85,7 @@ func buildAggregate(db *gorm.DB, cfgSvc *configs.Service, themeName string) (*ag
 			SocialIDs: parseSocialIDs(user.SocialIDs),
 		},
 		SEO:          cfg.SEO,
-		URL:          cfg.URL,
+		URL:          buildPublicURL(cfg.URL),
 		Categories:   categories,
 		PageMeta:     pageMetaList,
 		LatestNoteID: latestNoteID,
@@ -95,6 +96,38 @@ func buildAggregate(db *gorm.DB, cfgSvc *configs.Service, themeName string) (*ag
 		Tags:  tags,
 		Count: cnt,
 	}, nil
+}
+
+func buildAggregateSite(db *gorm.DB, cfgSvc *configs.Service) (*aggregateSiteData, error) {
+	var user models.UserModel
+	db.First(&user)
+
+	cfg, err := cfgSvc.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	return &aggregateSiteData{
+		User: userSummary{
+			ID: user.ID, Username: user.Username, Name: user.Name,
+			Avatar: user.Avatar, Introduce: user.Introduce, URL: user.URL,
+			SocialIDs: parseSocialIDs(user.SocialIDs),
+		},
+		SEO: cfg.SEO,
+		URL: struct {
+			WebURL string `json:"web_url"`
+		}{
+			WebURL: cfg.URL.WebURL,
+		},
+	}, nil
+}
+
+func buildPublicURL(url appconfig.URLConfig) publicURLConfig {
+	return publicURLConfig{
+		WebURL:    url.WebURL,
+		ServerURL: url.ServerURL,
+		WSURL:     url.WSURL,
+	}
 }
 
 func parseSocialIDs(raw string) map[string]interface{} {

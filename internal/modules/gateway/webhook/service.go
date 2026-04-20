@@ -88,7 +88,11 @@ func (s *Service) Update(id string, dto *UpdateWebhookDTO) (*models.WebhookModel
 		if len(events) == 0 {
 			return nil, fmt.Errorf("events is empty")
 		}
-		updates["events"] = events
+		encodedEvents, err := json.Marshal(events)
+		if err != nil {
+			return nil, err
+		}
+		updates["events"] = string(encodedEvents)
 	}
 	if dto.Enabled != nil {
 		updates["enabled"] = *dto.Enabled
@@ -142,7 +146,11 @@ func (s *Service) DispatchScoped(event string, payload interface{}, scope int) {
 }
 
 func (s *Service) deliver(hook models.WebhookModel, event string, payload interface{}, source string) {
-	body, _ := json.Marshal(payload)
+	body, err := marshalWebhookPayload(payload)
+	if err != nil {
+		s.logEvent(hook.ID, event, nil, "", nil, false, 0, err.Error())
+		return
+	}
 	payloadString := string(body)
 
 	signature := signWithHash(sha1.New, hook.Secret, payloadString)
@@ -332,6 +340,20 @@ func signWithHash(newHash func() hash.Hash, secret, payload string) string {
 	mac := hmac.New(newHash, []byte(secret))
 	_, _ = mac.Write([]byte(payload))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func marshalWebhookPayload(payload interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		return nil, err
+	}
+	body := buf.Bytes()
+	if n := len(body); n > 0 && body[n-1] == '\n' {
+		body = body[:n-1]
+	}
+	return body, nil
 }
 
 func scopeToSource(scope int) string {
