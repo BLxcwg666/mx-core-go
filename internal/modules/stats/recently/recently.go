@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -17,6 +18,8 @@ var errRecentlyRefModelNotFound = errors.New("ref model not found")
 
 type CreateRecentlyDTO struct {
 	Content      string          `json:"content"       binding:"required"`
+	Type         string          `json:"type"`
+	Metadata     models.JSONMap  `json:"metadata"`
 	RefType      *models.RefType `json:"ref_type"`
 	RefID        *string         `json:"ref_id"`
 	AllowComment *bool           `json:"allow_comment"`
@@ -24,6 +27,8 @@ type CreateRecentlyDTO struct {
 
 type UpdateRecentlyDTO struct {
 	Content      *string         `json:"content"`
+	Type         *string         `json:"type"`
+	Metadata     models.JSONMap  `json:"metadata"`
 	RefType      *models.RefType `json:"ref_type"`
 	RefID        *string         `json:"ref_id"`
 	AllowComment *bool           `json:"allow_comment"`
@@ -32,6 +37,8 @@ type UpdateRecentlyDTO struct {
 type recentlyResponse struct {
 	ID           string          `json:"id"`
 	Content      string          `json:"content"`
+	Type         string          `json:"type"`
+	Metadata     models.JSONMap  `json:"metadata,omitempty"`
 	RefType      *models.RefType `json:"ref_type"`
 	RefID        *string         `json:"ref_id"`
 	UpCount      int             `json:"up"`
@@ -45,6 +52,7 @@ func toResponse(r *models.RecentlyModel) recentlyResponse {
 	modified := models.NullableModified(r.CreatedAt, r.UpdatedAt)
 	return recentlyResponse{
 		ID: r.ID, Content: r.Content,
+		Type: r.Type, Metadata: r.Metadata,
 		RefType: r.RefType, RefID: r.RefID,
 		UpCount: r.UpCount, DownCount: r.DownCount,
 		AllowComment: r.AllowComment,
@@ -109,7 +117,7 @@ func (s *Service) Create(dto *CreateRecentlyDTO) (*models.RecentlyModel, error) 
 	}
 
 	r := models.RecentlyModel{
-		Content: dto.Content, RefType: refType, RefID: refID,
+		Content: dto.Content, Type: normalizeRecentlyType(dto.Type), Metadata: dto.Metadata, RefType: refType, RefID: refID,
 		AllowComment: true,
 	}
 	if dto.AllowComment != nil {
@@ -138,6 +146,12 @@ func (s *Service) Update(id string, dto *UpdateRecentlyDTO) (*models.RecentlyMod
 	if dto.Content != nil {
 		updates["content"] = *dto.Content
 	}
+	if dto.Type != nil {
+		updates["type"] = normalizeRecentlyType(*dto.Type)
+	}
+	if dto.Metadata != nil {
+		updates["metadata"] = dto.Metadata
+	}
 	if dto.RefType != nil {
 		updates["ref_type"] = *dto.RefType
 	}
@@ -150,7 +164,10 @@ func (s *Service) Update(id string, dto *UpdateRecentlyDTO) (*models.RecentlyMod
 	if len(updates) == 0 {
 		return r, nil
 	}
-	return r, s.db.Model(r).Updates(updates).Error
+	if err := s.db.Model(r).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func (s *Service) Vote(id string, up bool) error {
@@ -199,12 +216,23 @@ func (s *Service) resolveRefTypeByID(refID string) (*models.RefType, error) {
 	return nil, nil
 }
 
-type Handler struct {
-	svc *Service
-	hub *gateway.Hub
+func normalizeRecentlyType(raw string) string {
+	v := strings.TrimSpace(strings.ToLower(raw))
+	if v == "" {
+		return "text"
+	}
+	return v
 }
 
-func NewHandler(svc *Service, hub *gateway.Hub) *Handler { return &Handler{svc: svc, hub: hub} }
+type Handler struct {
+	svc     *Service
+	hub     *gateway.Hub
+	webhook *webhook.Service
+}
+
+func NewHandler(svc *Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, hub: hub, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	for _, prefix := range []string{"/recently", "/shorthand"} {
@@ -335,6 +363,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.hub != nil {
 		h.hub.BroadcastPublic("RECENTLY_CREATE", toResponse(r))
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("RECENTLY_CREATE", toResponse(r), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.Created(c, toResponse(r))
 }
 
@@ -350,6 +381,9 @@ func (h *Handler) delete(c *gin.Context) {
 	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("RECENTLY_DELETE", id)
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("RECENTLY_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	response.NoContent(c)
 }
@@ -371,6 +405,9 @@ func (h *Handler) update(c *gin.Context) {
 	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("RECENTLY_UPDATE", toResponse(r))
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("RECENTLY_UPDATE", toResponse(r), webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	response.OK(c, toResponse(r))
 }

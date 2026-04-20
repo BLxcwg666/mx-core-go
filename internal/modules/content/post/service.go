@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/system/util/slugtracker"
@@ -260,6 +261,10 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 	}
 	if dto.Pin != nil {
 		post.Pin = *dto.Pin
+		if *dto.Pin {
+			now := time.Now()
+			post.PinnedAt = &now
+		}
 	}
 	if dto.PinOrder != nil {
 		post.PinOrder = *dto.PinOrder
@@ -332,6 +337,15 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 	}
 	if dto.Pin != nil {
 		updates["pin"] = *dto.Pin
+		if *dto.Pin {
+			if post.PinnedAt != nil {
+				updates["pinned_at"] = *post.PinnedAt
+			} else {
+				updates["pinned_at"] = time.Now()
+			}
+		} else {
+			updates["pinned_at"] = nil
+		}
 	}
 	if dto.PinOrder != nil {
 		updates["pin_order"] = *dto.PinOrder

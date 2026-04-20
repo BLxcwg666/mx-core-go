@@ -6,17 +6,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db  *gorm.DB
-	hub *gateway.Hub
+	db      *gorm.DB
+	hub     *gateway.Hub
+	webhook *webhook.Service
 }
 
-func NewHandler(db *gorm.DB, hub *gateway.Hub) *Handler {
-	return &Handler{db: db, hub: hub}
+func NewHandler(db *gorm.DB, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{db: db, hub: hub, webhook: webhookSvc}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -57,12 +59,9 @@ func (h *Handler) ack(c *gin.Context) {
 			return
 		}
 		var post models.PostModel
-		if err := h.db.Select("id, read_count").First(&post, "id = ?", refID).Error; err == nil && h.hub != nil {
-			h.hub.BroadcastPublic("ARTICLE_READ_COUNT_UPDATE", gin.H{
-				"id":    refID,
-				"type":  "post",
-				"count": post.ReadCount,
-			})
+		if err := h.db.Select("id, read_count").First(&post, "id = ?", refID).Error; err == nil {
+			payload := gin.H{"id": refID, "type": "post", "count": post.ReadCount}
+			h.publishReadCountUpdate(payload)
 		}
 	case "note":
 		if err := h.db.Model(&models.NoteModel{}).
@@ -72,12 +71,9 @@ func (h *Handler) ack(c *gin.Context) {
 			return
 		}
 		var note models.NoteModel
-		if err := h.db.Select("id, read_count").First(&note, "id = ?", refID).Error; err == nil && h.hub != nil {
-			h.hub.BroadcastPublic("ARTICLE_READ_COUNT_UPDATE", gin.H{
-				"id":    refID,
-				"type":  "note",
-				"count": note.ReadCount,
-			})
+		if err := h.db.Select("id, read_count").First(&note, "id = ?", refID).Error; err == nil {
+			payload := gin.H{"id": refID, "type": "note", "count": note.ReadCount}
+			h.publishReadCountUpdate(payload)
 		}
 	case "page":
 		if err := h.db.Model(&models.PageModel{}).
@@ -87,12 +83,9 @@ func (h *Handler) ack(c *gin.Context) {
 			return
 		}
 		var pg models.PageModel
-		if err := h.db.Select("id, read_count").First(&pg, "id = ?", refID).Error; err == nil && h.hub != nil {
-			h.hub.BroadcastPublic("ARTICLE_READ_COUNT_UPDATE", gin.H{
-				"id":    refID,
-				"type":  "page",
-				"count": pg.ReadCount,
-			})
+		if err := h.db.Select("id, read_count").First(&pg, "id = ?", refID).Error; err == nil {
+			payload := gin.H{"id": refID, "type": "page", "count": pg.ReadCount}
+			h.publishReadCountUpdate(payload)
 		}
 	default:
 		response.BadRequest(c, "payload.type must be post|note|page")
@@ -100,6 +93,15 @@ func (h *Handler) ack(c *gin.Context) {
 	}
 
 	c.Status(200)
+}
+
+func (h *Handler) publishReadCountUpdate(payload gin.H) {
+	if h.hub != nil {
+		h.hub.BroadcastPublic("ARTICLE_READ_COUNT_UPDATE", payload)
+	}
+	if h.webhook != nil && strings.TrimSpace(getStr(payload, "type")) != "page" {
+		h.webhook.DispatchScoped("ARTICLE_READ_COUNT_UPDATE", payload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 }
 
 func getStr(m map[string]interface{}, key string) string {

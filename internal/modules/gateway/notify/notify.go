@@ -74,11 +74,6 @@ func (s *Service) OnCommentCreate(cm *models.CommentModel, sendOwnerEmail bool) 
 		return
 	}
 
-	// Dispatch webhook.
-	if s.webhookSvc != nil {
-		s.webhookSvc.Dispatch("COMMENT_CREATE", cm)
-	}
-
 	master, masterMail, masterAvatar := s.getMasterInfo()
 
 	// Bark push notification.
@@ -126,11 +121,6 @@ func (s *Service) OnMasterReply(reply *models.CommentModel, parent *models.Comme
 		return
 	}
 
-	// Dispatch webhook.
-	if s.webhookSvc != nil {
-		s.webhookSvc.Dispatch("COMMENT_CREATE", reply)
-	}
-
 	// Email notification to original commenter.
 	parentMail := strings.TrimSpace(parent.Mail)
 	if cfg.MailOptions.Enable && parentMail != "" {
@@ -162,10 +152,6 @@ func (s *Service) OnPostCreate(post *models.PostModel) {
 		return
 	}
 
-	if s.webhookSvc != nil {
-		s.webhookSvc.Dispatch("POST_CREATE", post)
-	}
-
 	// Sync images to S3 if configured.
 	if s.imageSyncFn != nil {
 		if err := s.imageSyncFn(post.ID, "post"); err != nil {
@@ -187,10 +173,6 @@ func (s *Service) OnNoteCreate(note *models.NoteModel) {
 	}
 	if cfg == nil {
 		return
-	}
-
-	if s.webhookSvc != nil {
-		s.webhookSvc.Dispatch("NOTE_CREATE", note)
 	}
 
 	// Sync images to S3 if configured.

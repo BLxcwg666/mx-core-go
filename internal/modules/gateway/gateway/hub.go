@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	redis "github.com/redis/go-redis/v9"
 	socketio "github.com/zishang520/socket.io/v2/socket"
@@ -113,7 +114,9 @@ func (h *Hub) registerClient(c clientMeta) {
 	}
 
 	if shouldBroadcastOnline {
-		h.BroadcastPublic(eventVisitorOnline, newVisitorEventPayload(currentOnline, ""))
+		payload := newVisitorEventPayload(currentOnline, "")
+		h.BroadcastPublic(eventVisitorOnline, payload)
+		h.dispatchPublicWebhook(eventVisitorOnline, payload)
 		h.updateDailyOnlineStats(currentOnline)
 	}
 }
@@ -150,7 +153,9 @@ func (h *Hub) unregisterClient(c clientMeta) {
 	}
 
 	if shouldBroadcastOffline {
-		h.BroadcastPublic(eventVisitorOffline, newVisitorEventPayload(currentOnline, sessionID))
+		payload := newVisitorEventPayload(currentOnline, sessionID)
+		h.BroadcastPublic(eventVisitorOffline, payload)
+		h.dispatchPublicWebhook(eventVisitorOffline, payload)
 	}
 }
 
@@ -472,6 +477,30 @@ func newVisitorEventPayload(online int, sessionID string) map[string]interface{}
 		payload["sessionId"] = sessionID
 	}
 	return payload
+}
+
+func (h *Hub) SetWebhookService(svc *webhook.Service) {
+	h.mu.Lock()
+	h.webhook = svc
+	h.mu.Unlock()
+}
+
+func (h *Hub) dispatchWebhook(event string, payload interface{}, scope int) {
+	h.mu.RLock()
+	svc := h.webhook
+	h.mu.RUnlock()
+	if svc == nil {
+		return
+	}
+	svc.DispatchScoped(event, payload, scope)
+}
+
+func (h *Hub) dispatchPublicWebhook(event string, payload interface{}) {
+	h.dispatchWebhook(event, payload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+}
+
+func (h *Hub) dispatchAdminWebhook(event string, payload interface{}) {
+	h.dispatchWebhook(event, payload, webhook.ScopeToSystem|webhook.ScopeToAdmin)
 }
 
 // Broadcast sends an event to all clients in the given room (or all if room="").

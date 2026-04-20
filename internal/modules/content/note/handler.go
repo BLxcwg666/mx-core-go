@@ -11,6 +11,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -19,14 +20,15 @@ import (
 )
 
 type Handler struct {
-	svc       *Service
-	notifySvc *notify.Service
-	macroSvc  *textmacro.Service
-	hub       *gateway.Hub
+	svc        *Service
+	notifySvc  *notify.Service
+	webhookSvc *webhook.Service
+	macroSvc   *textmacro.Service
+	hub        *gateway.Hub
 }
 
-func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
-	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc, hub: hub}
+func NewHandler(svc *Service, notifySvc *notify.Service, webhookSvc *webhook.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, webhookSvc: webhookSvc, macroSvc: macroSvc, hub: hub}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -278,6 +280,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.notifySvc != nil && note.IsPublished {
 		go h.notifySvc.OnNoteCreate(note)
 	}
+	if h.webhookSvc != nil && note.IsPublished {
+		h.webhookSvc.DispatchScoped("NOTE_CREATE", toResponse(note, false), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil && note.IsPublished {
 		h.hub.BroadcastPublic("NOTE_CREATE", toResponse(note, false))
 	}
@@ -299,6 +304,9 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "日记不存在")
 		return
 	}
+	if h.webhookSvc != nil && note.IsPublished {
+		h.webhookSvc.DispatchScoped("NOTE_UPDATE", toResponse(note, false), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil && note.IsPublished {
 		h.hub.BroadcastPublic("NOTE_UPDATE", toResponse(note, false))
 	}
@@ -315,6 +323,9 @@ func (h *Handler) delete(c *gin.Context) {
 	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhookSvc != nil && note != nil && note.IsPublished {
+		h.webhookSvc.DispatchScoped("NOTE_DELETE", gin.H{"id": note.ID}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	if h.hub != nil && note != nil && note.IsPublished {
 		h.hub.BroadcastPublic("NOTE_DELETE", toResponse(note, false))

@@ -360,7 +360,10 @@ func (s *Service) Update(id string, dto *UpdateCategoryDTO) (*models.CategoryMod
 	if dto.Type != nil {
 		updates["type"] = *dto.Type
 	}
-	return cat, s.db.Model(cat).Updates(updates).Error
+	if err := s.db.Model(cat).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func (s *Service) Delete(id string) error {

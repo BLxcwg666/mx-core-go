@@ -5,19 +5,21 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
 type Handler struct {
-	svc *Service
+	svc     *Service
+	webhook *webhook.Service
 }
 
 type getByQueryOptions struct {
 	Tag *bool `form:"tag"`
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, webhook: webhookSvc}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -119,6 +121,9 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("CATEGORY_CREATE", cat, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.Created(c, cat)
 }
 
@@ -137,13 +142,20 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "分类不存在")
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("CATEGORY_UPDATE", cat, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.OK(c, cat)
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("CATEGORY_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	response.NoContent(c)
 }

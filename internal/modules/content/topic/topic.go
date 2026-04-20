@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
@@ -91,7 +92,10 @@ func (s *Service) Update(id string, dto *UpdateTopicDTO) (*models.TopicModel, er
 	if dto.Icon != nil {
 		updates["icon"] = *dto.Icon
 	}
-	return t, s.db.Model(t).Updates(updates).Error
+	if err := s.db.Model(t).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func (s *Service) Delete(id string) error {
@@ -99,9 +103,14 @@ func (s *Service) Delete(id string) error {
 	return s.db.Delete(&models.TopicModel{}, "id = ?", id).Error
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc     *Service
+	webhook *webhook.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	t := rg.Group("/topics")
@@ -176,6 +185,9 @@ func (h *Handler) create(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("TOPIC_CREATE", t, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.Created(c, t)
 }
 
@@ -194,13 +206,20 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "主题不存在")
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("TOPIC_UPDATE", t, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.OK(c, t)
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("TOPIC_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	response.NoContent(c)
 }

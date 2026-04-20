@@ -114,6 +114,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	// Webhook service (used by notify).
 	webhookSvc := webhook.NewService(db)
+	a.hub.SetWebhookService(webhookSvc)
 
 	// Subscribe service (used by notify).
 	subscribeSvc := subscribe.NewService(db)
@@ -150,7 +151,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	// Infrastructure
 	health.RegisterRoutes(api, db, a.sched, cfgSvc, authMW, a.logger)
 	aggregate.RegisterRoutes(api, db, cfgSvc, a.hub, rc)
-	ack.NewHandler(db, a.hub).RegisterRoutes(api)
+	ack.NewHandler(db, a.hub, webhookSvc).RegisterRoutes(api)
 	if apiPrefix != "" {
 		feed.RegisterRoutes(api, db, cfgSvc) // also at /api/v2/feed
 		sitemap.RegisterRoutes(api, db, cfgSvc)
@@ -261,15 +262,15 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	postSvc.SetSlugTracker(slugTrackerSvc)
 	pageSvc.SetSlugTracker(slugTrackerSvc)
 
-	post.NewHandler(postSvc, notifySvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
-	note.NewHandler(note.NewService(db), notifySvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
-	page.NewHandler(pageSvc, a.hub, macroSvc).RegisterRoutes(api, authMW)
-	recently.NewHandler(recently.NewService(db), a.hub).RegisterRoutes(api, authMW)
+	post.NewHandler(postSvc, notifySvc, webhookSvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
+	note.NewHandler(note.NewService(db), notifySvc, webhookSvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
+	page.NewHandler(pageSvc, a.hub, webhookSvc, macroSvc).RegisterRoutes(api, authMW)
+	recently.NewHandler(recently.NewService(db), a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	draft.NewHandler(draft.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Taxonomy
-	category.NewHandler(category.NewService(db)).RegisterRoutes(api, authMW)
-	topic.NewHandler(topic.NewService(db)).RegisterRoutes(api, authMW)
+	category.NewHandler(category.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
+	topic.NewHandler(topic.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
 
 	// Comments
 	comment.NewHandler(
@@ -277,16 +278,17 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 		notifySvc,
 		comment.WithLogger(a.logger),
 		comment.WithHub(a.hub),
+		comment.WithWebhook(webhookSvc),
 	).RegisterRoutes(api, authMW)
 
 	// Extras
-	say.NewHandler(say.NewService(db), a.hub).RegisterRoutes(api, authMW)
-	link.NewHandler(link.NewService(db, link.WithLogger(a.logger)), cfgSvc, a.hub).RegisterRoutes(api, authMW)
+	say.NewHandler(say.NewService(db), a.hub, webhookSvc).RegisterRoutes(api, authMW)
+	link.NewHandler(link.NewService(db, link.WithLogger(a.logger)), cfgSvc, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	subscribe.NewHandler(subscribeSvc, cfgSvc, subscribe.WithLogger(a.logger)).RegisterRoutes(api, authMW)
 	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
 	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
-	activity.NewHandler(db, a.hub).RegisterRoutes(api, authMW)
+	activity.NewHandler(db, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	metapreset.NewHandler(db).RegisterRoutes(api, authMW)
 	serverless.NewHandler(db, a.hub, rc).RegisterRoutes(api, authMW)
 	dependency.NewHandler().RegisterRoutes(api, authMW)

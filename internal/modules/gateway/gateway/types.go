@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	socketio "github.com/zishang520/socket.io/v2/socket"
 	"go.uber.org/zap"
@@ -85,4 +86,5 @@ type Hub struct {
 	logger              *zap.Logger
 	sio                 *socketio.Server
 	adminTokenValidator func(string) bool
+	webhook             *webhook.Service
 }

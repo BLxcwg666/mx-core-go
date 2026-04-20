@@ -11,17 +11,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db  *gorm.DB
-	hub *gateway.Hub
+	db      *gorm.DB
+	hub     *gateway.Hub
+	webhook *webhook.Service
 }
 
-func NewHandler(db *gorm.DB, hub *gateway.Hub) *Handler { return &Handler{db: db, hub: hub} }
+func NewHandler(db *gorm.DB, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{db: db, hub: hub, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/activity")
@@ -94,6 +98,12 @@ func (h *Handler) like(c *gin.Context) {
 	if err := h.db.Create(&act).Error; err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhook != nil {
+		payload, err := h.buildActivityLikePayload(refID, contentType, act.CreatedAt)
+		if err == nil {
+			h.webhook.DispatchScoped("ACTIVITY_LIKE", payload, webhook.ScopeToSystem|webhook.ScopeToAdmin)
+		}
 	}
 	response.NoContent(c)
 }
@@ -296,6 +306,9 @@ func (h *Handler) updatePresence(c *gin.Context) {
 	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("ACTIVITY_UPDATE_PRESENCE", sanitized)
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("ACTIVITY_UPDATE_PRESENCE", sanitized, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	response.OK(c, sanitized)
 }
@@ -844,4 +857,33 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 	}
 
 	return objects, flat, nil
+}
+
+func (h *Handler) buildActivityLikePayload(refID, contentType string, created time.Time) (gin.H, error) {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	payload := gin.H{
+		"id":      refID,
+		"created": created,
+	}
+
+	switch contentType {
+	case "post", "posts":
+		var post models.PostModel
+		if err := h.db.Preload("Category").First(&post, "id = ?", refID).Error; err != nil {
+			return nil, err
+		}
+		payload["type"] = "Post"
+		payload["ref"] = compactPost(post)
+		return payload, nil
+	case "note", "notes":
+		var note models.NoteModel
+		if err := h.db.First(&note, "id = ?", refID).Error; err != nil {
+			return nil, err
+		}
+		payload["type"] = "Note"
+		payload["ref"] = compactNote(note)
+		return payload, nil
+	default:
+		return nil, fmt.Errorf("unsupported activity like type")
+	}
 }

@@ -55,3 +55,6 @@ type Count struct {
 	Read int `json:"read"`
 	Like int `json:"like"`
 }
+
+// JSONMap stores arbitrary JSON object data.
+type JSONMap map[string]interface{}

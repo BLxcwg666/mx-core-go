@@ -4,6 +4,8 @@ package models
 type RecentlyModel struct {
 	Base
 	Content       string      `json:"content"        gorm:"type:text;not null"`
+	Type          string      `json:"type"           gorm:"type:varchar(32);default:text"`
+	Metadata      JSONMap     `json:"metadata,omitempty" gorm:"serializer:json"`
 	RefType       *RefType    `json:"ref_type,omitempty"  gorm:"type:varchar(32)"`
 	RefID         *string     `json:"ref_id,omitempty"    gorm:"index"`
 	Modified      interface{} `json:"modified,omitempty"   gorm:"-"`

@@ -2,12 +2,19 @@ package webhook
 
 import "time"
 
+const (
+	ScopeToVisitor = 1 << 0
+	ScopeToAdmin   = 1 << 1
+	ScopeToSystem  = 1 << 2
+	ScopeAll       = ScopeToVisitor | ScopeToAdmin | ScopeToSystem
+)
+
 // CreateWebhookDTO is the request body for creating a webhook.
 type CreateWebhookDTO struct {
 	PayloadURL string   `json:"payloadUrl" binding:"required,url"`
 	Events     []string `json:"events"      binding:"required,min=1"`
 	Enabled    *bool    `json:"enabled"`
-	Secret     string   `json:"secret"`
+	Secret     string   `json:"secret"      binding:"required"`
 	Scope      *int     `json:"scope"`
 }
 

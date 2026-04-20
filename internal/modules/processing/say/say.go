@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -100,7 +101,10 @@ func (s *Service) Update(id string, dto *UpdateSayDTO) (*models.SayModel, error)
 	if dto.Author != nil {
 		updates["author"] = *dto.Author
 	}
-	return item, s.db.Model(item).Updates(updates).Error
+	if err := s.db.Model(item).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func (s *Service) Delete(id string) error {
@@ -108,11 +112,14 @@ func (s *Service) Delete(id string) error {
 }
 
 type Handler struct {
-	svc *Service
-	hub *gateway.Hub
+	svc     *Service
+	hub     *gateway.Hub
+	webhook *webhook.Service
 }
 
-func NewHandler(svc *Service, hub *gateway.Hub) *Handler { return &Handler{svc: svc, hub: hub} }
+func NewHandler(svc *Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, hub: hub, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/says")
@@ -195,6 +202,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.hub != nil {
 		h.hub.BroadcastPublic("SAY_CREATE", toResponse(item))
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("SAY_CREATE", toResponse(item), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.Created(c, toResponse(item))
 }
 
@@ -216,6 +226,9 @@ func (h *Handler) update(c *gin.Context) {
 	if h.hub != nil {
 		h.hub.BroadcastPublic("SAY_UPDATE", toResponse(item))
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("SAY_UPDATE", toResponse(item), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.OK(c, toResponse(item))
 }
 
@@ -228,6 +241,9 @@ func (h *Handler) delete(c *gin.Context) {
 	if h.hub != nil {
 		h.hub.BroadcastPublic("SAY_DELETE", id)
 		h.hub.BroadcastAdmin("SAY_DELETE", id)
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("SAY_DELETE", gin.H{"id": id}, webhook.ScopeAll)
 	}
 	response.NoContent(c)
 }

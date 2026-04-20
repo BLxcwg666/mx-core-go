@@ -3,7 +3,6 @@ package webhook
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -49,15 +48,11 @@ func (s *Service) Create(dto *CreateWebhookDTO) (*models.WebhookModel, error) {
 		return nil, fmt.Errorf("events is empty")
 	}
 
-	secretBytes := make([]byte, 20)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return nil, err
-	}
 	secret := strings.TrimSpace(dto.Secret)
 	if secret == "" {
-		secret = hex.EncodeToString(secretBytes)
+		return nil, fmt.Errorf("secret is required")
 	}
-	scope := 4
+	scope := ScopeToSystem
 	if dto.Scope != nil {
 		scope = *dto.Scope
 	}
@@ -72,7 +67,11 @@ func (s *Service) Create(dto *CreateWebhookDTO) (*models.WebhookModel, error) {
 	if dto.Enabled != nil {
 		w.Enabled = *dto.Enabled
 	}
-	return &w, s.db.Create(&w).Error
+	if err := s.db.Create(&w).Error; err != nil {
+		return nil, err
+	}
+	go s.deliver(w, "health_check", map[string]interface{}{}, scopeToSource(ScopeToSystem))
+	return &w, nil
 }
 
 func (s *Service) Update(id string, dto *UpdateWebhookDTO) (*models.WebhookModel, error) {
@@ -98,9 +97,21 @@ func (s *Service) Update(id string, dto *UpdateWebhookDTO) (*models.WebhookModel
 		updates["scope"] = *dto.Scope
 	}
 	if dto.Secret != nil {
-		updates["secret"] = strings.TrimSpace(*dto.Secret)
+		secret := strings.TrimSpace(*dto.Secret)
+		if secret == "" {
+			return nil, fmt.Errorf("secret is required")
+		}
+		updates["secret"] = secret
 	}
-	return w, s.db.Model(w).Updates(updates).Error
+	if err := s.db.Model(w).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	updated, err := s.GetByID(id)
+	if err != nil || updated == nil {
+		return updated, err
+	}
+	go s.deliver(*updated, "health_check", map[string]interface{}{}, scopeToSource(ScopeToSystem))
+	return updated, nil
 }
 
 func (s *Service) Delete(id string) error {
@@ -109,18 +120,28 @@ func (s *Service) Delete(id string) error {
 
 // Dispatch sends an event payload to all matching, enabled webhooks.
 func (s *Service) Dispatch(event string, payload interface{}) {
+	s.DispatchScoped(event, payload, ScopeToSystem)
+}
+
+// DispatchScoped sends an event payload to all matching, enabled webhooks in the given scope.
+func (s *Service) DispatchScoped(event string, payload interface{}, scope int) {
 	var hooks []models.WebhookModel
 	s.db.Where("enabled = ?", true).Find(&hooks)
+	source := scopeToSource(scope)
+	normalizedPayload := s.normalizePayload(event, payload)
 
 	for _, hook := range hooks {
+		if hook.Scope != 0 && (hook.Scope&scope) == 0 {
+			continue
+		}
 		if !webhookContainsEvent(hook.Events, event) {
 			continue
 		}
-		go s.deliver(hook, event, payload)
+		go s.deliver(hook, event, normalizedPayload, source)
 	}
 }
 
-func (s *Service) deliver(hook models.WebhookModel, event string, payload interface{}) {
+func (s *Service) deliver(hook models.WebhookModel, event string, payload interface{}, source string) {
 	body, _ := json.Marshal(payload)
 	payloadString := string(body)
 
@@ -133,6 +154,7 @@ func (s *Service) deliver(hook models.WebhookModel, event string, payload interf
 		"X-Webhook-Id":           hook.ID,
 		"X-Webhook-Timestamp":    timestamp,
 		"X-Webhook-Signature256": signature256,
+		"X-Webhook-Source":       source,
 	}
 
 	req, err := http.NewRequest("POST", hook.PayloadURL, bytes.NewReader(body))
@@ -222,7 +244,7 @@ func (s *Service) Redispatch(eventID string) error {
 	if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {
 		payload = event.Payload
 	}
-	go s.deliver(*hook, event.Event, payload)
+	go s.deliver(*hook, event.Event, payload, scopeToSource(ScopeToSystem))
 	return nil
 }
 
@@ -310,4 +332,20 @@ func signWithHash(newHash func() hash.Hash, secret, payload string) string {
 	mac := hmac.New(newHash, []byte(secret))
 	_, _ = mac.Write([]byte(payload))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func scopeToSource(scope int) string {
+	hasVisitor := (scope & ScopeToVisitor) != 0
+	hasAdmin := (scope & ScopeToAdmin) != 0
+
+	if hasVisitor && !hasAdmin {
+		return "admin"
+	}
+	if hasAdmin && !hasVisitor {
+		return "visitor"
+	}
+	if hasVisitor && hasAdmin {
+		return "admin"
+	}
+	return "system"
 }

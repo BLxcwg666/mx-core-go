@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // StringSlice is a []string that serializes as JSON in MySQL.
 type StringSlice []string
 
@@ -18,6 +20,7 @@ type PostModel struct {
 	CommentsIndex int            `json:"comments_index" gorm:"default:0"`
 	AllowComment  bool           `json:"allow_comment"  gorm:"default:true"`
 	Pin           bool           `json:"pin"          gorm:"default:false"`
+	PinnedAt      *time.Time     `json:"-"            gorm:"column:pinned_at"`
 	PinOrder      int            `json:"pin_order"    gorm:"default:0"`
 
 	// many2many self-reference for related posts

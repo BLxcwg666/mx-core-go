@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	socketio "github.com/zishang520/socket.io/v2/socket"
 )
@@ -23,6 +24,7 @@ func (h *Hub) registerNamespaces() {
 		sessionID := normalizeSessionID(extractSessionID(client, sid), sid)
 		h.register <- clientMeta{sid: sid, room: RoomPublic, sessionID: sessionID}
 		_ = client.Emit("message", h.gatewayMessageFormat("GATEWAY_CONNECT", "WebSocket connected", nil))
+		h.dispatchPublicWebhook("GATEWAY_CONNECT", gatewayConnectionPayload(namespaceWeb, RoomPublic, sid, sessionID))
 		_ = client.On("message", func(eventArgs ...any) {
 			msg, ok := parseInboundWebMessage(eventArgs...)
 			if !ok {
@@ -50,7 +52,9 @@ func (h *Hub) registerNamespaces() {
 				}
 				client.Leave(socketio.Room(roomName))
 				if h.leavePublicRoom(sid, roomName) {
-					h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(h.identityOfSID(sid, sessionID), roomName, sid))
+					payload := newActivityLeavePresencePayload(h.identityOfSID(sid, sessionID), roomName, sid)
+					h.BroadcastPublic(eventActivityLeavePresence, payload)
+					h.dispatchPublicWebhook(eventActivityLeavePresence, payload)
 				}
 			case messageUpdateSID:
 				nextSessionID := firstNonEmptyString(
@@ -65,7 +69,9 @@ func (h *Hub) registerNamespaces() {
 				if !changed {
 					return
 				}
-				h.BroadcastPublic(eventVisitorOnline, newVisitorEventPayload(currentOnline, ""))
+				payload := newVisitorEventPayload(currentOnline, "")
+				h.BroadcastPublic(eventVisitorOnline, payload)
+				h.dispatchPublicWebhook(eventVisitorOnline, payload)
 				h.updateDailyOnlineStats(currentOnline)
 			case messageUpdateLang:
 				// compatible no-op
@@ -76,8 +82,11 @@ func (h *Hub) registerNamespaces() {
 			rooms := h.joinedPublicRoomsOfSID(sid)
 			identity := h.identityOfSID(sid, sessionID)
 			for _, roomName := range rooms {
-				h.BroadcastPublic(eventActivityLeavePresence, newActivityLeavePresencePayload(identity, roomName, sid))
+				payload := newActivityLeavePresencePayload(identity, roomName, sid)
+				h.BroadcastPublic(eventActivityLeavePresence, payload)
+				h.dispatchPublicWebhook(eventActivityLeavePresence, payload)
 			}
+			h.dispatchPublicWebhook("GATEWAY_DISCONNECT", gatewayConnectionPayload(namespaceWeb, RoomPublic, sid, sessionID))
 			h.unregister <- clientMeta{sid: sid, room: RoomPublic, sessionID: sessionID}
 		})
 	})
@@ -88,17 +97,19 @@ func (h *Hub) registerNamespaces() {
 		if !ok {
 			return
 		}
+		sid := string(client.Id())
 
 		token := normalizeToken(extractToken(client))
 		if token == "" || h.adminTokenValidator == nil || !h.adminTokenValidator(token) {
 			_ = client.Emit("message", h.gatewayMessageFormat("AUTH_FAILED", "auth failed", nil))
+			h.dispatchAdminWebhook("AUTH_FAILED", gatewayAuthFailedPayload(sid, token != ""))
 			client.Disconnect(true)
 			return
 		}
 
-		sid := string(client.Id())
 		h.register <- clientMeta{sid: sid, room: RoomAdmin}
 		_ = client.Emit("message", h.gatewayMessageFormat("GATEWAY_CONNECT", "WebSocket connected", nil))
+		h.dispatchAdminWebhook("GATEWAY_CONNECT", gatewayConnectionPayload(namespaceAdmin, RoomAdmin, sid, ""))
 
 		_ = client.On("log", func(eventArgs ...any) {
 			h.subscribeStdout(client, parsePrevLogOption(eventArgs))
@@ -109,9 +120,33 @@ func (h *Hub) registerNamespaces() {
 
 		_ = client.On("disconnect", func(_ ...any) {
 			h.unsubscribeStdout(sid)
+			h.dispatchAdminWebhook("GATEWAY_DISCONNECT", gatewayConnectionPayload(namespaceAdmin, RoomAdmin, sid, ""))
 			h.unregister <- clientMeta{sid: sid, room: RoomAdmin}
 		})
 	})
+}
+
+func gatewayConnectionPayload(namespace, room, sid, sessionID string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"namespace": namespace,
+		"room":      room,
+		"sid":       sid,
+		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if sessionID != "" {
+		payload["sessionId"] = sessionID
+	}
+	return payload
+}
+
+func gatewayAuthFailedPayload(sid string, tokenProvided bool) map[string]interface{} {
+	return map[string]interface{}{
+		"namespace":     namespaceAdmin,
+		"room":          RoomAdmin,
+		"sid":           sid,
+		"tokenProvided": tokenProvided,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339Nano),
+	}
 }
 
 func extractToken(client *socketio.Socket) string {

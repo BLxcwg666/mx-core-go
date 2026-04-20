@@ -11,6 +11,7 @@ import (
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/modules/system/util/slugtracker"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -245,10 +246,11 @@ type Handler struct {
 	svc      *Service
 	macroSvc *textmacro.Service
 	hub      *gateway.Hub
+	webhook  *webhook.Service
 }
 
-func NewHandler(svc *Service, hub *gateway.Hub, macroSvc ...*textmacro.Service) *Handler {
-	h := &Handler{svc: svc, hub: hub}
+func NewHandler(svc *Service, hub *gateway.Hub, webhookSvc *webhook.Service, macroSvc ...*textmacro.Service) *Handler {
+	h := &Handler{svc: svc, hub: hub, webhook: webhookSvc}
 	if len(macroSvc) > 0 {
 		h.macroSvc = macroSvc[0]
 	}
@@ -336,6 +338,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.hub != nil {
 		h.hub.BroadcastPublic("PAGE_CREATE", toResponse(p))
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("PAGE_CREATE", toResponse(p), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	response.Created(c, toResponse(p))
 }
 
@@ -359,6 +364,9 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "页面不存在")
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("PAGE_UPDATE", toResponse(p), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("PAGE_UPDATE", toResponse(p))
 	}
@@ -370,6 +378,9 @@ func (h *Handler) delete(c *gin.Context) {
 	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("PAGE_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("PAGE_DELETE", id)

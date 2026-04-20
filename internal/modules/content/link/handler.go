@@ -14,6 +14,7 @@ import (
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
 	"github.com/mx-space/core/internal/pkg/pagination"
@@ -21,13 +22,14 @@ import (
 )
 
 type Handler struct {
-	svc    *Service
-	cfgSvc *appconfigs.Service
-	hub    *gateway.Hub
+	svc     *Service
+	cfgSvc  *appconfigs.Service
+	hub     *gateway.Hub
+	webhook *webhook.Service
 }
 
-func NewHandler(svc *Service, cfgSvc *appconfigs.Service, hub *gateway.Hub) *Handler {
-	return &Handler{svc: svc, cfgSvc: cfgSvc, hub: hub}
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, cfgSvc: cfgSvc, hub: hub, webhook: webhookSvc}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -175,6 +177,9 @@ func (h *Handler) create(c *gin.Context) {
 	}
 	if !isAdmin && h.hub != nil {
 		h.hub.BroadcastAdmin("LINK_APPLY", toResponse(l, true))
+	}
+	if !isAdmin && h.webhook != nil {
+		h.webhook.DispatchScoped("LINK_APPLY", toResponse(l, true), webhook.ScopeToSystem|webhook.ScopeToAdmin)
 	}
 	if !isAdmin && h.cfgSvc != nil {
 		go h.sendApplyNotification(l, dto.Author)

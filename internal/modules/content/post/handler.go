@@ -6,6 +6,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/processing/textmacro"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -14,14 +15,15 @@ import (
 
 // Handler handles post HTTP requests.
 type Handler struct {
-	svc       *Service
-	notifySvc *notify.Service
-	macroSvc  *textmacro.Service
-	hub       *gateway.Hub
+	svc        *Service
+	notifySvc  *notify.Service
+	webhookSvc *webhook.Service
+	macroSvc   *textmacro.Service
+	hub        *gateway.Hub
 }
 
-func NewHandler(svc *Service, notifySvc *notify.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
-	return &Handler{svc: svc, notifySvc: notifySvc, macroSvc: macroSvc, hub: hub}
+func NewHandler(svc *Service, notifySvc *notify.Service, webhookSvc *webhook.Service, macroSvc *textmacro.Service, hub *gateway.Hub) *Handler {
+	return &Handler{svc: svc, notifySvc: notifySvc, webhookSvc: webhookSvc, macroSvc: macroSvc, hub: hub}
 }
 
 // RegisterRoutes mounts post routes onto the given router group.
@@ -221,6 +223,9 @@ func (h *Handler) create(c *gin.Context) {
 	if h.notifySvc != nil && post.IsPublished {
 		go h.notifySvc.OnPostCreate(post)
 	}
+	if h.webhookSvc != nil && post.IsPublished {
+		h.webhookSvc.DispatchScoped("POST_CREATE", toResponse(post), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_CREATE", toResponse(post))
 	}
@@ -251,6 +256,9 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
+	if h.webhookSvc != nil && post.IsPublished {
+		h.webhookSvc.DispatchScoped("POST_UPDATE", toResponse(post), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))
 	}
@@ -273,6 +281,9 @@ func (h *Handler) publish(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.webhookSvc != nil && post != nil && post.IsPublished {
+		h.webhookSvc.DispatchScoped("POST_UPDATE", toResponse(post), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil && post != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))
 	}
@@ -291,6 +302,9 @@ func (h *Handler) delete(c *gin.Context) {
 	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if h.webhookSvc != nil && post != nil && post.IsPublished {
+		h.webhookSvc.DispatchScoped("POST_DELETE", gin.H{"id": post.ID}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 	}
 	if h.hub != nil && post != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_DELETE", toResponse(post))

@@ -13,6 +13,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -24,6 +25,7 @@ type Handler struct {
 	svc       *Service
 	cfgSvc    *appconfigs.Service
 	notifySvc *notify.Service
+	webhook   *webhook.Service
 	logger    *zap.Logger
 	hub       *gateway.Hub
 }
@@ -57,6 +59,13 @@ func WithLogger(l *zap.Logger) HandlerOption {
 func WithHub(hub *gateway.Hub) HandlerOption {
 	return func(h *Handler) {
 		h.hub = hub
+	}
+}
+
+// WithWebhook sets webhook dispatch service for comment events.
+func WithWebhook(webhookSvc *webhook.Service) HandlerOption {
+	return func(h *Handler) {
+		h.webhook = webhookSvc
 	}
 }
 
@@ -123,7 +132,7 @@ func (h *Handler) shouldAuditComment() bool {
 }
 
 func (h *Handler) emitCommentCreate(cm *models.CommentModel, isAuthenticated, isSpam bool) {
-	if h.hub == nil || cm == nil {
+	if cm == nil {
 		return
 	}
 
@@ -131,16 +140,31 @@ func (h *Handler) emitCommentCreate(cm *models.CommentModel, isAuthenticated, is
 	adminPayload := legacyCommentPayload(cm, true)
 
 	if isAuthenticated {
-		h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
+		if h.webhook != nil {
+			h.webhook.DispatchScoped("COMMENT_CREATE", adminPayload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+		}
+		if h.hub != nil {
+			h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
+		}
 		return
 	}
 
-	h.hub.BroadcastAdmin("COMMENT_CREATE", adminPayload)
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("COMMENT_CREATE", adminPayload, webhook.ScopeToSystem|webhook.ScopeToAdmin)
+	}
+	if h.hub != nil {
+		h.hub.BroadcastAdmin("COMMENT_CREATE", adminPayload)
+	}
 	if isSpam || cm.IsWhispers || cm.State == models.CommentJunk || h.shouldAuditComment() {
 		return
 	}
 
-	h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("COMMENT_CREATE", publicPayload, webhook.ScopeToVisitor)
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)
+	}
 }
 
 // checkSpamAndMark checks anti-spam rules and marks the comment as junk when
@@ -623,6 +647,9 @@ func (h *Handler) delete(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("COMMENT_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 	if h.hub != nil {
 		h.hub.BroadcastPublic("COMMENT_DELETE", id)
 	}
@@ -644,6 +671,9 @@ func (h *Handler) batchDelete(c *gin.Context) {
 		if err := h.svc.Delete(id); err != nil {
 			response.InternalError(c, err)
 			return
+		}
+		if h.webhook != nil {
+			h.webhook.DispatchScoped("COMMENT_DELETE", gin.H{"id": id}, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 		}
 		if h.hub != nil {
 			h.hub.BroadcastPublic("COMMENT_DELETE", id)
@@ -877,8 +907,15 @@ func (h *Handler) edit(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	payload := gin.H{"id": cm.ID, "text": body.Text}
+	if h.webhook != nil {
+		scope := webhook.ScopeAll
+		if cm.IsWhispers {
+			scope = webhook.ScopeToSystem | webhook.ScopeToAdmin
+		}
+		h.webhook.DispatchScoped("COMMENT_UPDATE", payload, scope)
+	}
 	if h.hub != nil {
-		payload := gin.H{"id": cm.ID, "text": body.Text}
 		h.hub.BroadcastAdmin("COMMENT_UPDATE", payload)
 		if !cm.IsWhispers {
 			h.hub.BroadcastPublic("COMMENT_UPDATE", payload)
