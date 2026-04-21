@@ -371,6 +371,8 @@ func parseRuntimeErrorValue(value goja.Value) (string, int) {
 		return "unknown runtime error", 0
 	}
 
+	stringified := strings.TrimSpace(value.String())
+
 	exported := value.Export()
 	switch v := exported.(type) {
 	case string:
@@ -383,7 +385,11 @@ func parseRuntimeErrorValue(value goja.Value) (string, int) {
 			msg = toString(v["error"])
 		}
 		if msg == "" {
-			msg = fmt.Sprintf("%v", exported)
+			if stringified != "" && stringified != "[object Object]" {
+				msg = stringified
+			} else {
+				msg = fmt.Sprintf("%v", exported)
+			}
 		}
 		status := toInt(v["status"])
 		if status == 0 {
@@ -391,6 +397,9 @@ func parseRuntimeErrorValue(value goja.Value) (string, int) {
 		}
 		return msg, status
 	default:
+		if stringified != "" && stringified != "[object Object]" {
+			return stringified, 0
+		}
 		return fmt.Sprintf("%v", exported), 0
 	}
 }
