@@ -26,6 +26,7 @@ type Config struct {
 	User      string             `json:"user"`
 	Pass      string             `json:"pass"`
 	From      string             `json:"from"`
+	Name      string             `json:"name"`
 	ReplyTo   string             `json:"reply_to"`
 	Socks5    *SOCKS5ProxyConfig `json:"socks5,omitempty"`
 	UseResend bool               `json:"use_resend"`
@@ -112,10 +113,7 @@ func (s *Sender) sendSMTP(msg Message) error {
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 
-	fromHeader := strings.TrimSpace(s.cfg.From)
-	if fromHeader == "" {
-		fromHeader = strings.TrimSpace(s.cfg.User)
-	}
+	fromHeader := s.resolveFromHeader()
 	if fromHeader == "" {
 		return fmt.Errorf("smtp from address is required")
 	}
@@ -278,6 +276,38 @@ func normalizeRecipients(to []string) []string {
 	return recipients
 }
 
+func (s *Sender) resolveFromHeader() string {
+	raw := strings.TrimSpace(s.cfg.From)
+	if raw == "" {
+		raw = strings.TrimSpace(s.cfg.User)
+	}
+	if raw == "" {
+		return ""
+	}
+	return formatAddressHeader(raw, s.cfg.Name)
+}
+
+func formatAddressHeader(raw, name string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	addr, err := stdmail.ParseAddress(raw)
+	if err == nil && addr.Address != "" {
+		if strings.TrimSpace(addr.Name) != "" || strings.TrimSpace(name) == "" {
+			return addr.String()
+		}
+		return (&stdmail.Address{Name: strings.TrimSpace(name), Address: addr.Address}).String()
+	}
+
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(raw, "<>") {
+		return raw
+	}
+
+	return (&stdmail.Address{Name: strings.TrimSpace(name), Address: raw}).String()
+}
+
 func envelopeAddress(raw string) string {
 	if addr, err := stdmail.ParseAddress(strings.TrimSpace(raw)); err == nil && addr.Address != "" {
 		return addr.Address
@@ -322,10 +352,7 @@ func defaultProxyPort(port int) int {
 
 // sendResend sends via the Resend HTTP API.
 func (s *Sender) sendResend(msg Message) error {
-	from := s.cfg.From
-	if from == "" {
-		from = s.cfg.User
-	}
+	from := s.resolveFromHeader()
 
 	payloadBody := map[string]interface{}{
 		"from":    from,

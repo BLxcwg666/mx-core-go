@@ -1,6 +1,8 @@
 package mail
 
 import (
+	"strings"
+
 	"github.com/mx-space/core/internal/config"
 )
 
@@ -14,6 +16,10 @@ func BuildMailConfig(cfg *config.FullConfig) Config {
 	mc := Config{
 		Enable: cfg.MailOptions.Enable,
 		From:   cfg.MailOptions.From,
+		Name:   strings.TrimSpace(cfg.SEO.Title),
+	}
+	if mc.Name == "" {
+		mc.Name = "Mx Space"
 	}
 	if cfg.MailOptions.SMTP != nil {
 		mc.Host = cfg.MailOptions.SMTP.Options.Host
