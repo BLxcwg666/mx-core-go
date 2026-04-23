@@ -177,7 +177,38 @@ func (s *Service) Reply(parentID string, dto *CreateCommentDTO, ip, agent string
 	return &c, nil
 }
 
-func (s *Service) AllowComment(refType models.RefType, refID string) (bool, error) {
+func (s *Service) AllowComment(refType models.RefType, refID string, isAdmin bool) (bool, error) {
+	refID = strings.TrimSpace(refID)
+	if refID == "" {
+		return false, errCommentRefNotFound
+	}
+	if !isAdmin {
+		isPublic, err := s.IsPublicRef(refType, refID)
+		if err != nil {
+			return false, err
+		}
+		if !isPublic {
+			return false, errCommentRefNotFound
+		}
+	}
+
+	normalizedRefType := normalizeRefType(string(refType))
+	if normalizedRefType == "" {
+		resolvedType, err := s.resolveRefTypeByID(refID)
+		if err != nil {
+			return false, err
+		}
+		normalizedRefType = resolvedType
+	}
+	if normalizedRefType == "" {
+		return false, errCommentRefNotFound
+	}
+
+	_, allowComment, err := s.getRefCommentMeta(s.db, normalizedRefType, refID)
+	return allowComment, err
+}
+
+func (s *Service) IsPublicRef(refType models.RefType, refID string) (bool, error) {
 	refID = strings.TrimSpace(refID)
 	if refID == "" {
 		return false, errCommentRefNotFound
@@ -195,8 +226,24 @@ func (s *Service) AllowComment(refType models.RefType, refID string) (bool, erro
 		return false, errCommentRefNotFound
 	}
 
-	_, allowComment, err := s.getRefCommentMeta(s.db, normalizedRefType, refID)
-	return allowComment, err
+	var count int64
+	var err error
+	switch normalizedRefType {
+	case models.RefTypePost:
+		err = s.db.Model(&models.PostModel{}).Where("id = ? AND is_published = ?", refID, true).Count(&count).Error
+	case models.RefTypeNote:
+		err = s.db.Model(&models.NoteModel{}).Where("id = ? AND is_published = ?", refID, true).Count(&count).Error
+	case models.RefTypePage:
+		err = s.db.Model(&models.PageModel{}).Where("id = ?", refID).Count(&count).Error
+	case models.RefTypeRecently:
+		err = s.db.Model(&models.RecentlyModel{}).Where("id = ?", refID).Count(&count).Error
+	default:
+		return false, errCommentRefNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *Service) getRefCommentMeta(tx *gorm.DB, refType models.RefType, refID string) (int, bool, error) {

@@ -76,11 +76,13 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 }
 
 // Search queries MeiliSearch, with MySQL LIKE fallback.
-func (s *Service) Search(q string) ([]SearchResult, string, error) {
+func (s *Service) Search(q string, isAdmin bool) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
 		if results, err := client.Search(q); err == nil {
-			results = s.filterPublicNoteResults(results)
-			s.hydrateSearchResults(results)
+			if !isAdmin {
+				results = s.filterPublicResults(results)
+			}
+			s.hydrateSearchResults(results, isAdmin)
 			s.logger.Debug(fmt.Sprintf("MeiliSearch 搜索命中 %d 条结果", len(results)))
 			return results, servedByMeili, nil
 		} else {
@@ -88,9 +90,58 @@ func (s *Service) Search(q string) ([]SearchResult, string, error) {
 		}
 	}
 	results, err := s.mysqlSearch(q)
-	results = s.filterPublicNoteResults(results)
-	s.hydrateSearchResults(results)
+	if !isAdmin {
+		results = s.filterPublicResults(results)
+	}
+	s.hydrateSearchResults(results, isAdmin)
 	return results, servedByMySQL, err
+}
+
+func (s *Service) filterPublicResults(results []SearchResult) []SearchResult {
+	results = s.filterPublicPostResults(results)
+	return s.filterPublicNoteResults(results)
+}
+
+func (s *Service) filterPublicPostResults(results []SearchResult) []SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	postIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.Type == "post" && result.ID != "" {
+			postIDs = append(postIDs, result.ID)
+		}
+	}
+	if len(postIDs) == 0 {
+		return results
+	}
+
+	var posts []models.PostModel
+	if err := s.db.Model(&models.PostModel{}).
+		Select("id").
+		Where("is_published = ?", true).
+		Where("id IN ?", postIDs).
+		Find(&posts).Error; err != nil {
+		return results
+	}
+
+	allowed := make(map[string]struct{}, len(posts))
+	for _, post := range posts {
+		allowed[post.ID] = struct{}{}
+	}
+
+	filtered := results[:0]
+	for _, result := range results {
+		if result.Type != "post" {
+			filtered = append(filtered, result)
+			continue
+		}
+		if _, ok := allowed[result.ID]; ok {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }
 
 func (s *Service) filterPublicNoteResults(results []SearchResult) []SearchResult {
@@ -134,7 +185,7 @@ func (s *Service) filterPublicNoteResults(results []SearchResult) []SearchResult
 	return filtered
 }
 
-func (s *Service) hydrateSearchResults(results []SearchResult) {
+func (s *Service) hydrateSearchResults(results []SearchResult, isAdmin bool) {
 	if len(results) == 0 {
 		return
 	}
@@ -159,11 +210,14 @@ func (s *Service) hydrateSearchResults(results []SearchResult) {
 	}
 
 	var posts []models.PostModel
-	if err := s.db.
+	tx := s.db.
 		Model(&models.PostModel{}).
 		Preload("Category").
-		Where("id IN ?", postIDs).
-		Find(&posts).Error; err != nil {
+		Where("id IN ?", postIDs)
+	if !isAdmin {
+		tx = tx.Where("is_published = ?", true)
+	}
+	if err := tx.Find(&posts).Error; err != nil {
 		return
 	}
 

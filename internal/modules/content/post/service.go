@@ -28,9 +28,12 @@ func NewService(db *gorm.DB) *Service {
 func (s *Service) SetSlugTracker(st *slugtracker.Service) { s.slugTracker = st }
 
 // List returns a paginated list of posts.
-func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.PostModel, response.Pagination, error) {
+func (s *Service) List(q pagination.Query, lq ListQuery, isAdmin bool) ([]models.PostModel, response.Pagination, error) {
 	tx := s.db.Model(&models.PostModel{}).
 		Preload("Category")
+	if !isAdmin {
+		tx = tx.Where("is_published = ?", true)
+	}
 
 	if lq.Year != nil {
 		tx = tx.Where("YEAR(created_at) = ?", *lq.Year)

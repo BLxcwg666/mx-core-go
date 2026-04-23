@@ -159,7 +159,7 @@ func (h *Handler) listLikePaged(c *gin.Context) {
 
 	if len(postIDs) > 0 {
 		var posts []models.PostModel
-		if err := h.db.Preload("Category").Where("id IN ?", uniq(postIDs)).Find(&posts).Error; err != nil {
+		if err := h.db.Preload("Category").Where("is_published = ?", true).Where("id IN ?", uniq(postIDs)).Find(&posts).Error; err != nil {
 			response.InternalError(c, err)
 			return
 		}
@@ -170,7 +170,7 @@ func (h *Handler) listLikePaged(c *gin.Context) {
 
 	if len(noteIDs) > 0 {
 		var notes []models.NoteModel
-		if err := h.db.Where("id IN ?", uniq(noteIDs)).Find(&notes).Error; err != nil {
+		if err := h.db.Where("is_published = ?", true).Where("id IN ?", uniq(noteIDs)).Find(&notes).Error; err != nil {
 			response.InternalError(c, err)
 			return
 		}
@@ -243,7 +243,7 @@ func (h *Handler) listReadDurationPaged(c *gin.Context) {
 		})
 	}
 
-	objects, _, err := h.loadObjectsByIDs(uniq(refIDs))
+	objects, _, err := h.loadObjectsByIDs(uniq(refIDs), false)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -376,7 +376,7 @@ func (h *Handler) getRooms(c *gin.Context) {
 			ids = append(ids, id)
 		}
 	}
-	objects, _, err := h.loadObjectsByIDs(uniq(ids))
+	objects, _, err := h.loadObjectsByIDs(uniq(ids), true)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -482,7 +482,7 @@ func (h *Handler) getReadingRank(c *gin.Context) {
 	for id := range counter {
 		ids = append(ids, id)
 	}
-	_, flat, err := h.loadObjectsByIDs(ids)
+	_, flat, err := h.loadObjectsByIDs(ids, false)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -613,6 +613,7 @@ func (h *Handler) getLastYearPublication(c *gin.Context) {
 
 	var posts []models.PostModel
 	if err := h.db.Preload("Category").
+		Where("is_published = ?", true).
 		Where("created_at >= ?", start).
 		Order("created_at DESC").
 		Find(&posts).Error; err != nil {
@@ -621,7 +622,8 @@ func (h *Handler) getLastYearPublication(c *gin.Context) {
 	}
 
 	var notes []models.NoteModel
-	if err := h.db.Where("created_at >= ?", start).
+	if err := h.db.Where("is_published = ?", true).
+		Where("created_at >= ?", start).
 		Order("created_at DESC").Find(&notes).Error; err != nil {
 		response.InternalError(c, err)
 		return
@@ -635,7 +637,7 @@ func (h *Handler) getLastYearPublication(c *gin.Context) {
 	noteOut := make([]gin.H, 0, len(notes))
 	for _, n := range notes {
 		title := n.Title
-		if n.Password != "" || !n.IsPublished {
+		if n.Password != "" {
 			title = "未公开的日记"
 		}
 		noteOut = append(noteOut, gin.H{
@@ -672,7 +674,7 @@ func (h *Handler) getRecentLike(limit int) ([]gin.H, error) {
 			ids = append(ids, id)
 		}
 	}
-	_, flat, err := h.loadObjectsByIDs(uniq(ids))
+	_, flat, err := h.loadObjectsByIDs(uniq(ids), true)
 	if err != nil {
 		return nil, err
 	}
@@ -722,6 +724,7 @@ func (h *Handler) getRecentComment(limit int) ([]gin.H, error) {
 
 	out := make([]gin.H, 0, len(comments))
 	for _, cm := range comments {
+		include := true
 		row := gin.H{
 			"created": cm.CreatedAt,
 			"author":  cm.Author,
@@ -731,19 +734,23 @@ func (h *Handler) getRecentComment(limit int) ([]gin.H, error) {
 		switch cm.RefType {
 		case models.RefTypePost:
 			var post models.PostModel
-			if err := h.db.Select("id, title, slug").First(&post, "id = ?", cm.RefID).Error; err == nil {
+			if err := h.db.Select("id, title, slug").Where("is_published = ?", true).First(&post, "id = ?", cm.RefID).Error; err == nil {
 				row["id"] = post.ID
 				row["title"] = post.Title
 				row["slug"] = post.Slug
 				row["type"] = "posts"
+			} else {
+				include = false
 			}
 		case models.RefTypeNote:
 			var note models.NoteModel
-			if err := h.db.Select("id, title, n_id").First(&note, "id = ?", cm.RefID).Error; err == nil {
+			if err := h.db.Select("id, title, n_id").Where("is_published = ?", true).First(&note, "id = ?", cm.RefID).Error; err == nil {
 				row["id"] = note.ID
 				row["title"] = note.Title
 				row["nid"] = note.NID
 				row["type"] = "notes"
+			} else {
+				include = false
 			}
 		case models.RefTypePage:
 			var page models.PageModel
@@ -757,7 +764,9 @@ func (h *Handler) getRecentComment(limit int) ([]gin.H, error) {
 			row["id"] = cm.RefID
 			row["type"] = "recentlies"
 		}
-		out = append(out, row)
+		if include {
+			out = append(out, row)
+		}
 	}
 	return out, nil
 }
@@ -779,7 +788,7 @@ func (h *Handler) getRecentPublish(limit int) (recent []gin.H, post []gin.H, not
 	}
 
 	var posts []models.PostModel
-	if err = h.db.Preload("Category").Order("created_at DESC").Limit(limit).Find(&posts).Error; err != nil {
+	if err = h.db.Preload("Category").Where("is_published = ?", true).Order("created_at DESC").Limit(limit).Find(&posts).Error; err != nil {
 		return
 	}
 	post = make([]gin.H, 0, len(posts))
@@ -798,7 +807,7 @@ func (h *Handler) getRecentPublish(limit int) (recent []gin.H, post []gin.H, not
 	return
 }
 
-func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string]gin.H, error) {
+func (h *Handler) loadObjectsByIDs(ids []string, publicOnly bool) (map[string][]gin.H, map[string]gin.H, error) {
 	objects := map[string][]gin.H{
 		"posts":      {},
 		"notes":      {},
@@ -813,7 +822,11 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 	ids = uniq(ids)
 
 	var posts []models.PostModel
-	if err := h.db.Preload("Category").Where("id IN ?", ids).Find(&posts).Error; err != nil {
+	postTx := h.db.Preload("Category").Where("id IN ?", ids)
+	if publicOnly {
+		postTx = postTx.Where("is_published = ?", true)
+	}
+	if err := postTx.Find(&posts).Error; err != nil {
 		return nil, nil, err
 	}
 	for _, p := range posts {
@@ -824,7 +837,11 @@ func (h *Handler) loadObjectsByIDs(ids []string) (map[string][]gin.H, map[string
 	}
 
 	var notes []models.NoteModel
-	if err := h.db.Where("id IN ?", ids).Find(&notes).Error; err != nil {
+	noteTx := h.db.Where("id IN ?", ids)
+	if publicOnly {
+		noteTx = noteTx.Where("is_published = ?", true)
+	}
+	if err := noteTx.Find(&notes).Error; err != nil {
 		return nil, nil, err
 	}
 	for _, n := range notes {

@@ -55,7 +55,7 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 
-	posts, pag, err := h.svc.List(q, lq)
+	posts, pag, err := h.svc.List(q, lq, middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -116,7 +116,7 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 
 // getURLBySlug GET /posts/get-url/:slug
 func (h *Handler) getURLBySlug(c *gin.Context) {
-	post, err := h.svc.GetBySlug(c.Param("slug"), true)
+	post, err := h.svc.GetBySlug(c.Param("slug"), middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
 		return

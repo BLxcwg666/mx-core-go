@@ -189,7 +189,7 @@ func (h *Handler) checkSpamAndMark(cm *models.CommentModel) bool {
 }
 
 func (h *Handler) ensureCommentAllowed(c *gin.Context, refType models.RefType, refID string) bool {
-	allowComment, err := h.svc.AllowComment(refType, refID)
+	allowComment, err := h.svc.AllowComment(refType, refID, middleware.IsAuthenticated(c))
 	if err != nil {
 		if errors.Is(err, errCommentRefNotFound) {
 			response.BadRequest(c, "评论文章不存在")
@@ -707,6 +707,21 @@ func (h *Handler) batchUpdateState(c *gin.Context) {
 func (h *Handler) listByRef(c *gin.Context) {
 	q := pagination.FromContext(c)
 	isAdmin := middleware.IsAuthenticated(c)
+	if !isAdmin {
+		isPublic, err := h.svc.IsPublicRef("", c.Param("refId"))
+		if err != nil {
+			if errors.Is(err, errCommentRefNotFound) {
+				response.NotFoundMsg(c, "评论文章不存在")
+				return
+			}
+			response.InternalError(c, err)
+			return
+		}
+		if !isPublic {
+			response.NotFoundMsg(c, "评论文章不存在")
+			return
+		}
+	}
 	comments, pag, err := h.svc.ListByRef(c.Param("refId"), q, ListByRefOptions{
 		IsAdmin:       isAdmin,
 		IncludeUnread: !h.shouldAuditComment(),

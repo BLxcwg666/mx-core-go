@@ -38,7 +38,7 @@ func (h *Handler) search(c *gin.Context) {
 		response.BadRequest(c, "q is required")
 		return
 	}
-	results, servedBy, err := h.svc.Search(q)
+	results, servedBy, err := h.svc.Search(q, middleware.IsAuthenticated(c))
 	c.Header("x-mx-served-by", servedBy)
 	if err != nil {
 		response.InternalError(c, err)
