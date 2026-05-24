@@ -2,6 +2,7 @@ package recently
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,35 @@ func (s *Service) List(q pagination.Query) ([]models.RecentlyModel, response.Pag
 	var items []models.RecentlyModel
 	pag, err := pagination.Paginate(tx, q, &items)
 	return items, pag, err
+}
+
+func (s *Service) ListByCursor(before, after string, size int) ([]models.RecentlyModel, error) {
+	if size <= 0 {
+		size = 10
+	}
+	if size > 100 {
+		size = 100
+	}
+
+	tx := s.db.Model(&models.RecentlyModel{})
+
+	if before != "" {
+		var ref models.RecentlyModel
+		if err := s.db.Select("created_at").First(&ref, "id = ?", before).Error; err == nil {
+			tx = tx.Where("created_at < ? OR (created_at = ? AND id < ?)",
+				ref.CreatedAt, ref.CreatedAt, before)
+		}
+	} else if after != "" {
+		var ref models.RecentlyModel
+		if err := s.db.Select("created_at").First(&ref, "id = ?", after).Error; err == nil {
+			tx = tx.Where("created_at > ? OR (created_at = ? AND id > ?)",
+				ref.CreatedAt, ref.CreatedAt, after)
+		}
+	}
+
+	var items []models.RecentlyModel
+	err := tx.Order("created_at DESC").Limit(size).Find(&items).Error
+	return items, err
 }
 
 func (s *Service) ListAll() ([]models.RecentlyModel, error) {
@@ -325,6 +355,25 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	before := strings.TrimSpace(c.Query("before"))
+	after := strings.TrimSpace(c.Query("after"))
+
+	if before != "" || after != "" {
+		size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+		items, err := h.svc.ListByCursor(before, after, size)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		out := make([]recentlyResponse, len(items))
+		for i, r := range items {
+			out[i] = toResponse(&r)
+		}
+		h.fillCommentCounts(out)
+		response.OK(c, out)
+		return
+	}
+
 	q := pagination.FromContext(c)
 	items, pag, err := h.svc.List(q)
 	if err != nil {
