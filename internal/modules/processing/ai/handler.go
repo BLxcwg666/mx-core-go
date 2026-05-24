@@ -545,8 +545,11 @@ func (h *Handler) getGroupedSummaries(c *gin.Context) {
 // POST /ai/comment-review/test  [auth]
 func (h *Handler) testCommentReview(c *gin.Context) {
 	var dto struct {
-		Text    string `json:"text"`
-		Comment string `json:"comment"`
+		Text      string `json:"text"`
+		Comment   string `json:"comment"`
+		Author    string `json:"author"`
+		URL       string `json:"url"`
+		UserAgent string `json:"user_agent"`
 	}
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.BadRequest(c, err.Error())
@@ -587,8 +590,15 @@ func (h *Handler) testCommentReview(c *gin.Context) {
 		threshold = 5
 	}
 
+	input := CommentReviewInput{
+		Text:      text,
+		Author:    dto.Author,
+		URL:       dto.URL,
+		UserAgent: dto.UserAgent,
+	}
+
 	if reviewType == "score" {
-		systemPrompt, prompt := buildCommentScorePrompt(text)
+		systemPrompt, prompt := buildCommentScorePrompt(input)
 		raw, err := callAIWithSystemPrompt(provider, systemPrompt, prompt)
 		if err != nil {
 			response.InternalError(c, err)
@@ -624,7 +634,7 @@ func (h *Handler) testCommentReview(c *gin.Context) {
 		return
 	}
 
-	systemPrompt, prompt := buildCommentSpamPrompt(text)
+	systemPrompt, prompt := buildCommentSpamPrompt(input)
 	raw, err := callAIWithSystemPrompt(provider, systemPrompt, prompt)
 	if err != nil {
 		response.InternalError(c, err)

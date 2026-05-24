@@ -14,6 +14,7 @@ import (
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/notify"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
+	"github.com/mx-space/core/internal/modules/processing/ai"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -167,8 +168,9 @@ func (h *Handler) emitCommentCreate(cm *models.CommentModel, isAuthenticated, is
 	}
 }
 
-// checkSpamAndMark checks anti-spam rules and marks the comment as junk when
-// matched. It returns true when the comment is detected as spam.
+// checkSpamAndMark checks anti-spam rules (keywords + AI review) and marks
+// the comment as junk when matched. It returns true when the comment is
+// detected as spam.
 func (h *Handler) checkSpamAndMark(cm *models.CommentModel) bool {
 	cfg, err := h.cfgSvc.Get()
 	if err != nil || cfg == nil {
@@ -181,7 +183,23 @@ func (h *Handler) checkSpamAndMark(cm *models.CommentModel) bool {
 		masterName = user.Name
 	}
 	if checkSpam(cm, &cfg.CommentOptions, masterName) {
-		h.logger.Warn("检测到垃圾评论", zap.String("author", cm.Author), zap.String("ip", cm.IP))
+		h.logger.Warn("检测到垃圾评论 [keyword]", zap.String("author", cm.Author), zap.String("ip", cm.IP))
+		_, _ = h.svc.UpdateState(cm.ID, models.CommentJunk)
+		return true
+	}
+
+	isSpam, err := ai.ReviewComment(cfg, ai.CommentReviewInput{
+		Text:      cm.Text,
+		Author:    cm.Author,
+		URL:       cm.URL,
+		UserAgent: cm.Agent,
+	})
+	if err != nil {
+		h.logger.Warn("AI 评论审核失败，跳过", zap.Error(err))
+		return false
+	}
+	if isSpam {
+		h.logger.Warn("检测到垃圾评论 [ai-review]", zap.String("author", cm.Author), zap.String("ip", cm.IP))
 		_, _ = h.svc.UpdateState(cm.ID, models.CommentJunk)
 		return true
 	}
