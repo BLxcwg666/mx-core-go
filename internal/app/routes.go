@@ -265,7 +265,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	post.NewHandler(postSvc, notifySvc, webhookSvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
 	note.NewHandler(note.NewService(db), notifySvc, webhookSvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
 	page.NewHandler(pageSvc, a.hub, webhookSvc, macroSvc).RegisterRoutes(api, authMW)
-	recently.NewHandler(recently.NewService(db), a.hub, webhookSvc).RegisterRoutes(api, authMW)
+	recently.NewHandler(recently.NewService(db), cfgSvc, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	draft.NewHandler(draft.NewService(db)).RegisterRoutes(api, authMW)
 
 	// Taxonomy

@@ -715,7 +715,7 @@ func (h *Handler) getRecentLike(limit int) ([]gin.H, error) {
 
 func (h *Handler) getRecentComment(limit int) ([]gin.H, error) {
 	var comments []models.CommentModel
-	if err := h.db.Where("is_whispers = ?", false).
+	if err := h.db.Where("is_whispers = ? AND state != ?", false, models.CommentJunk).
 		Order("created_at DESC").
 		Limit(limit).
 		Find(&comments).Error; err != nil {

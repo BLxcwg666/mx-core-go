@@ -9,6 +9,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
+	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -44,6 +45,7 @@ type recentlyResponse struct {
 	UpCount      int             `json:"up"`
 	DownCount    int             `json:"down"`
 	AllowComment bool            `json:"allow_comment"`
+	Comments     int             `json:"comments"`
 	Created      time.Time       `json:"created"`
 	Modified     *time.Time      `json:"modified"`
 }
@@ -63,6 +65,47 @@ func toResponse(r *models.RecentlyModel) recentlyResponse {
 type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
+
+type commentCount struct {
+	RefID string `gorm:"column:ref_id"`
+	Count int    `gorm:"column:cnt"`
+}
+
+// CountCommentsByRefIDs counts non-spam comments for each recently item.
+// When shouldAudit is true, only CommentRead comments are counted;
+// otherwise both CommentRead and CommentUnread are counted.
+func (s *Service) CountCommentsByRefIDs(ids []string, shouldAudit bool) (map[string]int, error) {
+	if len(ids) == 0 {
+		return map[string]int{}, nil
+	}
+	states := []models.CommentState{models.CommentRead}
+	if !shouldAudit {
+		states = append(states, models.CommentUnread)
+	}
+	var counts []commentCount
+	err := s.db.Model(&models.CommentModel{}).
+		Select("ref_id, COUNT(*) as cnt").
+		Where("ref_id IN ? AND state IN ?", ids, states).
+		Group("ref_id").
+		Scan(&counts).Error
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]int, len(counts))
+	for _, c := range counts {
+		m[c.RefID] = c.Count
+	}
+	return m, nil
+}
+
+// CountCommentsByRefID counts non-spam comments for a single recently item.
+func (s *Service) CountCommentsByRefID(id string, shouldAudit bool) (int, error) {
+	m, err := s.CountCommentsByRefIDs([]string{id}, shouldAudit)
+	if err != nil {
+		return 0, err
+	}
+	return m[id], nil
+}
 
 func (s *Service) List(q pagination.Query) ([]models.RecentlyModel, response.Pagination, error) {
 	tx := s.db.Model(&models.RecentlyModel{}).Order("created_at DESC")
@@ -226,12 +269,41 @@ func normalizeRecentlyType(raw string) string {
 
 type Handler struct {
 	svc     *Service
+	cfgSvc  *appconfigs.Service
 	hub     *gateway.Hub
 	webhook *webhook.Service
 }
 
-func NewHandler(svc *Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
-	return &Handler{svc: svc, hub: hub, webhook: webhookSvc}
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, cfgSvc: cfgSvc, hub: hub, webhook: webhookSvc}
+}
+
+func (h *Handler) shouldAuditComment() bool {
+	if h.cfgSvc == nil {
+		return false
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil || cfg == nil {
+		return false
+	}
+	return cfg.CommentOptions.CommentShouldAudit
+}
+
+func (h *Handler) fillCommentCounts(items []recentlyResponse) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	counts, err := h.svc.CountCommentsByRefIDs(ids, h.shouldAuditComment())
+	if err != nil {
+		return
+	}
+	for i := range items {
+		items[i].Comments = counts[items[i].ID]
+	}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
@@ -263,6 +335,7 @@ func (h *Handler) list(c *gin.Context) {
 	for i, r := range items {
 		out[i] = toResponse(&r)
 	}
+	h.fillCommentCounts(out)
 	response.Paged(c, out, pag)
 }
 
@@ -276,7 +349,10 @@ func (h *Handler) get(c *gin.Context) {
 		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
-	response.OK(c, toResponse(r))
+	resp := toResponse(r)
+	cnt, _ := h.svc.CountCommentsByRefID(r.ID, h.shouldAuditComment())
+	resp.Comments = cnt
+	response.OK(c, resp)
 }
 
 func (h *Handler) listAll(c *gin.Context) {
@@ -289,6 +365,7 @@ func (h *Handler) listAll(c *gin.Context) {
 	for i, r := range items {
 		out[i] = toResponse(&r)
 	}
+	h.fillCommentCounts(out)
 	response.OK(c, out)
 }
 
@@ -302,7 +379,10 @@ func (h *Handler) latest(c *gin.Context) {
 		response.NotFoundMsg(c, "内容不存在")
 		return
 	}
-	response.OK(c, toResponse(r))
+	resp := toResponse(r)
+	cnt, _ := h.svc.CountCommentsByRefID(r.ID, h.shouldAuditComment())
+	resp.Comments = cnt
+	response.OK(c, resp)
 }
 
 func (h *Handler) voteUp(c *gin.Context) {
