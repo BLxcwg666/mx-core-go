@@ -159,7 +159,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	servertime.RegisterRoutes(api)
 
 	// Init (setup wizard)
-	init_.NewHandler(db, cfgSvc).RegisterRoutes(api)
+	init_.NewHandler(db, cfgSvc, webhookSvc).RegisterRoutes(api)
 
 	// App info endpoint
 	api.GET("", func(c *gin.Context) { c.PureJSON(http.StatusOK, appInfo) })
@@ -246,13 +246,13 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	})
 
 	// Config
-	appconfigs.NewHandler(cfgSvc).RegisterRoutes(api, authMW)
+	appconfigs.NewHandler(cfgSvc, webhookSvc).RegisterRoutes(api, authMW)
 
 	// Auth & User
 	auth.NewHandler(auth.NewService(db)).RegisterRoutes(api, authMW)
 	auth.NewOAuthHandler(db, cfgSvc).RegisterRoutes(api)
 	authn.NewHandler(db).RegisterRoutes(api, authMW)
-	user.NewHandler(user.NewService(db), cfgSvc).RegisterRoutes(api, authMW)
+	user.NewHandler(user.NewService(db), cfgSvc, webhookSvc).RegisterRoutes(api, authMW)
 	reader.NewHandler(db).RegisterRoutes(api, authMW)
 
 	// Content
@@ -266,7 +266,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	note.NewHandler(note.NewService(db), notifySvc, webhookSvc, macroSvc, a.hub).RegisterRoutes(api, authMW)
 	page.NewHandler(pageSvc, a.hub, webhookSvc, macroSvc).RegisterRoutes(api, authMW)
 	recently.NewHandler(recently.NewService(db), cfgSvc, a.hub, webhookSvc).RegisterRoutes(api, authMW)
-	draft.NewHandler(draft.NewService(db)).RegisterRoutes(api, authMW)
+	draft.NewHandler(draft.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
 
 	// Taxonomy
 	category.NewHandler(category.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
@@ -285,8 +285,8 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	say.NewHandler(say.NewService(db), a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	link.NewHandler(link.NewService(db, link.WithLogger(a.logger)), cfgSvc, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	subscribe.NewHandler(subscribeSvc, cfgSvc, subscribe.WithLogger(a.logger)).RegisterRoutes(api, authMW)
-	snippet.NewHandler(snippet.NewService(db)).RegisterRoutes(api, authMW)
-	project.NewHandler(project.NewService(db)).RegisterRoutes(api, authMW)
+	snippet.NewHandler(snippet.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
+	project.NewHandler(project.NewService(db), webhookSvc).RegisterRoutes(api, authMW)
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 	activity.NewHandler(db, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	metapreset.NewHandler(db).RegisterRoutes(api, authMW)
@@ -300,17 +300,17 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	webhook.NewHandler(webhookSvc).RegisterRoutes(api, authMW)
 
 	// Markdown import/export
-	markdown.NewHandler(db).RegisterRoutes(api, authMW)
+	markdown.NewHandler(db, webhookSvc).RegisterRoutes(api, authMW)
 	file.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 
 	// Backups
-	backup.NewHandler(db, cfgSvc, rc, backup.WithLogger(a.logger)).RegisterRoutes(api, authMW)
+	backup.NewHandler(db, cfgSvc, rc, backup.WithLogger(a.logger), backup.WithWebhook(webhookSvc)).RegisterRoutes(api, authMW)
 
 	// Analytics (admin)
 	analyze.NewHandler(db).RegisterRoutes(api, authMW)
 
 	// Options (key-value store)
-	option.NewHandler(db).RegisterRoutes(api, authMW)
+	option.NewHandler(db, cfgSvc, webhookSvc).RegisterRoutes(api, authMW)
 
 	// Slug tracker (admin + public redirect)
 	slugtracker.NewHandler(slugTrackerSvc).RegisterRoutes(api, authMW)

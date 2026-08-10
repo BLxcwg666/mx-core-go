@@ -5,14 +5,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
+	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-type Handler struct{ db *gorm.DB }
+type Handler struct {
+	db      *gorm.DB
+	cfgSvc  *appconfigs.Service
+	webhook *webhook.Service
+}
 
-func NewHandler(db *gorm.DB) *Handler { return &Handler{db: db} }
+func NewHandler(db *gorm.DB, cfgSvc *appconfigs.Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{db: db, cfgSvc: cfgSvc, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	for _, prefix := range []string{"/option", "/kv/options"} {
@@ -66,6 +74,7 @@ func (h *Handler) patch(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.invalidateConfig(key)
 	response.OK(c, opt)
 }
 
@@ -75,5 +84,18 @@ func (h *Handler) delete(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.invalidateConfig(key)
 	response.NoContent(c)
+}
+
+func (h *Handler) invalidateConfig(key string) {
+	if key != "configs" {
+		return
+	}
+	if h.cfgSvc != nil {
+		h.cfgSvc.Invalidate()
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("config")
+	}
 }

@@ -25,7 +25,7 @@ type Service struct {
 	webhookSvc   *webhook.Service
 	barkSvc      *bark.Service
 	subscribeSvc *subscribe.Service
-	imageSyncFn  func(contentID, contentType string) error
+	imageSyncFn  func(contentID, contentType string) (bool, error)
 	logger       *zap.Logger
 }
 
@@ -58,7 +58,7 @@ func WithLogger(l *zap.Logger) Option {
 }
 
 // SetImageSync sets an optional function to sync images on content publish.
-func (s *Service) SetImageSync(fn func(contentID, contentType string) error) {
+func (s *Service) SetImageSync(fn func(contentID, contentType string) (bool, error)) {
 	s.imageSyncFn = fn
 }
 
@@ -154,8 +154,11 @@ func (s *Service) OnPostCreate(post *models.PostModel) {
 
 	// Sync images to S3 if configured.
 	if s.imageSyncFn != nil {
-		if err := s.imageSyncFn(post.ID, "post"); err != nil {
+		changed, err := s.imageSyncFn(post.ID, "post")
+		if err != nil {
 			s.logger.Warn("post image sync failed", zap.String("id", post.ID), zap.Error(err))
+		} else if changed && s.webhookSvc != nil {
+			s.webhookSvc.DispatchContentRefresh("post-image-sync", post.ID)
 		}
 	}
 
@@ -177,8 +180,11 @@ func (s *Service) OnNoteCreate(note *models.NoteModel) {
 
 	// Sync images to S3 if configured.
 	if s.imageSyncFn != nil {
-		if err := s.imageSyncFn(note.ID, "note"); err != nil {
+		changed, err := s.imageSyncFn(note.ID, "note")
+		if err != nil {
 			s.logger.Warn("note image sync failed", zap.String("id", note.ID), zap.Error(err))
+		} else if changed && s.webhookSvc != nil {
+			s.webhookSvc.DispatchContentRefresh("note-image-sync", note.ID)
 		}
 	}
 

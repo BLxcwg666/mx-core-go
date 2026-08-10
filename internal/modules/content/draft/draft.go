@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
@@ -76,9 +77,14 @@ type Service struct{ db *gorm.DB }
 
 func NewService(db *gorm.DB) *Service { return &Service{db: db} }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc     *Service
+	webhook *webhook.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, webhook: webhookSvc}
+}
 
 func (s *Service) List(q pagination.Query, lq ListQuery) ([]models.DraftModel, response.Pagination, error) {
 	tx := s.db.Model(&models.DraftModel{})
@@ -477,6 +483,9 @@ func (h *Handler) publish(c *gin.Context) {
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("draft-publish", targetID)
 	}
 	response.OK(c, gin.H{"targetId": targetID})
 }

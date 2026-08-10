@@ -13,15 +13,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
 
 // Handler handles markdown import/export endpoints.
-type Handler struct{ db *gorm.DB }
+type Handler struct {
+	db      *gorm.DB
+	webhook *webhook.Service
+}
 
-func NewHandler(db *gorm.DB) *Handler { return &Handler{db: db} }
+func NewHandler(db *gorm.DB, webhookSvc *webhook.Service) *Handler {
+	return &Handler{db: db, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	rg.GET("/markdown/render/structure/:id", h.renderStructure)
@@ -248,6 +254,7 @@ func (h *Handler) importMarkdown(c *gin.Context) {
 			response.InternalError(c, err)
 			return
 		}
+		h.dispatchContentRefresh()
 		response.OK(c, created)
 		return
 	}
@@ -257,7 +264,14 @@ func (h *Handler) importMarkdown(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.dispatchContentRefresh()
 	response.OK(c, created)
+}
+
+func (h *Handler) dispatchContentRefresh() {
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("markdown-import")
+	}
 }
 
 func (h *Handler) importPosts(data []importItem) ([]models.PostModel, error) {

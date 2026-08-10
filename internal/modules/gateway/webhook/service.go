@@ -127,12 +127,21 @@ func (s *Service) Dispatch(event string, payload interface{}) {
 	s.DispatchScoped(event, payload, ScopeToSystem)
 }
 
+// DispatchContentRefresh notifies system consumers that public site data changed.
+func (s *Service) DispatchContentRefresh(resource string, id ...string) {
+	payload := map[string]interface{}{"type": resource}
+	if len(id) > 0 && strings.TrimSpace(id[0]) != "" {
+		payload["id"] = id[0]
+	}
+	s.DispatchScoped("CONTENT_REFRESH", payload, ScopeToSystem|ScopeToVisitor)
+}
+
 // DispatchScoped sends an event payload to all matching, enabled webhooks in the given scope.
 func (s *Service) DispatchScoped(event string, payload interface{}, scope int) {
 	var hooks []models.WebhookModel
 	s.db.Where("enabled = ?", true).Find(&hooks)
 	source := scopeToSource(scope)
-	normalizedPayload := s.normalizePayload(event, payload)
+	normalizedPayload := s.normalizePayload(event, payload, scope)
 
 	for _, hook := range hooks {
 		if hook.Scope != 0 && (hook.Scope&scope) == 0 {

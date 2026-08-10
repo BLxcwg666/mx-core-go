@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/response"
 	sessionpkg "github.com/mx-space/core/internal/pkg/session"
@@ -16,12 +17,13 @@ import (
 )
 
 type Handler struct {
-	svc    *Service
-	cfgSvc *appconfigs.Service
+	svc     *Service
+	cfgSvc  *appconfigs.Service
+	webhook *webhook.Service
 }
 
-func NewHandler(svc *Service, cfgSvc *appconfigs.Service) *Handler {
-	return &Handler{svc: svc, cfgSvc: cfgSvc}
+func NewHandler(svc *Service, cfgSvc *appconfigs.Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, cfgSvc: cfgSvc, webhook: webhookSvc}
 }
 
 // RegisterRoutes registers routes under BOTH /master and /user for admin panel compatibility.
@@ -189,6 +191,7 @@ func (h *Handler) register(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.dispatchContentRefresh(u.ID)
 	response.Created(c, toResponse(u))
 }
 
@@ -209,6 +212,12 @@ func (h *Handler) getMasterInfo(c *gin.Context) {
 	response.OK(c, toResponse(u))
 }
 
+func (h *Handler) dispatchContentRefresh(id string) {
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("owner", id)
+	}
+}
+
 func (h *Handler) updateProfile(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	var dto UpdateUserDTO
@@ -225,6 +234,7 @@ func (h *Handler) updateProfile(c *gin.Context) {
 		response.NotFoundMsg(c, "用户不存在")
 		return
 	}
+	h.dispatchContentRefresh(u.ID)
 	response.OK(c, toResponse(u))
 }
 

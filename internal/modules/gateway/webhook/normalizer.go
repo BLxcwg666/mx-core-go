@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Service) normalizePayload(event string, payload interface{}) interface{} {
+func (s *Service) normalizePayload(event string, payload interface{}, scope int) interface{} {
 	switch event {
 	case "POST_CREATE", "POST_UPDATE":
 		if post, err := s.loadPost(payload); err == nil && post != nil {
@@ -42,7 +42,8 @@ func (s *Service) normalizePayload(event string, payload interface{}) interface{
 		}
 	case "COMMENT_CREATE":
 		if comment, err := s.loadComment(payload); err == nil && comment != nil {
-			return s.buildWebhookCommentPayload(comment)
+			includePrivate := scope&ScopeToAdmin != 0 && scope&ScopeToVisitor == 0
+			return s.buildWebhookCommentPayload(comment, includePrivate)
 		}
 	case "LINK_APPLY":
 		if link, err := s.loadLink(payload); err == nil && link != nil {
@@ -217,9 +218,7 @@ func buildWebhookPostPayload(post *models.PostModel) map[string]interface{} {
 		"commentsIndex": post.CommentsIndex,
 		"relatedId":     relatedIDs,
 		"related":       related,
-	}
-	if post.PinnedAt != nil {
-		payload["pin"] = post.PinnedAt
+		"pin":           post.Pin,
 	}
 	if post.Category != nil {
 		payload["category"] = buildWebhookCategoryPayload(post.Category)
@@ -257,6 +256,9 @@ func buildWebhookNotePayload(note *models.NoteModel) map[string]interface{} {
 		},
 		"allowComment":  note.AllowComment,
 		"commentsIndex": note.CommentsIndex,
+	}
+	if strings.TrimSpace(note.Password) != "" {
+		payload["text"] = ""
 	}
 	if note.TopicID != nil {
 		payload["topicId"] = *note.TopicID
@@ -409,14 +411,13 @@ func (s *Service) buildWebhookRecentlyRef(recently *models.RecentlyModel) map[st
 	return nil
 }
 
-func (s *Service) buildWebhookCommentPayload(comment *models.CommentModel) map[string]interface{} {
+func (s *Service) buildWebhookCommentPayload(comment *models.CommentModel, includePrivate bool) map[string]interface{} {
 	payload := map[string]interface{}{
 		"id":         comment.ID,
 		"created":    comment.CreatedAt,
 		"ref":        comment.RefID,
 		"refType":    collectionRefType(comment.RefType),
 		"author":     comment.Author,
-		"mail":       comment.Mail,
 		"text":       comment.Text,
 		"state":      comment.State,
 		"pin":        comment.Pin,
@@ -429,11 +430,14 @@ func (s *Service) buildWebhookCommentPayload(comment *models.CommentModel) map[s
 	if v := strings.TrimSpace(comment.URL); v != "" {
 		payload["url"] = v
 	}
-	if v := strings.TrimSpace(comment.IP); v != "" {
-		payload["ip"] = v
-	}
-	if v := strings.TrimSpace(comment.Agent); v != "" {
-		payload["agent"] = v
+	if includePrivate {
+		payload["mail"] = comment.Mail
+		if v := strings.TrimSpace(comment.IP); v != "" {
+			payload["ip"] = v
+		}
+		if v := strings.TrimSpace(comment.Agent); v != "" {
+			payload["agent"] = v
+		}
 	}
 	if v := strings.TrimSpace(comment.Location); v != "" {
 		payload["location"] = v
@@ -484,6 +488,9 @@ func (s *Service) commentThreadInfo(comment *models.CommentModel) (string, int64
 		return "", 0, nil
 	}
 	rootID := comment.ID
+	if s == nil || s.db == nil {
+		return rootID, 0, nil
+	}
 	current := comment
 	for current.ParentID != nil && strings.TrimSpace(*current.ParentID) != "" {
 		parentID := strings.TrimSpace(*current.ParentID)

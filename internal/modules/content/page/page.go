@@ -238,8 +238,9 @@ func (s *Service) Delete(id string) error {
 	return s.db.Delete(&models.PageModel{}, "id = ?", id).Error
 }
 
-func (s *Service) Reorder(id string, order int) {
-	s.db.Model(&models.PageModel{}).Where("id = ?", id).Update("order_num", order)
+func (s *Service) Reorder(id string, order int) (bool, error) {
+	result := s.db.Model(&models.PageModel{}).Where("id = ?", id).Update("order_num", order)
+	return result.RowsAffected > 0, result.Error
 }
 
 type Handler struct {
@@ -399,8 +400,20 @@ func (h *Handler) reorder(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	changed := false
 	for i, id := range dto.IDs {
-		h.svc.Reorder(id, i)
+		updated, err := h.svc.Reorder(id, i)
+		if err != nil {
+			if changed && h.webhook != nil {
+				h.webhook.DispatchContentRefresh("page-order")
+			}
+			response.InternalError(c, err)
+			return
+		}
+		changed = changed || updated
+	}
+	if changed && h.webhook != nil {
+		h.webhook.DispatchContentRefresh("page-order")
 	}
 	response.NoContent(c)
 }

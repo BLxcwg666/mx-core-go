@@ -242,7 +242,6 @@ func (h *Handler) update(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-
 	post, err := h.svc.Update(id, &dto)
 	if err != nil {
 		if err.Error() == "category is required" || err.Error() == "category not found" {
@@ -258,6 +257,8 @@ func (h *Handler) update(c *gin.Context) {
 	}
 	if h.webhookSvc != nil && post.IsPublished {
 		h.webhookSvc.DispatchScoped("POST_UPDATE", toResponse(post), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	} else if h.webhookSvc != nil && dto.IsPublished != nil && !*dto.IsPublished {
+		h.webhookSvc.DispatchContentRefresh("post-unpublish", post.ID)
 	}
 	if h.hub != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))
@@ -275,7 +276,6 @@ func (h *Handler) publish(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-
 	post, err := h.svc.Update(id, &dto)
 	if err != nil {
 		response.InternalError(c, err)
@@ -283,6 +283,8 @@ func (h *Handler) publish(c *gin.Context) {
 	}
 	if h.webhookSvc != nil && post != nil && post.IsPublished {
 		h.webhookSvc.DispatchScoped("POST_UPDATE", toResponse(post), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	} else if h.webhookSvc != nil && post != nil && dto.IsPublished != nil && !*dto.IsPublished {
+		h.webhookSvc.DispatchContentRefresh("post-unpublish", post.ID)
 	}
 	if h.hub != nil && post != nil && post.IsPublished {
 		h.hub.BroadcastPublic("POST_UPDATE", toResponse(post))

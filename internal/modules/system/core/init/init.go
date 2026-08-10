@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -17,12 +18,13 @@ import (
 
 // Handler handles setup wizard endpoints.
 type Handler struct {
-	db     *gorm.DB
-	cfgSvc *appconfigs.Service
+	db      *gorm.DB
+	cfgSvc  *appconfigs.Service
+	webhook *webhook.Service
 }
 
-func NewHandler(db *gorm.DB, cfgSvc *appconfigs.Service) *Handler {
-	return &Handler{db: db, cfgSvc: cfgSvc}
+func NewHandler(db *gorm.DB, cfgSvc *appconfigs.Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{db: db, cfgSvc: cfgSvc, webhook: webhookSvc}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -124,6 +126,9 @@ func (h *Handler) restore(c *gin.Context) {
 	}
 	if h.cfgSvc != nil {
 		h.cfgSvc.Invalidate()
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("backup-restore")
 	}
 
 	response.OK(c, gin.H{"message": "restore successful"})

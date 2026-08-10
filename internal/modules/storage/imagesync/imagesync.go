@@ -201,13 +201,13 @@ func (s *Service) SyncMarkdownImages(text string) (string, error) {
 }
 
 // SyncFunc is a function type for syncing images, used by the notify service.
-type SyncFunc func(contentID, contentType string) error
+type SyncFunc func(contentID, contentType string) (bool, error)
 
 // SyncContentImages syncs images for a given content item (post or note).
-func (s *Service) SyncContentImages(contentID, contentType string) error {
+func (s *Service) SyncContentImages(contentID, contentType string) (bool, error) {
 	cfg, err := s.cfgSvc.Get()
 	if err != nil || cfg == nil || !cfg.ImageStorageOptions.Enable || !cfg.ImageStorageOptions.SyncOnPublish {
-		return nil
+		return false, err
 	}
 
 	switch contentType {
@@ -216,36 +216,42 @@ func (s *Service) SyncContentImages(contentID, contentType string) error {
 	case "note":
 		return s.syncNoteImages(contentID)
 	default:
-		return nil
+		return false, nil
 	}
 }
 
-func (s *Service) syncPostImages(id string) error {
+func (s *Service) syncPostImages(id string) (bool, error) {
 	var text string
 	if err := s.db.Raw("SELECT text FROM posts WHERE id = ?", id).Scan(&text).Error; err != nil {
-		return err
+		return false, err
 	}
 	newText, err := s.SyncMarkdownImages(text)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if newText != text {
-		return s.db.Exec("UPDATE posts SET text = ? WHERE id = ?", newText, id).Error
+		if err := s.db.Exec("UPDATE posts SET text = ? WHERE id = ?", newText, id).Error; err != nil {
+			return false, err
+		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func (s *Service) syncNoteImages(id string) error {
+func (s *Service) syncNoteImages(id string) (bool, error) {
 	var text string
 	if err := s.db.Raw("SELECT text FROM notes WHERE id = ?", id).Scan(&text).Error; err != nil {
-		return err
+		return false, err
 	}
 	newText, err := s.SyncMarkdownImages(text)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if newText != text {
-		return s.db.Exec("UPDATE notes SET text = ? WHERE id = ?", newText, id).Error
+		if err := s.db.Exec("UPDATE notes SET text = ? WHERE id = ?", newText, id).Error; err != nil {
+			return false, err
+		}
+		return true, nil
 	}
-	return nil
+	return false, nil
 }

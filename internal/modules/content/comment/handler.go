@@ -142,7 +142,7 @@ func (h *Handler) emitCommentCreate(cm *models.CommentModel, isAuthenticated, is
 
 	if isAuthenticated {
 		if h.webhook != nil {
-			h.webhook.DispatchScoped("COMMENT_CREATE", adminPayload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+			h.webhook.DispatchScoped("COMMENT_CREATE", publicPayload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
 		}
 		if h.hub != nil {
 			h.hub.BroadcastPublic("COMMENT_CREATE", publicPayload)

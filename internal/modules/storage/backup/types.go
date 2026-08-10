@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"time"
 
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"go.uber.org/zap"
@@ -141,10 +142,11 @@ var legacyOptionKeyAliases = map[string]string{
 
 // Handler is the HTTP handler for backup operations.
 type Handler struct {
-	db     *gorm.DB
-	cfgSvc *configs.Service
-	rc     *pkgredis.Client
-	logger *zap.Logger
+	db      *gorm.DB
+	cfgSvc  *configs.Service
+	rc      *pkgredis.Client
+	logger  *zap.Logger
+	webhook *webhook.Service
 }
 
 type backupManifest struct {

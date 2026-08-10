@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -36,6 +37,13 @@ func WithLogger(l *zap.Logger) HandlerOption {
 		if l != nil {
 			h.logger = l.Named("BackupService")
 		}
+	}
+}
+
+// WithWebhook enables public cache refresh after restoring a backup.
+func WithWebhook(svc *webhook.Service) HandlerOption {
+	return func(h *Handler) {
+		h.webhook = svc
 	}
 }
 
@@ -142,6 +150,7 @@ func (h *Handler) uploadAndRestore(c *gin.Context) {
 		return
 	}
 	h.invalidateRuntimeCaches(c)
+	h.dispatchContentRefresh()
 	h.logger.Info("数据恢复成功（上传文件）")
 	response.OK(c, gin.H{"message": "restore successful"})
 }
@@ -174,6 +183,7 @@ func (h *Handler) rollback(c *gin.Context) {
 		return
 	}
 	h.invalidateRuntimeCaches(c)
+	h.dispatchContentRefresh()
 	h.logger.Info("回滚成功")
 	response.OK(c, gin.H{"message": "rollback successful"})
 }
@@ -183,6 +193,12 @@ func (h *Handler) invalidateRuntimeCaches(c *gin.Context) {
 		h.cfgSvc.Invalidate()
 	}
 	_ = h.rc.Raw().FlushDB(c.Request.Context())
+}
+
+func (h *Handler) dispatchContentRefresh() {
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("backup-restore")
+	}
 }
 
 // DELETE /backups

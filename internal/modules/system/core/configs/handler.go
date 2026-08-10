@@ -7,12 +7,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc     *Service
+	webhook *webhook.Service
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, webhookSvc *webhook.Service) *Handler {
+	return &Handler{svc: svc, webhook: webhookSvc}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/configs")
@@ -77,6 +83,7 @@ func (h *Handler) patch(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	h.dispatchContentRefreshForKeys(partial)
 	response.OK(c, updated)
 }
 
@@ -130,10 +137,39 @@ func (h *Handler) patchOption(c *gin.Context) {
 	if val, ok := m[key]; ok {
 		var result interface{}
 		json.Unmarshal(val, &result)
+		h.dispatchContentRefreshForKey(key)
 		response.OK(c, convertMapKeys(result, snakeToCamelKey))
 		return
 	}
+	h.dispatchContentRefreshForKey(key)
 	response.OK(c, convertMapKeys(updated, snakeToCamelKey))
+}
+
+func (h *Handler) dispatchContentRefreshForKeys(partial map[string]json.RawMessage) {
+	for key := range partial {
+		if isPublicConfigKey(normalizeOptionKey(key)) {
+			h.dispatchContentRefreshForKey(key)
+			return
+		}
+	}
+}
+
+func (h *Handler) dispatchContentRefreshForKey(key string) {
+	if !isPublicConfigKey(normalizeOptionKey(key)) {
+		return
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchContentRefresh("config")
+	}
+}
+
+func isPublicConfigKey(key string) bool {
+	switch key {
+	case "seo", "url", "friend_link_options", "feature_list", "admin_extra", "text_options":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) getOptionsAll(c *gin.Context) {

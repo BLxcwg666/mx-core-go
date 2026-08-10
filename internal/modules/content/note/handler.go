@@ -295,7 +295,8 @@ func (h *Handler) update(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	note, err := h.svc.Update(c.Param("id"), &dto)
+	id := c.Param("id")
+	note, err := h.svc.Update(id, &dto)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -306,6 +307,8 @@ func (h *Handler) update(c *gin.Context) {
 	}
 	if h.webhookSvc != nil && note.IsPublished {
 		h.webhookSvc.DispatchScoped("NOTE_UPDATE", toResponse(note, false), webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	} else if h.webhookSvc != nil && dto.IsPublished != nil && !*dto.IsPublished {
+		h.webhookSvc.DispatchContentRefresh("note-unpublish", note.ID)
 	}
 	if h.hub != nil && note.IsPublished {
 		h.hub.BroadcastPublic("NOTE_UPDATE", toResponse(note, false))
