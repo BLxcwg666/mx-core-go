@@ -25,7 +25,11 @@ type Handler struct {
 	svc     *Service
 	cfgSvc  *appconfigs.Service
 	hub     *gateway.Hub
-	webhook *webhook.Service
+	webhook webhookDispatcher
+}
+
+type webhookDispatcher interface {
+	DispatchScoped(event string, payload interface{}, scope int)
 }
 
 func NewHandler(svc *Service, cfgSvc *appconfigs.Service, hub *gateway.Hub, webhookSvc *webhook.Service) *Handler {
@@ -181,6 +185,7 @@ func (h *Handler) create(c *gin.Context) {
 	if !isAdmin && h.webhook != nil {
 		h.webhook.DispatchScoped("LINK_APPLY", toResponse(l, true), webhook.ScopeToSystem|webhook.ScopeToAdmin)
 	}
+	h.dispatchContentRefresh(l.ID)
 	if !isAdmin && h.cfgSvc != nil {
 		go h.sendApplyNotification(l, dto.Author)
 	}
@@ -220,6 +225,7 @@ func (h *Handler) audit(c *gin.Context) {
 	if l.Email != "" && h.cfgSvc != nil {
 		go h.sendPassNotification(l)
 	}
+	h.dispatchContentRefresh(l.ID)
 	response.NoContent(c)
 }
 
@@ -246,6 +252,7 @@ func (h *Handler) auditReason(c *gin.Context) {
 	if l.Email != "" && h.cfgSvc != nil {
 		go h.sendAuditNotification(l, dto.State, dto.Reason)
 	}
+	h.dispatchContentRefresh(l.ID)
 	response.NoContent(c)
 }
 
@@ -274,6 +281,9 @@ func (h *Handler) migrateAvatars(c *gin.Context) {
 		h.svc.db.Model(&l).Update("avatar", avatarURL)
 		updated++
 	}
+	if updated > 0 {
+		h.dispatchContentRefresh("")
+	}
 	response.OK(c, gin.H{"message": "avatar migration completed", "updated": updated})
 }
 
@@ -292,6 +302,7 @@ func (h *Handler) update(c *gin.Context) {
 		response.NotFoundMsg(c, "友链不存在")
 		return
 	}
+	h.dispatchContentRefresh(l.ID)
 	response.OK(c, toResponse(l, true))
 }
 
@@ -310,15 +321,31 @@ func (h *Handler) patch(c *gin.Context) {
 		response.NotFoundMsg(c, "友链不存在")
 		return
 	}
+	h.dispatchContentRefresh(l.ID)
 	response.NoContent(c)
 }
 
 func (h *Handler) delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	if err := h.svc.Delete(id); err != nil {
 		response.InternalError(c, err)
 		return
 	}
+	h.dispatchContentRefresh(id)
 	response.NoContent(c)
+}
+
+func (h *Handler) dispatchContentRefresh(id string) {
+	payload := gin.H{"type": "link"}
+	if id != "" {
+		payload["id"] = id
+	}
+	if h.hub != nil {
+		h.hub.BroadcastPublic("CONTENT_REFRESH", payload)
+	}
+	if h.webhook != nil {
+		h.webhook.DispatchScoped("CONTENT_REFRESH", payload, webhook.ScopeToSystem|webhook.ScopeToVisitor)
+	}
 }
 
 func (h *Handler) sendAuditNotification(l *models.LinkModel, state models.LinkState, reason string) {

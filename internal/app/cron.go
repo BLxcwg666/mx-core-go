@@ -13,6 +13,7 @@ import (
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/content/link"
 	"github.com/mx-space/core/internal/modules/content/search"
+	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/stats/aggregate"
 	"github.com/mx-space/core/internal/modules/storage/backup"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
@@ -52,11 +53,15 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 			results := svc.HealthCheck(models.LinkPass, models.LinkOutdate)
 			outdated := 0
 			recovered := 0
+			stateChanged := false
 			for _, r := range results {
 				if r.Status == 0 || (r.Status >= http.StatusBadRequest && r.Status != http.StatusForbidden) {
-					db.Model(&models.LinkModel{}).
-						Where("id = ? AND state IN ?", r.ID, []models.LinkState{models.LinkPass, models.LinkOutdate}).
+					updateResult := db.Model(&models.LinkModel{}).
+						Where("id = ? AND state = ?", r.ID, models.LinkPass).
 						Update("state", models.LinkOutdate)
+					if updateResult.RowsAffected > 0 {
+						stateChanged = true
+					}
 					outdated++
 					continue
 				}
@@ -66,7 +71,15 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 					Update("state", models.LinkPass)
 				if updateResult.RowsAffected > 0 {
 					recovered++
+					stateChanged = true
 				}
+			}
+			if stateChanged {
+				webhook.NewService(db).DispatchScoped(
+					"CONTENT_REFRESH",
+					map[string]interface{}{"type": "link"},
+					webhook.ScopeToSystem|webhook.ScopeToVisitor,
+				)
 			}
 			cronLogger.Info(fmt.Sprintf("友链检查完成，共 %d 个，%d 个不可用，%d 个已恢复", len(results), outdated, recovered))
 			return nil
