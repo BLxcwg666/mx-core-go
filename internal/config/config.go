@@ -485,8 +485,10 @@ func DefaultFullConfig() FullConfig {
 			PathStyleAccess: false,
 		},
 		BackupOptions: BackupOptions{
-			Enable: false,
-			Path:   "backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip",
+			AutoBackup: true,
+			UploadToS3: false,
+			Path:       "backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip",
+			KeepCount:  0,
 		},
 		ImageBedOptions: ImageBedOptions{
 			Enable:         false,

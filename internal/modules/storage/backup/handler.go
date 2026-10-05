@@ -265,8 +265,8 @@ func (h *Handler) uploadToS3(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	if !cfg.BackupOptions.Enable {
-		// Keep compatibility: backup disabled means no-op.
+	if !cfg.BackupOptions.UploadToS3 {
+		// Keep compatibility: upload disabled means no-op.
 		response.NoContent(c)
 		return
 	}

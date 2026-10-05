@@ -262,8 +262,15 @@ type CommentOptions struct {
 }
 
 type BackupOptions struct {
-	Enable bool   `json:"enable"`
-	Path   string `json:"path"`
+	// AutoBackup runs the daily auto_backup cron job.
+	AutoBackup bool `json:"auto_backup"`
+	// UploadToS3 uploads every backup (automatic or manual) to S3. The JSON key stays "enable"
+	// from when it was the only backup switch, so stored configs keep their value.
+	UploadToS3 bool `json:"enable"`
+	// Path is the S3 object key template.
+	Path string `json:"path"`
+	// KeepCount is how many local backups to keep, oldest removed first; 0 keeps all.
+	KeepCount int `json:"keep_count"`
 }
 
 type BaiduSearchOptions struct {

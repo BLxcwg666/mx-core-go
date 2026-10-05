@@ -11,6 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -224,7 +226,42 @@ func (h *Handler) createBackup(ctx context.Context) (*BackupResult, *backupArtif
 		return result, artifact, nil
 	}
 	result.S3 = h.uploadBackupArtifact(ctx, cfg.BackupOptions, cfg.S3Options, artifact, now)
+	h.pruneLocalBackups(cfg.BackupOptions.KeepCount)
 	return result, artifact, nil
+}
+
+// localBackupPattern matches the archives createLocalBackupArtifact writes; retention never
+// touches other files placed in the backup directory.
+var localBackupPattern = regexp.MustCompile(`^backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$`)
+
+// pruneLocalBackups keeps the newest keep backups (by the timestamp in their name); keep <= 0 keeps all.
+func (h *Handler) pruneLocalBackups(keep int) {
+	if keep <= 0 {
+		return
+	}
+	backupDir := resolveBackupDir()
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		h.logger.Warn("读取备份目录失败，跳过清理旧备份", zap.Error(err))
+		return
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && localBackupPattern.MatchString(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) <= keep {
+		return
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	for _, name := range names[keep:] {
+		if err := os.Remove(filepath.Join(backupDir, name)); err != nil {
+			h.logger.Warn("删除旧备份失败", zap.String("file", name), zap.Error(err))
+			continue
+		}
+		h.logger.Info(fmt.Sprintf("已删除旧备份：%s", name))
+	}
 }
 
 func (h *Handler) uploadBackupArtifact(
@@ -234,7 +271,7 @@ func (h *Handler) uploadBackupArtifact(
 	artifact *backupArtifact,
 	now time.Time,
 ) S3UploadResult {
-	if !backupOpts.Enable {
+	if !backupOpts.UploadToS3 {
 		return S3UploadResult{Status: S3UploadSkipped}
 	}
 

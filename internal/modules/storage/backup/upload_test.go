@@ -41,7 +41,7 @@ func newUploadTestHandler(uploader S3Uploader, initErr error) *Handler {
 func TestUploadBackupArtifact(t *testing.T) {
 	now := time.Date(2026, 10, 5, 1, 2, 3, 0, time.Local)
 	artifact := &backupArtifact{Filename: "backup-x.zip", Buffer: bytes.NewBufferString("zip")}
-	enabled := appcfg.BackupOptions{Enable: true, Path: "Backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip"}
+	enabled := appcfg.BackupOptions{UploadToS3: true, Path: "Backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip"}
 
 	t.Run("disabled", func(t *testing.T) {
 		up := &fakeUploader{}

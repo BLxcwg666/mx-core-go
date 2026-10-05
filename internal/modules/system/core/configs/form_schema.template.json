@@ -591,20 +591,36 @@
           "title": "备份设置",
           "fields": [
             {
-              "key": "enable",
-              "title": "开启自动备份到 S3",
+              "key": "autoBackup",
+              "title": "开启自动备份",
               "ui": {
                 "component": "switch"
               },
-              "description": "需要先配置 S3 对象存储设置"
+              "description": "每天 01:00 自动备份数据库和上传的文件到本地备份目录"
+            },
+            {
+              "key": "enable",
+              "title": "自动上传到 S3",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "每次备份（自动或手动）完成后同时上传到 S3；需要先配置 S3 对象存储设置"
             },
             {
               "key": "path",
-              "title": "备份文件路径",
+              "title": "S3 备份文件路径",
               "ui": {
                 "component": "input"
               },
-              "description": "支持占位符：{Y}年4位 {y}年2位 {m}月 {d}日 {h}时 {i}分 {s}秒 {timestamp}时间戳 {uuid} {md5} 等"
+              "description": "支持占位符：{Y}年4位 {y}年2位 {m}月 {d}日 {h}时 {i}分 {s}秒 {timestamp}时间戳 {filename}备份文件名"
+            },
+            {
+              "key": "keepCount",
+              "title": "本地保留份数",
+              "ui": {
+                "component": "number"
+              },
+              "description": "每次备份后只保留最新的这么多份本地备份，更早的自动删除；0 表示不限制。只会清理系统生成的 backup-*.zip，不影响 S3 上的备份"
             }
           ]
         },
@@ -965,8 +981,10 @@
       "pathStyleAccess": false
     },
     "backupOptions": {
+      "autoBackup": true,
       "enable": false,
-      "path": "backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip"
+      "path": "backups/{Y}/{m}/backup-{Y}{m}{d}-{h}{i}{s}.zip",
+      "keepCount": 0
     },
     "imageBedOptions": {
       "enable": false,
