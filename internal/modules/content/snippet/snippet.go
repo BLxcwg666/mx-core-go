@@ -1,60 +1,69 @@
 package snippet
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
+	"github.com/mx-space/core/internal/pkg/nullable"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
 type CreateSnippetDTO struct {
-	Type      models.SnippetType `json:"type"      binding:"required"`
-	Name      string             `json:"name"      binding:"required"`
-	Reference string             `json:"reference" binding:"required"`
-	Raw       string             `json:"raw"       binding:"required"`
-	Comment   string             `json:"comment"`
-	Private   *bool              `json:"private"`
-	Enable    *bool              `json:"enable"`
-	Schema    string             `json:"schema"`
-	Metatype  string             `json:"metatype"`
-	Method    string             `json:"method"`
+	Type      models.SnippetType     `json:"type"      binding:"required"`
+	Name      string                 `json:"name"      binding:"required"`
+	Reference string                 `json:"reference" binding:"required"`
+	Raw       string                 `json:"raw"       binding:"required"`
+	Comment   string                 `json:"comment"`
+	Private   *bool                  `json:"private"`
+	Enable    *bool                  `json:"enable"`
+	Schema    string                 `json:"schema"`
+	Metatype  string                 `json:"metatype"`
+	Method    string                 `json:"method"`
+	Secret    map[string]interface{} `json:"secret"`
 }
 
 type UpdateSnippetDTO struct {
-	Type      *models.SnippetType `json:"type"`
-	Name      *string             `json:"name"`
-	Reference *string             `json:"reference"`
-	Raw       *string             `json:"raw"`
-	Comment   *string             `json:"comment"`
-	Private   *bool               `json:"private"`
-	Enable    *bool               `json:"enable"`
-	Schema    *string             `json:"schema"`
-	Metatype  *string             `json:"metatype"`
-	Method    *string             `json:"method"`
+	Type      *models.SnippetType                    `json:"type"`
+	Name      *string                                `json:"name"`
+	Reference *string                                `json:"reference"`
+	Raw       *string                                `json:"raw"`
+	Comment   *string                                `json:"comment"`
+	Private   *bool                                  `json:"private"`
+	Enable    *bool                                  `json:"enable"`
+	Schema    *string                                `json:"schema"`
+	Metatype  *string                                `json:"metatype"`
+	Method    *string                                `json:"method"`
+	Secret    nullable.Value[map[string]interface{}] `json:"secret"`
 }
 
 type snippetResponse struct {
-	ID        string             `json:"id"`
-	Type      models.SnippetType `json:"type"`
-	Name      string             `json:"name"`
-	Reference string             `json:"reference"`
-	Raw       string             `json:"raw"`
-	Comment   string             `json:"comment"`
-	Private   bool               `json:"private"`
-	Enable    bool               `json:"enable"`
-	Schema    string             `json:"schema"`
-	Metatype  string             `json:"metatype"`
-	Method    string             `json:"method"`
-	BuiltIn   bool               `json:"built_in"`
-	Created   time.Time          `json:"created"`
-	Updated   *time.Time         `json:"updated"`
+	ID        string                 `json:"id"`
+	Type      models.SnippetType     `json:"type"`
+	Name      string                 `json:"name"`
+	Reference string                 `json:"reference"`
+	Raw       string                 `json:"raw"`
+	Comment   string                 `json:"comment"`
+	Private   bool                   `json:"private"`
+	Enable    bool                   `json:"enable"`
+	Schema    string                 `json:"schema"`
+	Metatype  string                 `json:"metatype"`
+	Method    string                 `json:"method"`
+	BuiltIn   bool                   `json:"built_in"`
+	Secret    map[string]interface{} `json:"secret,omitempty"`
+	Created   time.Time              `json:"created"`
+	Updated   *time.Time             `json:"updated"`
 }
 
 func toResponse(s *models.SnippetModel) snippetResponse {
@@ -65,6 +74,48 @@ func toResponse(s *models.SnippetModel) snippetResponse {
 		Schema: s.Schema, Metatype: s.Metatype, Method: s.Method, BuiltIn: s.BuiltIn,
 		Created: s.CreatedAt, Updated: updated,
 	}
+}
+
+// toAdminResponse also carries the function secret; only use it behind auth.
+func toAdminResponse(s *models.SnippetModel) snippetResponse {
+	resp := toResponse(s)
+	resp.Secret = decodeSecret(s.Secret)
+	return resp
+}
+
+// Secrets are stored as JSON; older data (from the original core) used a query string.
+func decodeSecret(raw string) map[string]interface{} {
+	raw = strings.TrimSpace(raw)
+	out := map[string]interface{}{}
+	if raw == "" {
+		return out
+	}
+	if json.Unmarshal([]byte(raw), &out) == nil {
+		return out
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	for k, v := range values {
+		if len(v) == 1 {
+			out[k] = v[0]
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func encodeSecret(secret map[string]interface{}) (string, error) {
+	if len(secret) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(secret)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func normalizeSnippetType(t models.SnippetType) models.SnippetType {
@@ -143,6 +194,11 @@ func (s *Service) Create(dto *CreateSnippetDTO) (*models.SnippetModel, error) {
 	if dto.Enable != nil {
 		item.Enable = *dto.Enable
 	}
+	secret, err := encodeSecret(dto.Secret)
+	if err != nil {
+		return nil, err
+	}
+	item.Secret = secret
 	return &item, s.db.Create(&item).Error
 }
 
@@ -182,7 +238,17 @@ func (s *Service) Update(id string, dto *UpdateSnippetDTO) (*models.SnippetModel
 	if dto.Method != nil {
 		updates["method"] = *dto.Method
 	}
-	return item, s.db.Model(item).Updates(updates).Error
+	if dto.Secret.Set {
+		secret, err := encodeSecret(dto.Secret.V)
+		if err != nil {
+			return nil, err
+		}
+		updates["secret"] = secret
+	}
+	if err := s.db.Model(item).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }
 
 func (s *Service) Delete(id string) error {
@@ -255,15 +321,61 @@ func (h *Handler) getByRef(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
-	if item == nil {
+	// Functions are served by /fn; returning them here would expose their source.
+	if item == nil || normalizeSnippetType(item.Type) == models.SnippetTypeFunction {
 		response.NotFoundMsg(c, "Snippet 不存在")
 		return
 	}
-	if item.Private {
+	if item.Private && !middleware.IsAuthenticated(c) {
 		response.ForbiddenMsg(c, "Snippet 是私有的")
 		return
 	}
-	response.OK(c, toResponse(item))
+	writeSnippetData(c, item)
+}
+
+// writeSnippetData responds with the snippet content itself, like the original core:
+// parsed JSON/YAML, or the raw text with a content type usable by <script type="module">.
+func writeSnippetData(c *gin.Context, item *models.SnippetModel) {
+	switch normalizeSnippetType(item.Type) {
+	case models.SnippetTypeJSON, models.SnippetTypeJSON5:
+		var data interface{}
+		if err := json.Unmarshal([]byte(item.Raw), &data); err == nil {
+			c.JSON(http.StatusOK, data)
+			return
+		}
+	case models.SnippetTypeYAML:
+		var data interface{}
+		if err := yaml.Unmarshal([]byte(item.Raw), &data); err == nil {
+			c.JSON(http.StatusOK, data)
+			return
+		}
+	}
+	c.Data(http.StatusOK, snippetContentType(item), []byte(item.Raw))
+}
+
+func snippetContentType(item *models.SnippetModel) string {
+	metatype := strings.ToLower(strings.TrimSpace(item.Metatype))
+	if strings.Contains(metatype, "/") {
+		return metatype
+	}
+	if metatype == "" {
+		name := strings.ToLower(item.Name)
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			metatype = name[idx+1:]
+		}
+	}
+	switch metatype {
+	case "javascript", "js", "mjs":
+		return "application/javascript; charset=utf-8"
+	case "css":
+		return "text/css; charset=utf-8"
+	case "html", "htm":
+		return "text/html; charset=utf-8"
+	case "json", "json5":
+		return "application/json; charset=utf-8"
+	default:
+		return "text/plain; charset=utf-8"
+	}
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -282,7 +394,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 	h.dispatchContentRefresh(item.ID)
-	response.Created(c, toResponse(item))
+	response.Created(c, toAdminResponse(item))
 }
 
 func (h *Handler) getByID(c *gin.Context) {
@@ -295,7 +407,7 @@ func (h *Handler) getByID(c *gin.Context) {
 		response.NotFoundMsg(c, "Snippet 不存在")
 		return
 	}
-	response.OK(c, toResponse(item))
+	response.OK(c, toAdminResponse(item))
 }
 
 func (h *Handler) update(c *gin.Context) {
@@ -314,7 +426,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	h.dispatchContentRefresh(item.ID)
-	response.OK(c, toResponse(item))
+	response.OK(c, toAdminResponse(item))
 }
 
 func (h *Handler) delete(c *gin.Context) {
@@ -392,6 +504,9 @@ type importSnippetItem struct {
 	Type      models.SnippetType `json:"type"`
 	Comment   string             `json:"comment"`
 	Enable    *bool              `json:"enable"`
+	Method    string             `json:"method"`
+	Metatype  string             `json:"metatype"`
+	Schema    string             `json:"schema"`
 }
 
 type importSnippetsDTO struct {
@@ -419,6 +534,11 @@ func (h *Handler) importSnippets(c *gin.Context) {
 		if item.Enable != nil {
 			enable = *item.Enable
 		}
+		method := strings.ToUpper(strings.TrimSpace(item.Method))
+		if method == "" && snippetType == models.SnippetTypeFunction {
+			// Same as an empty method at run time (any method), but shown properly in the list.
+			method = "ALL"
+		}
 		s := models.SnippetModel{
 			Name:      item.Name,
 			Reference: item.Reference,
@@ -427,6 +547,9 @@ func (h *Handler) importSnippets(c *gin.Context) {
 			Type:      snippetType,
 			Comment:   item.Comment,
 			Enable:    enable,
+			Method:    method,
+			Metatype:  item.Metatype,
+			Schema:    item.Schema,
 		}
 		if h.svc.db.Create(&s).Error == nil {
 			created = true

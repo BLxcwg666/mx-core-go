@@ -14,7 +14,6 @@ import (
 	"github.com/mx-space/core/internal/models"
 	mdmodule "github.com/mx-space/core/internal/modules/processing/markdown"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
-	jwtpkg "github.com/mx-space/core/internal/pkg/jwt"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
@@ -52,7 +51,7 @@ func (h *Handler) renderArticle(c *gin.Context) {
 		return
 	}
 
-	if doc.IsPrivate && !hasRenderAccess(c) {
+	if doc.IsPrivate && !h.hasRenderAccess(c) {
 		response.Forbidden(c)
 		return
 	}
@@ -189,7 +188,9 @@ func (h *Handler) loadRenderableByID(id string) (*renderableDocument, error) {
 	return nil, gorm.ErrRecordNotFound
 }
 
-func hasRenderAccess(c *gin.Context) bool {
+// hasRenderAccess checks the ?token= like the auth middleware does: a valid signature is not enough,
+// the session must still be active (not logged out or kicked) and API tokens must not be expired.
+func (h *Handler) hasRenderAccess(c *gin.Context) bool {
 	if middleware.IsAuthenticated(c) {
 		return true
 	}
@@ -197,10 +198,7 @@ func hasRenderAccess(c *gin.Context) bool {
 	if token == "" {
 		return false
 	}
-	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
-		token = strings.TrimSpace(token[7:])
-	}
-	_, err := jwtpkg.Parse(token)
+	_, err := middleware.ValidateToken(h.db, token)
 	return err == nil
 }
 

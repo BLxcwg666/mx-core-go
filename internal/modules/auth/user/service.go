@@ -2,6 +2,7 @@ package user
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mx-space/core/internal/models"
@@ -75,7 +76,15 @@ func (s *Service) Register(dto *RegisterDTO) (*models.UserModel, error) {
 	if name == "" {
 		name = dto.Username
 	}
-	u := models.UserModel{Username: dto.Username, Password: string(hash), Name: name}
+	u := models.UserModel{
+		Username:  dto.Username,
+		Password:  string(hash),
+		Name:      name,
+		Mail:      strings.TrimSpace(dto.Mail),
+		URL:       strings.TrimSpace(dto.URL),
+		Avatar:    strings.TrimSpace(dto.Avatar),
+		Introduce: dto.Introduce,
+	}
 	return &u, s.db.Create(&u).Error
 }
 
@@ -91,6 +100,33 @@ func (s *Service) UpdateProfile(id string, dto *UpdateUserDTO) (*models.UserMode
 		return u, err
 	}
 	updates := map[string]interface{}{}
+	if dto.Username != nil {
+		username := strings.TrimSpace(*dto.Username)
+		if len(username) < 3 {
+			return nil, errInvalidUsername
+		}
+		updates["username"] = username
+		u.Username = username
+	}
+	passwordChanged := false
+	if dto.Password != nil {
+		if len(*dto.Password) < 6 {
+			return nil, errInvalidPassword
+		}
+		var current models.UserModel
+		if err := s.db.Select("id, password").First(&current, "id = ?", id).Error; err != nil {
+			return nil, err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(current.Password), []byte(*dto.Password)) == nil {
+			return nil, errPasswordSameAsOld
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(*dto.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		updates["password"] = string(hash)
+		passwordChanged = true
+	}
 	if dto.Name != nil {
 		updates["name"] = *dto.Name
 		u.Name = *dto.Name
@@ -123,7 +159,19 @@ func (s *Service) UpdateProfile(id string, dto *UpdateUserDTO) (*models.UserMode
 		updates["social_ids"] = encoded
 		u.SocialIDs = encoded
 	}
-	return u, s.db.Model(u).Updates(updates).Error
+	if len(updates) == 0 {
+		return u, nil
+	}
+	if err := s.db.Model(u).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	// Same as the original core: a new password signs every session out.
+	if passwordChanged {
+		if err := sessionpkg.RevokeAllExcept(s.db, u.ID, ""); err != nil {
+			return nil, err
+		}
+	}
+	return u, nil
 }
 
 func (s *Service) ChangePassword(id, oldPwd, newPwd string) error {

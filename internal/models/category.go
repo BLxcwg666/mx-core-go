@@ -17,9 +17,9 @@ type TopicModel struct {
 	Base
 	Name        string `json:"name"        gorm:"uniqueIndex;not null"`
 	Slug        string `json:"slug"        gorm:"uniqueIndex;not null"`
-	Description string `json:"description"`
-	Introduce   string `json:"introduce"`
-	Icon        string `json:"icon"`
+	Description string `json:"description" gorm:"type:text"`
+	Introduce   string `json:"introduce" gorm:"type:text"`
+	Icon        string `json:"icon" gorm:"type:text"`
 
 	Notes []NoteModel `json:"notes,omitempty" gorm:"foreignKey:TopicID"`
 }

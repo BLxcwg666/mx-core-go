@@ -18,6 +18,9 @@ import (
 )
 
 func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, hub *gateway.Hub, rc *pkgredis.Client) {
+	// The dashboard statistics (unread comments, pending links, traffic, ...) are admin-only.
+	authMW := middleware.Auth(db)
+
 	rg.GET("/aggregate", func(c *gin.Context) {
 		data, err := buildAggregate(db, cfgSvc, c.Query("theme"))
 		if err != nil {
@@ -385,7 +388,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		})
 	})
 
-	rg.GET("/aggregate/stat", func(c *gin.Context) {
+	rg.GET("/aggregate/stat", authMW, func(c *gin.Context) {
 		var stat statResponse
 		db.Model(&models.PostModel{}).Count(&stat.Posts)
 		db.Model(&models.NoteModel{}).Count(&stat.Notes)
@@ -516,7 +519,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, info)
 	})
 
-	rg.GET("/aggregate/stat/category-distribution", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/category-distribution", authMW, func(c *gin.Context) {
 		type row struct {
 			ID    string `json:"id"`
 			Name  string `json:"name"`
@@ -526,7 +529,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		var out []row
 		if err := db.Model(&models.CategoryModel{}).
 			Select("categories.id, categories.name, categories.slug, COUNT(posts.id) AS count").
-			Joins("LEFT JOIN posts ON posts.category_id = categories.id AND posts.deleted_at IS NULL").
+			Joins("LEFT JOIN posts ON posts.category_id = categories.id").
 			Where("categories.type = ?", 0).
 			Group("categories.id, categories.name, categories.slug, categories.created_at").
 			Order("categories.created_at ASC").
@@ -537,7 +540,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, out)
 	})
 
-	rg.GET("/aggregate/stat/tag-cloud", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/tag-cloud", authMW, func(c *gin.Context) {
 		var rows []struct{ Tags string }
 		db.Model(&models.PostModel{}).Select("tags").Find(&rows)
 
@@ -571,7 +574,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, out)
 	})
 
-	rg.GET("/aggregate/stat/publication-trend", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/publication-trend", authMW, func(c *gin.Context) {
 		start := time.Now().In(time.Local)
 		start = time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.Local).AddDate(0, -11, 0)
 		end := start.AddDate(1, 12, 0)
@@ -603,7 +606,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, out)
 	})
 
-	rg.GET("/aggregate/stat/top-articles", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/top-articles", authMW, func(c *gin.Context) {
 		var posts []models.PostModel
 		db.Preload("Category").
 			Select("id, title, slug, read_count, like_count, category_id").
@@ -629,7 +632,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 				Name string `json:"name"`
 				Slug string `json:"slug"`
 			}
-			if p.CategoryID != nil && p.Category.ID != "" {
+			if p.Category != nil && p.Category.ID != "" {
 				cat = &struct {
 					Name string `json:"name"`
 					Slug string `json:"slug"`
@@ -647,7 +650,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, out)
 	})
 
-	rg.GET("/aggregate/stat/comment-activity", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/comment-activity", authMW, func(c *gin.Context) {
 		start := beginningOfDay(time.Now().AddDate(0, 0, -29))
 		end := start.AddDate(0, 0, 30)
 		counts, err := loadBucketCounts(db.Model(&models.CommentModel{}), "created_at", start, end, "day")
@@ -671,7 +674,7 @@ func RegisterRoutes(rg *gin.RouterGroup, db *gorm.DB, cfgSvc *configs.Service, h
 		response.OK(c, out)
 	})
 
-	rg.GET("/aggregate/stat/traffic-source", func(c *gin.Context) {
+	rg.GET("/aggregate/stat/traffic-source", authMW, func(c *gin.Context) {
 		cutoff := time.Now().AddDate(0, 0, -7)
 		var rows []models.AnalyzeModel
 		db.Select("ua").Where("timestamp >= ?", cutoff).Find(&rows)

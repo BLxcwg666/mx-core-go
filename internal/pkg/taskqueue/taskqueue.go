@@ -22,18 +22,37 @@ const (
 	TaskCancelled TaskStatus = "cancelled"
 )
 
+// TaskLog is one line of a task's history, shown in the admin task drawer.
+type TaskLog struct {
+	Timestamp int64  `json:"timestamp"` // unix ms
+	Level     string `json:"level"`     // info | warn | error
+	Message   string `json:"message"`
+}
+
 // Task is a unit of background work stored in Redis.
 type Task struct {
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Payload   json.RawMessage `json:"payload"`
-	Status    TaskStatus      `json:"status"`
-	Result    json.RawMessage `json:"result,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	DedupKey  string          `json:"dedup_key,omitempty"`
-	GroupKey  string          `json:"group_key,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID          string          `json:"id"`
+	Type        string          `json:"type"`
+	Payload     json.RawMessage `json:"payload"`
+	Status      TaskStatus      `json:"status"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Error       string          `json:"error,omitempty"`
+	DedupKey    string          `json:"dedup_key,omitempty"`
+	GroupKey    string          `json:"group_id,omitempty"`
+	RetryCount  int             `json:"retry_count"`
+	Logs        []TaskLog       `json:"logs"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+}
+
+func (t *Task) addLog(level, message string) {
+	t.Logs = append(t.Logs, TaskLog{Timestamp: time.Now().UnixMilli(), Level: level, Message: message})
+}
+
+func (s TaskStatus) IsFinished() bool {
+	return s == TaskCompleted || s == TaskFailed || s == TaskCancelled
 }
 
 const (
@@ -75,9 +94,11 @@ func (s *Service) Enqueue(ctx context.Context, taskType string, payload interfac
 		Status:    TaskPending,
 		DedupKey:  dedupKey,
 		GroupKey:  groupKey,
+		Logs:      []TaskLog{},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+	task.addLog("info", "任务已创建")
 
 	data, err := json.Marshal(task)
 	if err != nil {
@@ -108,7 +129,31 @@ func (s *Service) GetByID(ctx context.Context, id string) (*Task, error) {
 		return nil, err
 	}
 	var task Task
-	return &task, json.Unmarshal(data, &task)
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, err
+	}
+	if task.Logs == nil {
+		task.Logs = []TaskLog{}
+	}
+	return &task, nil
+}
+
+func (s *Service) save(ctx context.Context, task *Task) error {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return err
+	}
+	return s.rc.Raw().Set(ctx, s.taskKey(task.ID), data, taskTTL).Err()
+}
+
+// SetRetryCount records how many times the work behind a task has been retried.
+func (s *Service) SetRetryCount(ctx context.Context, id string, count int) error {
+	task, err := s.GetByID(ctx, id)
+	if err != nil || task == nil {
+		return fmt.Errorf("task not found")
+	}
+	task.RetryCount = count
+	return s.save(ctx, task)
 }
 
 // UpdateStatus sets a task's status and optional result/error.
@@ -118,23 +163,42 @@ func (s *Service) UpdateStatus(ctx context.Context, id string, status TaskStatus
 		return fmt.Errorf("task not found")
 	}
 
+	// A cancelled task stays cancelled: its worker may still finish and report afterwards.
+	if task.Status == TaskCancelled && status != TaskCancelled {
+		return nil
+	}
+
+	now := time.Now()
 	task.Status = status
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = now
 	task.Error = errMsg
 
 	if result != nil {
 		task.Result, _ = json.Marshal(result)
 	}
 
-	if (status == TaskCompleted || status == TaskFailed || status == TaskCancelled) && task.DedupKey != "" {
+	switch status {
+	case TaskRunning:
+		if task.StartedAt == nil {
+			task.StartedAt = &now
+		}
+		task.addLog("info", "任务开始执行")
+	case TaskCompleted:
+		task.CompletedAt = &now
+		task.addLog("info", "任务完成")
+	case TaskFailed:
+		task.CompletedAt = &now
+		task.addLog("error", "任务失败："+errMsg)
+	case TaskCancelled:
+		task.CompletedAt = &now
+		task.addLog("warn", "任务已取消")
+	}
+
+	if status.IsFinished() && task.DedupKey != "" {
 		s.rc.Raw().HDel(ctx, keyDedupSet+task.Type, task.DedupKey)
 	}
 
-	data, err := json.Marshal(task)
-	if err != nil {
-		return err
-	}
-	return s.rc.Raw().Set(ctx, s.taskKey(id), data, taskTTL).Err()
+	return s.save(ctx, task)
 }
 
 // List returns tasks matching optional filters, ordered by creation time descending.

@@ -275,6 +275,53 @@ func normalizeOAuthConfig(v interface{}) interface{} {
 	return sectionMap
 }
 
+// mergeOAuthProviders merges incoming providers into the stored list by type: the admin panel saves
+// one provider at a time, and replacing the array would drop the others.
+func mergeOAuthProviders(existing, incoming interface{}) interface{} {
+	incomingMap, ok := incoming.(map[string]interface{})
+	if !ok {
+		return incoming
+	}
+	incomingProviders, ok := incomingMap["providers"].([]interface{})
+	if !ok {
+		return incoming
+	}
+	existingMap, _ := existing.(map[string]interface{})
+	existingProviders, _ := existingMap["providers"].([]interface{})
+
+	merged := make([]interface{}, 0, len(existingProviders)+len(incomingProviders))
+	indexByType := map[string]int{}
+	add := func(raw interface{}) {
+		provider, ok := raw.(map[string]interface{})
+		if !ok {
+			return
+		}
+		providerType := strings.ToLower(strings.TrimSpace(fmt.Sprint(provider["type"])))
+		if idx, ok := indexByType[providerType]; ok && providerType != "" {
+			current, _ := merged[idx].(map[string]interface{})
+			next := make(map[string]interface{}, len(current)+len(provider))
+			for k, v := range current {
+				next[k] = v
+			}
+			for k, v := range provider {
+				next[k] = v
+			}
+			merged[idx] = next
+			return
+		}
+		indexByType[providerType] = len(merged)
+		merged = append(merged, provider)
+	}
+	for _, p := range existingProviders {
+		add(p)
+	}
+	for _, p := range incomingProviders {
+		add(p)
+	}
+	incomingMap["providers"] = merged
+	return incomingMap
+}
+
 func loadFormSchemaTemplate() (map[string]interface{}, error) {
 	formSchemaLoadOnce.Do(func() {
 		decoded := decodeJSONBytes(formSchemaTemplateRaw)

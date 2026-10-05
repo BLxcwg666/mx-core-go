@@ -8,7 +8,8 @@ import (
 func TestPostListOrdersDefault(t *testing.T) {
 	got, needsCategoryJoin := postListOrders(ListQuery{})
 	want := []string{
-		"COALESCE(pin_order, 0) DESC",
+		"pin DESC",
+		"CASE WHEN pin THEN COALESCE(pin_order, 0) ELSE 0 END DESC",
 		"created_at DESC",
 	}
 

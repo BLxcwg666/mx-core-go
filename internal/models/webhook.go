@@ -5,9 +5,9 @@ import "time"
 // WebhookModel defines an outbound webhook endpoint.
 type WebhookModel struct {
 	Base
-	PayloadURL string   `json:"payloadUrl" gorm:"not null"`
+	PayloadURL string   `json:"payloadUrl" gorm:"type:text;not null"`
 	Events     []string `json:"events"      gorm:"type:longtext;serializer:json"`
-	Enabled    bool     `json:"enabled"     gorm:"default:true"`
+	Enabled    bool     `json:"enabled"`
 	Secret     string   `json:"-"           gorm:"not null"`
 	Scope      int      `json:"scope"`
 

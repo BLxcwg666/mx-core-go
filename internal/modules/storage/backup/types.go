@@ -3,9 +3,11 @@ package backup
 import (
 	"archive/zip"
 	"bytes"
+	"os"
 	"time"
 
 	appcfg "github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
@@ -31,6 +33,7 @@ var backupTableNames = []string{
 	"categories",
 	"topics",
 	"posts",
+	"post_related",
 	"notes",
 	"pages",
 	"comments",
@@ -54,6 +57,18 @@ var backupTableNames = []string{
 	"serverless_storages",
 	"options",
 }
+
+// Log tables are restorable from older backups but no longer exported, like the original core:
+// they are the largest tables and not content.
+var backupExportSkip = map[string]struct{}{
+	"analyzes":       {},
+	"webhook_events": {},
+}
+
+// Uploaded files (images, avatars, ...) are stored under this prefix; backup_data/static/ is
+// where the original core's backups keep them.
+const backupStaticDir = backupRootDir + "/static/"
+const legacyBackupStaticDir = "backup_data/static/"
 
 var backupTableNameSet = func() map[string]struct{} {
 	set := make(map[string]struct{}, len(backupTableNames))
@@ -106,6 +121,19 @@ var restoreColumnAliasesByTable = map[string]map[string]string{
 	},
 }
 
+// Models don't declare these defaults as GORM tags (GORM would turn an explicit false/0 into the default on create),
+// so the DB columns have no default either; rows from older backups that omit them get filled here instead.
+var restoreColumnDefaults = map[string]map[string]interface{}{
+	"posts":        {"copyright": true, "allow_comment": true},
+	"notes":        {"allow_comment": true},
+	"pages":        {"allow_comment": true},
+	"recentlies":   {"allow_comment": true},
+	"links":        {"state": 0},
+	"meta_presets": {"enabled": true},
+	"snippets":     {"enable": true},
+	"webhooks":     {"enabled": true},
+}
+
 var restoreRefTypeAliases = map[string]string{
 	"posts":      "post",
 	"post":       "post",
@@ -148,6 +176,7 @@ type Handler struct {
 	rc          *pkgredis.Client
 	logger      *zap.Logger
 	webhook     *webhook.Service
+	hub         *gateway.Hub
 	newUploader func(appcfg.S3Options) (S3Uploader, error)
 }
 
@@ -197,5 +226,14 @@ type backupItem struct {
 type backupArtifact struct {
 	Filename string
 	Path     string
-	Buffer   *bytes.Buffer
+	Size     int64
+	// Buffer holds the archive in memory when set; otherwise it is read from Path.
+	Buffer *bytes.Buffer
+}
+
+func (a *backupArtifact) bytes() ([]byte, error) {
+	if a.Buffer != nil {
+		return a.Buffer.Bytes(), nil
+	}
+	return os.ReadFile(a.Path)
 }

@@ -76,8 +76,7 @@ func (h *Handler) patch(c *gin.Context) {
 	}
 	updated, err := h.svc.Patch(partial)
 	if err != nil {
-		if errors.Is(err, errAIReviewProviderNotEnabled) {
-			response.BadRequest(c, "没有配置启用的 AI Provider，无法启用 AI 评论审核")
+		if h.respondPatchError(c, err) {
 			return
 		}
 		response.InternalError(c, err)
@@ -123,8 +122,7 @@ func (h *Handler) patchOption(c *gin.Context) {
 	}
 	updated, err := h.svc.Patch(map[string]json.RawMessage{key: normalizedBody})
 	if err != nil {
-		if errors.Is(err, errAIReviewProviderNotEnabled) {
-			response.BadRequest(c, "没有配置启用的 AI Provider，无法启用 AI 评论审核")
+		if h.respondPatchError(c, err) {
 			return
 		}
 		response.InternalError(c, err)
@@ -357,4 +355,17 @@ func (h *Handler) deleteEmailTemplate(c *gin.Context) {
 	}
 	h.svc.db.Where("name = ?", emailTemplateKeyPrefix+templateType).Delete(&models.OptionModel{})
 	response.NoContent(c)
+}
+
+// respondPatchError answers the validation errors of Service.Patch; it reports whether it wrote a response.
+func (h *Handler) respondPatchError(c *gin.Context, err error) bool {
+	switch {
+	case errors.Is(err, errAIReviewProviderNotEnabled):
+		response.BadRequest(c, "没有配置启用的 AI Provider，无法启用 AI 评论审核")
+	case errors.Is(err, errNoPasswordlessLogin):
+		response.BadRequest(c, "还没有可用的 Passkey 或已绑定的 OAuth 账号，禁用密码登录后将无法登录")
+	default:
+		return false
+	}
+	return true
 }

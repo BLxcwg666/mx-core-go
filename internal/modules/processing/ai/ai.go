@@ -7,6 +7,7 @@ import (
 	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	"github.com/mx-space/core/internal/pkg/taskqueue"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -15,6 +16,8 @@ type Service struct {
 	db      *gorm.DB
 	cfgSvc  *configs.Service
 	taskSvc *taskqueue.Service
+
+	summaryFlight singleflight.Group
 }
 
 func NewService(db *gorm.DB, cfgSvc *configs.Service, taskSvc *taskqueue.Service) *Service {

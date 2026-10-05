@@ -15,21 +15,25 @@ import (
 )
 
 func compactPost(p models.PostModel) gin.H {
-	return gin.H{
+	item := gin.H{
 		"id":         p.ID,
 		"title":      p.Title,
 		"slug":       p.Slug,
 		"created":    p.CreatedAt,
 		"modified":   p.UpdatedAt,
 		"categoryId": p.CategoryID,
-		"category": gin.H{
+		"category":   nil,
+	}
+	if p.Category != nil {
+		item["category"] = gin.H{
 			"id":      p.Category.ID,
 			"name":    p.Category.Name,
 			"slug":    p.Category.Slug,
 			"type":    p.Category.Type,
 			"created": p.Category.CreatedAt,
-		},
+		}
 	}
+	return item
 }
 
 func compactNote(n models.NoteModel) gin.H {

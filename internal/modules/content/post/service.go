@@ -12,6 +12,7 @@ import (
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service handles post business logic.
@@ -105,8 +106,10 @@ func postListOrders(lq ListQuery) ([]string, bool) {
 	}
 }
 
+// Pinned posts first (by pin order), then the newest. pin_order alone is not enough:
+// the editor keeps a non-zero pin order on posts that are not pinned.
 func defaultPostListOrders() []string {
-	return []string{normalizedPinOrderOrder("DESC"), "created_at DESC"}
+	return []string{"pin DESC", "CASE WHEN pin THEN COALESCE(pin_order, 0) ELSE 0 END DESC", "created_at DESC"}
 }
 
 func normalizedPinOrderOrder(direction string) string {
@@ -138,7 +141,7 @@ func normalizePostSortKey(sortBy string) string {
 // GetBySlug fetches a single post by slug.
 func (s *Service) GetBySlug(slug string, isAdmin bool) (*models.PostModel, error) {
 	var post models.PostModel
-	tx := s.db.Preload("Category").Preload("Related").Where("slug = ?", slug)
+	tx := s.db.Preload("Category").Preload("Related.Category").Where("slug = ?", slug)
 	if !isAdmin {
 		tx = tx.Where("is_published = ?", true)
 	}
@@ -157,7 +160,7 @@ func (s *Service) GetByCategoryAndSlug(categorySlug, slug string, isAdmin bool) 
 	tx := s.db.
 		Model(&models.PostModel{}).
 		Preload("Category").
-		Preload("Related").
+		Preload("Related.Category").
 		Joins("JOIN categories ON categories.id = posts.category_id").
 		Where("categories.slug = ? AND posts.slug = ?", categorySlug, slug)
 	if !isAdmin {
@@ -175,7 +178,7 @@ func (s *Service) GetByCategoryAndSlug(categorySlug, slug string, isAdmin bool) 
 // GetByID fetches a single post by ID.
 func (s *Service) GetByID(id string) (*models.PostModel, error) {
 	var post models.PostModel
-	if err := s.db.Preload("Category").First(&post, "id = ?", id).Error; err != nil {
+	if err := s.db.Preload("Category").Preload("Related.Category").First(&post, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -246,6 +249,7 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 		Summary:    dto.Summary,
 		CategoryID: &category.ID,
 		Tags:       dto.Tags,
+		Meta:       dto.Meta,
 	}
 	if dto.Copyright != nil {
 		post.Copyright = *dto.Copyright
@@ -263,8 +267,8 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 		post.AllowComment = true
 	}
 	if dto.Pin != nil {
-		post.Pin = *dto.Pin
-		if *dto.Pin {
+		post.Pin = bool(*dto.Pin)
+		if post.Pin {
 			now := time.Now()
 			post.PinnedAt = &now
 		}
@@ -272,14 +276,57 @@ func (s *Service) Create(dto *CreatePostDTO) (*models.PostModel, error) {
 	if dto.PinOrder != nil {
 		post.PinOrder = *dto.PinOrder
 	}
+	if dto.Created != nil && !dto.Created.IsZero() {
+		post.CreatedAt = *dto.Created
+	}
 
-	if err := s.db.Create(&post).Error; err != nil {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&post).Error; err != nil {
+			return err
+		}
+		if dto.RelatedID != nil {
+			return setRelated(tx, post.ID, dto.RelatedID)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := s.db.Preload("Category").First(&post, "id = ?", post.ID).Error; err != nil {
-		return nil, err
+	return s.GetByID(post.ID)
+}
+
+// setRelated replaces a post's related posts. Links are kept in both directions, like the original core.
+func setRelated(tx *gorm.DB, postID string, ids []string) error {
+	if err := tx.Exec("DELETE FROM post_related WHERE post_id = ? OR related_post_id = ?", postID, postID).Error; err != nil {
+		return err
 	}
-	return &post, nil
+	wanted := make([]string, 0, len(ids))
+	seen := map[string]bool{postID: true}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			wanted = append(wanted, id)
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	var existing []string
+	if err := tx.Model(&models.PostModel{}).Where("id IN ?", wanted).Pluck("id", &existing).Error; err != nil {
+		return err
+	}
+	rows := make([]map[string]interface{}, 0, len(existing)*2)
+	for _, id := range existing {
+		rows = append(rows,
+			map[string]interface{}{"post_id": postID, "related_post_id": id},
+			map[string]interface{}{"post_id": id, "related_post_id": postID},
+		)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return tx.Table("post_related").Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
 }
 
 // Update patches a post by ID.
@@ -304,8 +351,8 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 	if dto.Text != nil {
 		updates["text"] = *dto.Text
 	}
-	if dto.Summary != nil {
-		updates["summary"] = *dto.Summary
+	if dto.Summary.Set {
+		updates["summary"] = dto.Summary.V
 	}
 	if dto.CategoryID != nil {
 		categoryID := strings.TrimSpace(*dto.CategoryID)
@@ -339,7 +386,7 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 		updates["tags"] = string(encodedTags)
 	}
 	if dto.Pin != nil {
-		updates["pin"] = *dto.Pin
+		updates["pin"] = bool(*dto.Pin)
 		if *dto.Pin {
 			if post.PinnedAt != nil {
 				updates["pinned_at"] = *post.PinnedAt
@@ -360,8 +407,33 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 		}
 		updates["images"] = string(encodedImages)
 	}
+	if dto.Meta.Set {
+		if dto.Meta.Valid && dto.Meta.V != nil {
+			encodedMeta, err := json.Marshal(dto.Meta.V)
+			if err != nil {
+				return nil, err
+			}
+			updates["meta"] = string(encodedMeta)
+		} else {
+			updates["meta"] = nil
+		}
+	}
+	if dto.Created != nil && !dto.Created.IsZero() {
+		updates["created_at"] = *dto.Created
+	}
 
-	if err := s.db.Model(post).Updates(updates).Error; err != nil {
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(post).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if dto.RelatedID != nil {
+			return setRelated(tx, post.ID, dto.RelatedID)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -371,12 +443,23 @@ func (s *Service) Update(id string, dto *UpdatePostDTO) (*models.PostModel, erro
 	return s.GetByID(post.ID)
 }
 
-// Delete soft-deletes a post by ID.
+// Delete removes a post together with its comments and related-post links.
 func (s *Service) Delete(id string) error {
 	if s.slugTracker != nil {
 		go s.slugTracker.DeleteByTargetID(id) // nolint:errcheck
 	}
-	return s.db.Delete(&models.PostModel{}, "id = ?", id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&models.PostModel{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM post_related WHERE post_id = ? OR related_post_id = ?", id, id).Error; err != nil {
+			return err
+		}
+		if err := models.DeleteAIDataByRef(tx, id); err != nil {
+			return err
+		}
+		return models.DeleteCommentsByRef(tx, models.RefTypePost, id)
+	})
 }
 
 // IncrementReadCount atomically increments the read counter.

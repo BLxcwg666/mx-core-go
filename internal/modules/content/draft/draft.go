@@ -206,6 +206,7 @@ func (s *Service) Update(id string, dto *UpdateDraftDTO) (*models.DraftModel, er
 		IsFullSnapshot:   true,
 	}
 	s.db.Create(&history)
+	s.pruneHistory(d.ID)
 
 	updates := map[string]interface{}{"version": d.Version + 1}
 	if dto.Title != nil {
@@ -334,6 +335,7 @@ func (s *Service) RestoreVersion(draftID string, version int) (*models.DraftMode
 		IsFullSnapshot:   true,
 	}
 	s.db.Create(&history)
+	s.pruneHistory(d.ID)
 
 	updates := map[string]interface{}{
 		"title":   snapshot.Title,
@@ -542,4 +544,19 @@ func (h *Handler) restore(c *gin.Context) {
 		return
 	}
 	response.OK(c, toResponse(d))
+}
+
+// maxDraftHistory bounds the full-text snapshots kept per draft: autosave adds one every few seconds.
+const maxDraftHistory = 100
+
+func (s *Service) pruneHistory(draftID string) {
+	var keep []string
+	if err := s.db.Model(&models.DraftHistoryModel{}).
+		Where("draft_id = ?", draftID).
+		Order("version DESC").
+		Limit(maxDraftHistory).
+		Pluck("id", &keep).Error; err != nil || len(keep) < maxDraftHistory {
+		return
+	}
+	s.db.Where("draft_id = ? AND id NOT IN ?", draftID, keep).Delete(&models.DraftHistoryModel{})
 }

@@ -2,10 +2,12 @@ package backup
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -54,11 +56,9 @@ func listBackups() []backupItem {
 	return items
 }
 
+// createLocalBackupArtifact writes the archive straight to the backup directory, so uploaded
+// files in it do not have to fit in memory.
 func (h *Handler) createLocalBackupArtifact(now time.Time) (*backupArtifact, error) {
-	buf, err := h.createBackupZip()
-	if err != nil {
-		return nil, err
-	}
 	backupDir := resolveBackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return nil, err
@@ -66,45 +66,71 @@ func (h *Handler) createLocalBackupArtifact(now time.Time) (*backupArtifact, err
 
 	filename := fmt.Sprintf("backup-%s.zip", now.Format("2006-01-02T15-04-05"))
 	filePath := filepath.Join(backupDir, filename)
-	if err := os.WriteFile(filePath, buf.Bytes(), 0o644); err != nil {
+	tmpPath := filePath + ".tmp"
+	file, err := os.Create(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.createBackupZip(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
 		return nil, err
 	}
 
 	return &backupArtifact{
 		Filename: filename,
 		Path:     filePath,
-		Buffer:   buf,
+		Size:     info.Size(),
 	}, nil
 }
 
-// createBackupZip exports all tables as BSON into a ZIP archive.
-func (h *Handler) createBackupZip() (*bytes.Buffer, error) {
-	buf := &bytes.Buffer{}
-	w := zip.NewWriter(buf)
+// createBackupZip exports the tables as BSON plus the uploaded files into a ZIP archive.
+// Any failure aborts the backup: a backup silently missing a table is worse than none.
+func (h *Handler) createBackupZip(out io.Writer) error {
+	w := zip.NewWriter(out)
 
 	exportedTables := make([]string, 0, len(backupTableNames))
 	for _, table := range backupTableNames {
+		if _, skip := backupExportSkip[table]; skip {
+			continue
+		}
 		var rows []map[string]interface{}
 		if err := h.db.Table(table).Find(&rows).Error; err != nil {
-			continue
+			return fmt.Errorf("export table %s: %w", table, err)
 		}
 
 		payload, err := encodeBSONRows(rows)
 		if err != nil {
-			continue
+			return fmt.Errorf("encode table %s: %w", table, err)
 		}
 
 		f, err := w.Create(path.Join(backupDBDir, table+".bson"))
 		if err != nil {
-			continue
+			return err
 		}
 		if len(payload) > 0 {
 			if _, err := f.Write(payload); err != nil {
-				continue
+				return err
 			}
 		}
 
 		exportedTables = append(exportedTables, table)
+	}
+
+	if err := addStaticFiles(w, resolveStaticDir()); err != nil {
+		return fmt.Errorf("export uploaded files: %w", err)
 	}
 
 	manifest := backupManifest{
@@ -120,10 +146,46 @@ func (h *Handler) createBackupZip() (*bytes.Buffer, error) {
 		}
 	}
 
-	if err := w.Close(); err != nil {
-		return nil, err
+	return w.Close()
+}
+
+func resolveStaticDir() string {
+	if dir := strings.TrimSpace(os.Getenv(envStaticDir)); dir != "" {
+		return config.ResolveRuntimePath(dir, "")
 	}
-	return buf, nil
+	return config.ResolveRuntimePath("", "static")
+}
+
+// envStaticDir mirrors file.EnvStaticDir (importing the file module here would be an import cycle).
+const envStaticDir = "MX_STATIC_DIR"
+
+func addStaticFiles(w *zip.Writer, staticDir string) error {
+	if _, err := os.Stat(staticDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return filepath.WalkDir(staticDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(staticDir, p)
+		if err != nil {
+			return err
+		}
+		src, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		dst, err := w.Create(backupStaticDir + filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(dst, src)
+		return err
+	})
 }
 
 // CreateBackup writes a local backup and uploads it to S3 when backup upload is enabled.
@@ -153,7 +215,7 @@ func (h *Handler) createBackup(ctx context.Context) (*BackupResult, *backupArtif
 
 	result := &BackupResult{
 		Filename: artifact.Filename,
-		Size:     formatSize(int64(artifact.Buffer.Len())),
+		Size:     formatSize(artifact.Size),
 	}
 	cfg, err := h.loadConfig()
 	if err != nil {
@@ -187,8 +249,12 @@ func (h *Handler) uploadBackupArtifact(
 	}
 
 	key := renderBackupObjectKey(backupOpts.Path, artifact.Filename, now)
+	payload, err := artifact.bytes()
+	if err != nil {
+		return S3UploadResult{Status: S3UploadFailed, Key: key, Error: err.Error()}
+	}
 	h.logger.Info(fmt.Sprintf("上传备份到 S3：%s", key))
-	url, err := uploader.Upload(ctx, key, artifact.Buffer.Bytes(), "application/zip")
+	url, err := uploader.Upload(ctx, key, payload, "application/zip")
 	if err != nil {
 		h.logger.Warn("S3 上传失败", zap.String("key", key), zap.Error(err))
 		return S3UploadResult{Status: S3UploadFailed, Key: key, Error: err.Error()}

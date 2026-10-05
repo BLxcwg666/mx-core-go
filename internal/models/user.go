@@ -7,11 +7,11 @@ type UserModel struct {
 	Base
 	Username      string        `json:"username"        gorm:"uniqueIndex;not null"`
 	Name          string        `json:"name"`
-	Introduce     string        `json:"introduce"`
-	Avatar        string        `json:"avatar"`
+	Introduce     string        `json:"introduce" gorm:"type:text"`
+	Avatar        string        `json:"avatar" gorm:"type:text"`
 	Password      string        `json:"-"               gorm:"not null"`
 	Mail          string        `json:"mail"`
-	URL           string        `json:"url"`
+	URL           string        `json:"url" gorm:"type:text"`
 	SocialIDs     string        `json:"-"               gorm:"type:longtext"`
 	LastLoginTime *time.Time    `json:"last_login_time"`
 	LastLoginIP   string        `json:"last_login_ip"`

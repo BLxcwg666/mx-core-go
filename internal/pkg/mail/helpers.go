@@ -37,7 +37,10 @@ func BuildMailConfig(cfg *config.FullConfig) Config {
 			}
 		}
 	}
-	if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" {
+	// The provider selected in the panel wins; a leftover Resend key must not hijack SMTP.
+	// Configs without a provider (older ones) keep using Resend whenever a key is set.
+	provider := strings.ToLower(strings.TrimSpace(cfg.MailOptions.Provider))
+	if cfg.MailOptions.Resend != nil && cfg.MailOptions.Resend.APIKey != "" && provider != "smtp" {
 		mc.UseResend = true
 		mc.ResendKey = cfg.MailOptions.Resend.APIKey
 	}

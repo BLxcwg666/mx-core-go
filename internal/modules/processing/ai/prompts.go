@@ -3,9 +3,8 @@ package ai
 import "fmt"
 
 const (
-	defaultSummaryLangCode = "zh"
-	summaryMaxWords        = 200
-	summarySystemPrompt    = `Role: Professional content summarizer.
+	summaryMaxWords     = 200
+	summarySystemPrompt = `Role: Professional content summarizer.
 
 IMPORTANT: Output MUST be valid JSON only.
 ABSOLUTE: DO NOT wrap the JSON in markdown/code fences.
@@ -153,8 +152,14 @@ var languageCodeToName = map[string]string{
 	"zh": "Chinese",
 }
 
+// sameLanguageAsContent is used when ai.aiSummaryTargetLanguage is "auto".
+const sameLanguageAsContent = "The same language as the content"
+
 func buildSummaryPrompt(lang, text string) (systemPrompt string, prompt string) {
-	targetLanguage := resolveSummaryTargetLanguageName(lang)
+	targetLanguage := lang
+	if targetLanguage == "" {
+		targetLanguage = sameLanguageAsContent
+	}
 	return fmt.Sprintf(summarySystemPrompt, summaryMaxWords), fmt.Sprintf(`TARGET_LANGUAGE: %s
 
 <<<CONTENT
@@ -163,7 +168,10 @@ CONTENT`, targetLanguage, truncateText(text, 3000))
 }
 
 func buildSummaryStreamPrompt(lang, text string) (systemPrompt string, prompt string) {
-	targetLanguage := resolveSummaryTargetLanguageName(lang)
+	targetLanguage := lang
+	if targetLanguage == "" {
+		targetLanguage = sameLanguageAsContent
+	}
 	return fmt.Sprintf(summaryStreamSystemPrompt, summaryMaxWords), fmt.Sprintf(`TARGET_LANGUAGE: %s
 
 <<<CONTENT

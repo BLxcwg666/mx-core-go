@@ -14,8 +14,9 @@ type ConfigFunc func() (key, serverURL, siteTitle string)
 
 // Service sends iOS push notifications via the Bark API.
 type Service struct {
-	configFn   ConfigFunc
-	httpClient *http.Client
+	configFn        ConfigFunc
+	throttleGuardFn func() bool
+	httpClient      *http.Client
 
 	mu         sync.Mutex
 	lastPushAt map[string]time.Time
@@ -23,12 +24,14 @@ type Service struct {
 }
 
 // New creates a new Bark service. configFn is called on each push to retrieve settings.
-func New(configFn ConfigFunc) *Service {
+// throttleGuardFn reports whether rate-limit alerts are enabled; nil means always.
+func New(configFn ConfigFunc, throttleGuardFn func() bool) *Service {
 	return &Service{
-		configFn:   configFn,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		lastPushAt: make(map[string]time.Time),
-		throttleD:  10 * time.Minute,
+		configFn:        configFn,
+		throttleGuardFn: throttleGuardFn,
+		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		lastPushAt:      make(map[string]time.Time),
+		throttleD:       10 * time.Minute,
 	}
 }
 
@@ -73,6 +76,9 @@ func (s *Service) Push(title, body string) error {
 
 // ThrottlePush sends a Bark notification for a rate-limit event, but at most once per
 func (s *Service) ThrottlePush(ip, path string) {
+	if s.throttleGuardFn != nil && !s.throttleGuardFn() {
+		return
+	}
 	key, _, _ := s.configFn()
 	if key == "" {
 		return

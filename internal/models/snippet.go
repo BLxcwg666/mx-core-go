@@ -19,12 +19,12 @@ type SnippetModel struct {
 	Raw       string      `json:"raw"        gorm:"type:longtext"`
 	Name      string      `json:"name"       gorm:"not null;index"`
 	Reference string      `json:"reference"  gorm:"not null;index"`
-	Comment   string      `json:"comment"`
+	Comment   string      `json:"comment" gorm:"type:text"`
 	Metatype  string      `json:"metatype"`
 	Schema    string      `json:"schema"     gorm:"type:text"`
 	Method    string      `json:"method"`
 	Secret    string      `json:"-"` // encrypted
-	Enable    bool        `json:"enable"     gorm:"default:true"`
+	Enable    bool        `json:"enable"`
 	BuiltIn   bool        `json:"built_in"   gorm:"default:false"`
 }
 

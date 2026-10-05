@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/auth/auth"
@@ -91,7 +92,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 
 	r.Use(analyze.Middleware(db))
 
-	apiPrefix := "/api/v2"
+	apiPrefix := config.APIPrefix
 
 	// Shared services
 	cfgSvc := appconfigs.NewService(db, appconfigs.WithLogger(a.logger))
@@ -100,10 +101,13 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	// Bark push service for rate-limit alerts.
 	barkSvc := bark.New(func() (key, serverURL, siteTitle string) {
 		cfg, err := cfgSvc.Get()
-		if err != nil {
+		if err != nil || cfg == nil || !cfg.BarkOptions.Enable {
 			return "", "", ""
 		}
 		return cfg.BarkOptions.Key, cfg.BarkOptions.ServerURL, cfg.SEO.Title
+	}, func() bool {
+		cfg, err := cfgSvc.Get()
+		return err == nil && cfg != nil && cfg.BarkOptions.EnableThrottleGuard
 	})
 
 	// Rate limiting and idempotence run on every route (requires Redis).
@@ -290,10 +294,16 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	helper.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 	activity.NewHandler(db, a.hub, webhookSvc).RegisterRoutes(api, authMW)
 	metapreset.NewHandler(db).RegisterRoutes(api, authMW)
-	serverless.NewHandler(db, a.hub, rc).RegisterRoutes(api, authMW)
+	serverlessHandler := serverless.NewHandler(db, a.hub, rc)
+	serverlessHandler.RegisterRoutes(api, authMW)
+	go func() {
+		if err := serverlessHandler.EnsureBuiltIns(); err != nil {
+			routesLogger.Warn("seed built-in functions failed", zap.Error(err))
+		}
+	}()
 	dependency.NewHandler().RegisterRoutes(api, authMW)
 	update.NewHandler().RegisterRoutes(api, authMW)
-	debug.NewHandler(a.hub).RegisterRoutes(api, authMW)
+	debug.NewHandler(a.hub, serverlessHandler).RegisterRoutes(api, authMW)
 	pty.NewHandler().RegisterRoutes(api, authMW)
 
 	// Webhooks
@@ -304,7 +314,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	file.NewHandler(db, cfgSvc).RegisterRoutes(api, authMW)
 
 	// Backups
-	backup.NewHandler(db, cfgSvc, rc, backup.WithLogger(a.logger), backup.WithWebhook(webhookSvc)).RegisterRoutes(api, authMW)
+	backup.NewHandler(db, cfgSvc, rc, backup.WithLogger(a.logger), backup.WithWebhook(webhookSvc), backup.WithHub(a.hub)).RegisterRoutes(api, authMW)
 
 	// Analytics (admin)
 	analyze.NewHandler(db).RegisterRoutes(api, authMW)
@@ -332,6 +342,7 @@ func (a *App) registerRoutes(rc *pkgredis.Client) {
 	})
 
 	aiSvc := ai.NewService(db, cfgSvc, taskSvc)
+	notifySvc.SetSummaryHook(aiSvc.AutoGenerateSummary)
 	ai.NewHandler(aiSvc).RegisterRoutes(api, authMW)
 }
 

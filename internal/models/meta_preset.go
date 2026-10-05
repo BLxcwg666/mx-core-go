@@ -23,15 +23,15 @@ type MetaPresetModel struct {
 	Key               string            `json:"key"                  gorm:"uniqueIndex;not null"`
 	Label             string            `json:"label"                gorm:"not null"`
 	Type              string            `json:"type"                 gorm:"not null"`
-	Description       string            `json:"description"`
-	Placeholder       string            `json:"placeholder"`
+	Description       string            `json:"description"          gorm:"type:text"`
+	Placeholder       string            `json:"placeholder"          gorm:"type:text"`
 	Scope             string            `json:"scope"                gorm:"index;default:'both'"`
 	Options           []MetaFieldOption `json:"options,omitempty"    gorm:"serializer:json;type:longtext"`
 	AllowCustomOption bool              `json:"allowCustomOption"`
 	Children          []MetaPresetChild `json:"children,omitempty"   gorm:"serializer:json;type:longtext"`
 	IsBuiltin         bool              `json:"isBuiltin"`
 	Order             int               `json:"order"                gorm:"index;default:0"`
-	Enabled           bool              `json:"enabled"              gorm:"default:true"`
+	Enabled           bool              `json:"enabled"`
 }
 
 func (MetaPresetModel) TableName() string { return "meta_presets" }

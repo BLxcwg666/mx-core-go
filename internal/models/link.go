@@ -24,10 +24,10 @@ type LinkModel struct {
 	Base
 	Name        string    `json:"name"        gorm:"uniqueIndex;not null"`
 	URL         string    `json:"url"         gorm:"uniqueIndex;not null"`
-	Avatar      string    `json:"avatar"`
-	Description string    `json:"description"`
+	Avatar      string    `json:"avatar" gorm:"type:text"`
+	Description string    `json:"description" gorm:"type:text"`
 	Type        LinkType  `json:"type"        gorm:"default:0"`
-	State       LinkState `json:"state"       gorm:"default:1;index"`
+	State       LinkState `json:"state"       gorm:"index"`
 	Email       string    `json:"email"`
 }
 

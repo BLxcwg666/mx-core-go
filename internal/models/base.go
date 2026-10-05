@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -9,11 +10,11 @@ import (
 
 // Base is the base model for all entities.
 // ID is a UUID string for API compatibility with the original MongoDB ObjectID format.
+// Deletes are hard deletes: soft-deleted rows kept their unique keys (slug, name, ...) and blocked re-creation.
 type Base struct {
-	ID        string         `json:"id"       gorm:"type:char(36);primaryKey"`
-	CreatedAt time.Time      `json:"created"`
-	UpdatedAt time.Time      `json:"modified"`
-	DeletedAt gorm.DeletedAt `json:"-"        gorm:"index"`
+	ID        string    `json:"id"       gorm:"type:char(36);primaryKey"`
+	CreatedAt time.Time `json:"created"`
+	UpdatedAt time.Time `json:"modified"`
 }
 
 func NullableModified(created, updated time.Time) *time.Time {
@@ -58,3 +59,21 @@ type Count struct {
 
 // JSONMap stores arbitrary JSON object data.
 type JSONMap map[string]interface{}
+
+// UnmarshalJSON accepts both "blur_hash" and "blurHash": the admin panel sends camelCase,
+// and images restored from the original core are stored with "blurHash".
+func (img *Image) UnmarshalJSON(data []byte) error {
+	type plain Image
+	var aux struct {
+		plain
+		BlurHashCamel string `json:"blurHash"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*img = Image(aux.plain)
+	if img.Blurhash == "" {
+		img.Blurhash = aux.BlurHashCamel
+	}
+	return nil
+}

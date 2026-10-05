@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/pkg/jwt"
@@ -116,14 +117,7 @@ func extractToken(c *gin.Context) string {
 	if token := NormalizeToken(c.Query("token")); token != "" {
 		return token
 	}
-	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
-		if raw, err := c.Cookie(cookieKey); err == nil {
-			if token := NormalizeToken(raw); token != "" {
-				return token
-			}
-		}
-	}
-	return ""
+	return TokenFromCookies(c)
 }
 
 // NormalizeToken trims spaces and strips optional Bearer prefix.
@@ -144,7 +138,7 @@ func validateAPIToken(db *gorm.DB, token string) (string, error) {
 	}
 	err := db.Table("api_tokens").
 		Select("user_id").
-		Where("token = ? AND (expired_at IS NULL OR expired_at > NOW()) AND deleted_at IS NULL", token).
+		Where("token = ? AND (expired_at IS NULL OR expired_at > ?)", token, time.Now()).
 		Scan(&row).Error
 	if err != nil {
 		return "", err

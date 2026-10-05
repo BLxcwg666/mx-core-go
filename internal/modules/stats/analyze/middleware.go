@@ -50,7 +50,9 @@ func Middleware(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		ua := parseUA(c.GetHeader("User-Agent"))
-		referer := c.GetHeader("Referer")
+		// path and referer are indexed varchar(191) columns; longer values would fail the insert.
+		path = truncateRunes(path, 191)
+		referer := truncateRunes(c.GetHeader("Referer"), 191)
 
 		go func() {
 			if err := db.Create(&models.AnalyzeModel{
@@ -61,7 +63,9 @@ func Middleware(db *gorm.DB) gin.HandlerFunc {
 				Timestamp: time.Now(),
 			}).Error; err != nil {
 				logger.Warn("persist analyze event failed", zap.String("path", path), zap.String("ip", ip), zap.Error(err))
+				return
 			}
+			recordCounters(db, ip)
 		}()
 	}
 }
@@ -170,4 +174,12 @@ func parseUA(ua string) map[string]interface{} {
 		result["type"] = "desktop"
 	}
 	return result
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit])
 }

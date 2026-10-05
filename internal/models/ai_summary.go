@@ -1,12 +1,14 @@
 package models
 
-// AISummaryModel caches AI-generated summaries.
+import "gorm.io/gorm"
+
+// AISummaryModel caches the AI-generated summary of an article (one per article; the legacy
+// "lang" column is left in place but no longer used).
 type AISummaryModel struct {
 	Base
-	Hash    string `json:"hash"    gorm:"uniqueIndex;not null"` // hash(refId + lang)
+	Hash    string `json:"hash"    gorm:"uniqueIndex;not null"` // hash(refId)
 	Summary string `json:"summary" gorm:"type:text;not null"`
 	RefID   string `json:"ref_id"  gorm:"index;not null"`
-	Lang    string `json:"lang"    gorm:"default:'default'"`
 }
 
 func (AISummaryModel) TableName() string { return "ai_summaries" }
@@ -22,3 +24,11 @@ type AIDeepReadingModel struct {
 }
 
 func (AIDeepReadingModel) TableName() string { return "ai_deep_readings" }
+
+// DeleteAIDataByRef removes the AI summary and deep reading of a deleted article.
+func DeleteAIDataByRef(db *gorm.DB, refID string) error {
+	if err := db.Where("ref_id = ?", refID).Delete(&AISummaryModel{}).Error; err != nil {
+		return err
+	}
+	return db.Where("ref_id = ?", refID).Delete(&AIDeepReadingModel{}).Error
+}

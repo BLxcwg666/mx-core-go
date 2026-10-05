@@ -186,6 +186,7 @@ func (h *Handler) create(c *gin.Context) {
 		h.webhook.DispatchScoped("LINK_APPLY", toResponse(l, true), webhook.ScopeToSystem|webhook.ScopeToAdmin)
 	}
 	h.dispatchContentRefresh(l.ID)
+	h.internalizeAvatarAsync(l)
 	if !isAdmin && h.cfgSvc != nil {
 		go h.sendApplyNotification(l, dto.Author)
 	}
@@ -226,6 +227,7 @@ func (h *Handler) audit(c *gin.Context) {
 		go h.sendPassNotification(l)
 	}
 	h.dispatchContentRefresh(l.ID)
+	h.internalizeAvatarAsync(l)
 	response.NoContent(c)
 }
 
@@ -243,16 +245,19 @@ func (h *Handler) auditReason(c *gin.Context) {
 		return
 	}
 
-	updates := map[string]interface{}{"state": dto.State}
+	state := *dto.State
+	updates := map[string]interface{}{"state": state}
 	if err := h.svc.db.Model(l).Updates(updates).Error; err != nil {
 		response.InternalError(c, err)
 		return
 	}
 
 	if l.Email != "" && h.cfgSvc != nil {
-		go h.sendAuditNotification(l, dto.State, dto.Reason)
+		go h.sendAuditNotification(l, state, dto.Reason)
 	}
 	h.dispatchContentRefresh(l.ID)
+	l.State = state
+	h.internalizeAvatarAsync(l)
 	response.NoContent(c)
 }
 
@@ -281,6 +286,16 @@ func (h *Handler) migrateAvatars(c *gin.Context) {
 		h.svc.db.Model(&l).Update("avatar", avatarURL)
 		updated++
 	}
+
+	if apiBase, ok := h.avatarInternalizationEnabled(); ok {
+		var passed []models.LinkModel
+		h.svc.db.Where("state = ?", models.LinkPass).Find(&passed)
+		for i := range passed {
+			if h.internalizeAvatar(&passed[i], apiBase) {
+				updated++
+			}
+		}
+	}
 	if updated > 0 {
 		h.dispatchContentRefresh("")
 	}
@@ -303,6 +318,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	h.dispatchContentRefresh(l.ID)
+	h.internalizeAvatarAsync(l)
 	response.OK(c, toResponse(l, true))
 }
 
@@ -322,6 +338,7 @@ func (h *Handler) patch(c *gin.Context) {
 		return
 	}
 	h.dispatchContentRefresh(l.ID)
+	h.internalizeAvatarAsync(l)
 	response.NoContent(c)
 }
 

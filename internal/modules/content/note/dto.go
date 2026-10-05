@@ -4,66 +4,76 @@ import (
 	"time"
 
 	"github.com/mx-space/core/internal/models"
+	"github.com/mx-space/core/internal/pkg/nullable"
 )
 
 type CreateNoteDTO struct {
-	Title        string           `json:"title"       binding:"required"`
-	Text         string           `json:"text"        binding:"required"`
-	IsPublished  *bool            `json:"isPublished"`
-	AllowComment *bool            `json:"allowComment"`
-	Password     string           `json:"password"`
-	PublicAt     *time.Time       `json:"publicAt"`
-	Mood         string           `json:"mood"`
-	Weather      string           `json:"weather"`
-	Bookmark     *bool            `json:"bookmark"`
-	Coordinates  *models.GeoPoint `json:"coordinates"`
-	Location     string           `json:"location"`
-	TopicID      *string          `json:"topicId"`
-	Images       []models.Image   `json:"images"`
+	Title        string                 `json:"title"       binding:"required"`
+	Text         string                 `json:"text"`
+	IsPublished  *bool                  `json:"isPublished"`
+	AllowComment *bool                  `json:"allowComment"`
+	Password     string                 `json:"password"`
+	PublicAt     *time.Time             `json:"publicAt"`
+	Mood         string                 `json:"mood"`
+	Weather      string                 `json:"weather"`
+	Bookmark     *bool                  `json:"bookmark"`
+	Coordinates  *models.GeoPoint       `json:"coordinates"`
+	Location     string                 `json:"location"`
+	TopicID      *string                `json:"topicId"`
+	Images       []models.Image         `json:"images"`
+	Meta         map[string]interface{} `json:"meta"`
+	Created      *time.Time             `json:"created"`
 }
 
 type UpdateNoteDTO struct {
-	Title        *string          `json:"title"`
-	Text         *string          `json:"text"`
-	IsPublished  *bool            `json:"isPublished"`
-	AllowComment *bool            `json:"allowComment"`
-	Password     *string          `json:"password"`
-	PublicAt     *time.Time       `json:"publicAt"`
-	Mood         *string          `json:"mood"`
-	Weather      *string          `json:"weather"`
-	Bookmark     *bool            `json:"bookmark"`
-	Coordinates  *models.GeoPoint `json:"coordinates"`
-	Location     *string          `json:"location"`
-	TopicID      *string          `json:"topicId"`
-	Images       []models.Image   `json:"images"`
+	Title        *string                                `json:"title"`
+	Text         *string                                `json:"text"`
+	IsPublished  *bool                                  `json:"isPublished"`
+	AllowComment *bool                                  `json:"allowComment"`
+	Password     *string                                `json:"password"`
+	PublicAt     nullable.Value[time.Time]              `json:"publicAt"`
+	Mood         *string                                `json:"mood"`
+	Weather      *string                                `json:"weather"`
+	Bookmark     *bool                                  `json:"bookmark"`
+	Coordinates  nullable.Value[models.GeoPoint]        `json:"coordinates"`
+	Location     nullable.Value[string]                 `json:"location"`
+	TopicID      nullable.Value[string]                 `json:"topicId"`
+	Images       []models.Image                         `json:"images"`
+	Meta         nullable.Value[map[string]interface{}] `json:"meta"`
+	Created      *time.Time                             `json:"created"`
 }
 
 type ListQuery struct {
 	Year      *int    `form:"year"`
 	SortBy    *string `form:"sortBy"`
 	SortOrder *int    `form:"sortOrder"`
+
+	// Filters from the admin list's db_query (only these keys are honoured).
+	OnlyBookmark    bool `form:"-"`
+	OnlyUnpublished bool `form:"-"`
 }
 
 type noteResponse struct {
-	ID           string           `json:"id"`
-	NID          int              `json:"nid"`
-	Title        string           `json:"title"`
-	Text         string           `json:"text"`
-	HasPassword  bool             `json:"hasPassword"`
-	IsPublished  bool             `json:"isPublished"`
-	AllowComment bool             `json:"allowComment"`
-	PublicAt     *time.Time       `json:"publicAt"`
-	Mood         string           `json:"mood"`
-	Weather      string           `json:"weather"`
-	Bookmark     bool             `json:"bookmark"`
-	Coordinates  *models.GeoPoint `json:"coordinates"`
-	Location     string           `json:"location"`
-	Count        models.Count     `json:"count"`
-	TopicID      *string          `json:"topicId"`
-	Topic        *noteTopic       `json:"topic"`
-	Images       []models.Image   `json:"images"`
-	Created      time.Time        `json:"created"`
-	Modified     *time.Time       `json:"modified"`
+	ID           string                 `json:"id"`
+	NID          int                    `json:"nid"`
+	Title        string                 `json:"title"`
+	Text         string                 `json:"text"`
+	HasPassword  bool                   `json:"hasPassword"`
+	IsPublished  bool                   `json:"isPublished"`
+	AllowComment bool                   `json:"allowComment"`
+	PublicAt     *time.Time             `json:"publicAt"`
+	Mood         string                 `json:"mood"`
+	Weather      string                 `json:"weather"`
+	Bookmark     bool                   `json:"bookmark"`
+	Coordinates  *models.GeoPoint       `json:"coordinates"`
+	Location     string                 `json:"location"`
+	Count        models.Count           `json:"count"`
+	TopicID      *string                `json:"topicId"`
+	Topic        *noteTopic             `json:"topic"`
+	Images       []models.Image         `json:"images"`
+	Created      time.Time              `json:"created"`
+	Modified     *time.Time             `json:"modified"`
+	Meta         map[string]interface{} `json:"meta,omitempty"`
 }
 
 type noteTopic struct {
@@ -118,6 +128,7 @@ func toResponse(n *models.NoteModel, revealProtectedText bool) noteResponse {
 		TopicID:      n.TopicID,
 		Topic:        topic,
 		Images:       images,
+		Meta:         n.Meta,
 		Created:      n.CreatedAt,
 		Modified:     modified,
 	}

@@ -75,41 +75,46 @@ func openDB(cfg *config.AppConfig, logLevel logger.LogLevel) (*gorm.DB, error) {
 	return db, nil
 }
 
+var schemaModels = []interface{}{
+	&models.UserModel{},
+	&models.UserSession{},
+	&models.APIToken{},
+	&models.OAuth2Token{},
+	&models.AuthnModel{},
+	&models.ReaderModel{},
+	&models.CategoryModel{},
+	&models.TopicModel{},
+	&models.PostModel{},
+	&models.NoteModel{},
+	&models.PageModel{},
+	&models.CommentModel{},
+	&models.RecentlyModel{},
+	&models.DraftModel{},
+	&models.DraftHistoryModel{},
+	&models.AISummaryModel{},
+	&models.AIDeepReadingModel{},
+	&models.AnalyzeModel{},
+	&models.ActivityModel{},
+	&models.SlugTrackerModel{},
+	&models.FileReferenceModel{},
+	&models.WebhookModel{},
+	&models.WebhookEventModel{},
+	&models.SnippetModel{},
+	&models.ProjectModel{},
+	&models.LinkModel{},
+	&models.SayModel{},
+	&models.SubscribeModel{},
+	&models.MetaPresetModel{},
+	&models.ServerlessStorageModel{},
+	&models.OptionModel{},
+}
+
 // migrate runs GORM auto-migration for all models.
 func migrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(
-		&models.UserModel{},
-		&models.UserSession{},
-		&models.APIToken{},
-		&models.OAuth2Token{},
-		&models.AuthnModel{},
-		&models.ReaderModel{},
-		&models.CategoryModel{},
-		&models.TopicModel{},
-		&models.PostModel{},
-		&models.NoteModel{},
-		&models.PageModel{},
-		&models.CommentModel{},
-		&models.RecentlyModel{},
-		&models.DraftModel{},
-		&models.DraftHistoryModel{},
-		&models.AISummaryModel{},
-		&models.AIDeepReadingModel{},
-		&models.AnalyzeModel{},
-		&models.ActivityModel{},
-		&models.SlugTrackerModel{},
-		&models.FileReferenceModel{},
-		&models.WebhookModel{},
-		&models.WebhookEventModel{},
-		&models.SnippetModel{},
-		&models.ProjectModel{},
-		&models.LinkModel{},
-		&models.SayModel{},
-		&models.SubscribeModel{},
-		&models.MetaPresetModel{},
-		&models.ServerlessStorageModel{},
-		&models.OptionModel{},
-	); err != nil {
+	if err := db.AutoMigrate(schemaModels...); err != nil {
+		return err
+	}
+	if err := dropSoftDelete(db); err != nil {
 		return err
 	}
 
@@ -137,5 +142,23 @@ func migrate(db *gorm.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// dropSoftDelete removes the legacy deleted_at column. Rows that were soft-deleted are purged first,
+// otherwise they would reappear once the column is gone.
+func dropSoftDelete(db *gorm.DB) error {
+	migrator := db.Migrator()
+	for _, model := range schemaModels {
+		if !migrator.HasColumn(model, "deleted_at") {
+			continue
+		}
+		if err := db.Where("deleted_at IS NOT NULL").Delete(model).Error; err != nil {
+			return err
+		}
+		if err := migrator.DropColumn(model, "deleted_at"); err != nil {
+			return err
+		}
+	}
 	return nil
 }

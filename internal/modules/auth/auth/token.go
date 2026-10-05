@@ -15,14 +15,7 @@ func extractAuthTokenFromRequest(c *gin.Context) string {
 	if token := middleware.NormalizeToken(c.Query("token")); token != "" {
 		return token
 	}
-	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
-		if raw, err := c.Cookie(cookieKey); err == nil {
-			if token := middleware.NormalizeToken(raw); token != "" {
-				return token
-			}
-		}
-	}
-	return ""
+	return middleware.TokenFromCookies(c)
 }
 
 func resolveSessionIDFromToken(rawToken string) string {

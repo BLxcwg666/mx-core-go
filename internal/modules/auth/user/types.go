@@ -6,6 +6,8 @@ import (
 )
 
 type UpdateUserDTO struct {
+	Username     *string                 `json:"username"`
+	Password     *string                 `json:"password"`
 	Name         *string                 `json:"name"`
 	Introduce    *string                 `json:"introduce"`
 	Avatar       *string                 `json:"avatar"`
@@ -26,9 +28,13 @@ type LoginDTO struct {
 }
 
 type RegisterDTO struct {
-	Username string `json:"username" binding:"required,min=3"`
-	Password string `json:"password" binding:"required,min=6"`
-	Name     string `json:"name"`
+	Username  string `json:"username"  binding:"required,min=3"`
+	Password  string `json:"password"  binding:"required,min=6"`
+	Name      string `json:"name"`
+	Mail      string `json:"mail"      binding:"omitempty,email"`
+	URL       string `json:"url"`
+	Avatar    string `json:"avatar"`
+	Introduce string `json:"introduce"`
 }
 
 type userResponse struct {
@@ -65,4 +71,6 @@ var (
 	errWrongPassword      = errors.New("wrong password")
 	errOwnerAlreadyExists = errors.New("owner already registered")
 	errPasswordSameAsOld  = errors.New("password same as old")
+	errInvalidUsername    = errors.New("invalid username")
+	errInvalidPassword    = errors.New("invalid password")
 )

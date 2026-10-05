@@ -103,13 +103,19 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		return
 	}
 
+	resp := toResponse(post)
+	// The admin editor loads posts here: it needs the raw text (macros would be saved back expanded)
+	// and opening the editor is not a read.
+	if isAdmin {
+		response.OK(c, resp)
+		return
+	}
 	go func() {
 		if err := h.svc.IncrementReadCount(post.ID); err != nil {
 			zap.L().Named("PostService").Warn("increment post read count failed", zap.String("id", post.ID), zap.Error(err))
 		}
 	}()
-
-	resp := toResponse(post)
+	resp.Related = publicRelated(resp.Related)
 	h.applyMacros(&resp, isAdmin)
 	response.OK(c, resp)
 }
@@ -125,7 +131,10 @@ func (h *Handler) getURLBySlug(c *gin.Context) {
 		response.NotFoundMsg(c, "文章不存在")
 		return
 	}
-	categorySlug := post.Category.Slug
+	categorySlug := ""
+	if post.Category != nil {
+		categorySlug = post.Category.Slug
+	}
 	if categorySlug == "" {
 		categorySlug = "uncategorized"
 	}
@@ -160,6 +169,9 @@ func (h *Handler) getByCategoryAndSlug(c *gin.Context) {
 	}()
 
 	resp := toResponse(post)
+	if !isAdmin {
+		resp.Related = publicRelated(resp.Related)
+	}
 	h.applyMacros(&resp, isAdmin)
 	response.OK(c, resp)
 }

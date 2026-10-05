@@ -54,21 +54,82 @@ func (h *Handler) getTypes(c *gin.Context) {
 	c.String(http.StatusOK, defaultTypeDefinition)
 }
 
-const defaultTypeDefinition = `type Context = {
-  req: {
-    method: string
-    path: string
-    query: Record<string, string | string[]>
-    body: any
-    headers: Record<string, string>
-  }
-  res: {
-    status: (code: number) => void
-    json: (data: any) => void
-    send: (data: any) => void
-  }
-  isAuthenticated: boolean
+// defaultTypeDefinition describes what the runtime (installRuntimeGlobals) exposes, for the admin editor.
+const defaultTypeDefinition = `interface ServerlessResponse {
+  status(code: number): ServerlessResponse
+  type(contentType: string): ServerlessResponse
+  json(data: any): void
+  send(data: any): void
+  throws(code: number, message: any): never
 }
+
+interface ServerlessRequest {
+  method: string
+  path: string
+  url: string
+  ip: string
+  query: Record<string, any>
+  params: Record<string, string>
+  headers: Record<string, string>
+  body: any
+}
+
+interface ServerlessCache {
+  get(key: string): Promise<any>
+  set(key: string, value: any, ttlSeconds?: number): Promise<void>
+  del(key: string): Promise<void>
+}
+
+interface ServerlessDB {
+  get(key: string): Promise<any>
+  find(condition: Record<string, any>): Promise<any[]>
+  set(key: string, value: any): Promise<void>
+  insert(key: string, value: any): Promise<void>
+  update(key: string, value: any): Promise<void>
+  del(key: string): Promise<void>
+}
+
+interface AxiosLike {
+  get<T = any>(url: string, config?: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+  delete<T = any>(url: string, config?: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+  post<T = any>(url: string, data?: any, config?: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+  put<T = any>(url: string, data?: any, config?: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+  patch<T = any>(url: string, data?: any, config?: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+  request<T = any>(config: any): Promise<{ data: T; status: number; headers: Record<string, string> }>
+}
+
+interface Context {
+  req: ServerlessRequest
+  res: ServerlessResponse
+  query: Record<string, any>
+  params: Record<string, string>
+  headers: Record<string, string>
+  method: string
+  path: string
+  url: string
+  ip: string
+  body: any
+  isAuthenticated: boolean
+  secret: Record<string, any>
+  model: { id: string; name: string; reference: string }
+  document: { id: string; name: string; reference: string }
+  name: string
+  reference: string
+  storage: { cache: ServerlessCache; db: ServerlessDB }
+  getService(name: 'http'): Promise<{ axios: AxiosLike }>
+  getService(name: 'config'): Promise<{ get(key: string): Promise<any> }>
+  getMaster(): Promise<any>
+  broadcast(type: string, payload: any): void
+  writeAsset(path: string, data: any, options?: any): Promise<void>
+  readAsset(path: string, options?: any): Promise<any>
+  throws(code: number, message: any): never
+  status(code: number): ServerlessResponse
+}
+
+declare const context: Context
+declare const secret: Record<string, any>
+declare const logger: Console
+declare function require(id: 'url' | 'node:url'): { URL: typeof URL; URLSearchParams: typeof URLSearchParams }
 `
 
 func (h *Handler) reset(c *gin.Context) {
@@ -179,4 +240,39 @@ func (h *Handler) hasFunctionAccess(c *gin.Context) bool {
 	}
 	_, err := middleware.ValidateTokenClaims(h.db, token)
 	return err == nil
+}
+
+const debugSnippetID = "__debug__"
+
+// RunDebug runs code from the admin debug page with the same runtime as /fn (TypeScript, storage, services).
+func (h *Handler) RunDebug(c *gin.Context, source string) {
+	// A fixed ID with a fresh UpdatedAt keeps exactly one debug entry in the compile cache.
+	snippet := &models.SnippetModel{
+		Base:      models.Base{ID: debugSnippetID, UpdatedAt: time.Now()},
+		Type:      snippetTypeFunction,
+		Name:      "debug",
+		Reference: "debug",
+		Raw:       source,
+		Enable:    true,
+	}
+	out, runErr := h.executeSnippet(snippet, h.buildRuntimeContext(c, snippet))
+	if runErr != nil {
+		var execErr *runtimeExecError
+		if ok := asRuntimeExecError(runErr, &execErr); ok {
+			c.AbortWithStatusJSON(execErr.Status, gin.H{
+				"message":     execErr.Message,
+				"status_code": execErr.Status,
+			})
+			return
+		}
+		response.InternalError(c, runErr)
+		return
+	}
+	h.writeServerlessResponse(c, out)
+}
+
+// EnsureBuiltIns seeds the built-in functions so they show up in the snippet list before the
+// first /fn request.
+func (h *Handler) EnsureBuiltIns() error {
+	return h.ensureBuiltInSnippets()
 }

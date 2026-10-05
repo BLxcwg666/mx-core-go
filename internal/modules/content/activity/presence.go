@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
 	redis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -359,4 +360,14 @@ func sanitizePresence(entry presenceRecord) gin.H {
 		"connectedAt":   entry.ConnectedAt,
 		"joinedAt":      entry.JoinedAt,
 	}
+}
+
+var readRecordNamespace = uuid.MustParse("6f1c2a52-5d1e-4b8e-9a35-3c1f0d5e7a11")
+
+// readRecordID derives a stable activity ID for a (session, room) pair.
+func readRecordID(sid, roomName string) string {
+	if sid == "" || roomName == "" {
+		return uuid.NewString()
+	}
+	return uuid.NewSHA1(readRecordNamespace, []byte(sid+"|"+roomName)).String()
 }

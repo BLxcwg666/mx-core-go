@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	appconfig "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/models"
 	appconfigs "github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgmail "github.com/mx-space/core/internal/pkg/mail"
@@ -220,8 +221,11 @@ func (h *Handler) sendVerifyEmail(to, token string) error {
 		return nil
 	}
 
-	baseURL := firstNonEmpty(cfg.URL.ServerURL, cfg.URL.WebURL)
-	verifyURL, err := buildVerifyURL(baseURL, token)
+	apiBaseURL := cfg.URL.APIBaseURL()
+	if apiBaseURL == "" && strings.TrimSpace(cfg.URL.WebURL) != "" {
+		apiBaseURL = strings.TrimRight(strings.TrimSpace(cfg.URL.WebURL), "/") + appconfig.APIPrefix
+	}
+	verifyURL, err := buildVerifyURL(apiBaseURL, token)
 	if err != nil {
 		return err
 	}
@@ -233,6 +237,7 @@ func (h *Handler) sendVerifyEmail(to, token string) error {
 	})
 }
 
+// buildVerifyURL expects the API base (".../api/v2").
 func buildVerifyURL(baseURL, token string) (string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
@@ -245,20 +250,11 @@ func buildVerifyURL(baseURL, token string) (string, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("invalid subscribe verify base url")
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/v2/subscribe/verify"
+	u.Path = strings.TrimRight(u.Path, "/") + "/subscribe/verify"
 	q := u.Query()
 	q.Set("token", token)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func (h *Handler) verify(c *gin.Context) {

@@ -202,7 +202,7 @@ func (h *Handler) buildURLByID(id string) (string, bool, error) {
 	var post models.PostModel
 	if err := h.db.Preload("Category").First(&post, "id = ?", id).Error; err == nil {
 		categorySlug := "uncategorized"
-		if post.Category.Slug != "" {
+		if post.Category != nil && post.Category.Slug != "" {
 			categorySlug = post.Category.Slug
 		}
 		return base + "/posts/" + categorySlug + "/" + post.Slug, true, nil

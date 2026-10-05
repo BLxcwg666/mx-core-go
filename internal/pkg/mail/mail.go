@@ -52,9 +52,17 @@ type Message struct {
 
 // Sender sends emails via SMTP or Resend.
 type Sender struct {
-	cfg    Config
-	logger *zap.Logger
+	cfg       Config
+	logger    *zap.Logger
+	templates map[string]string
 }
+
+// Template kinds, matching the admin panel's email template tabs.
+const (
+	TemplateOwner      = "owner"
+	TemplateGuest      = "guest"
+	TemplateNewsletter = "newsletter"
+)
 
 func New(cfg Config, opts ...SenderOption) *Sender {
 	s := &Sender{cfg: cfg, logger: zap.NewNop()}
@@ -66,6 +74,27 @@ func New(cfg Config, opts ...SenderOption) *Sender {
 
 // SenderOption configures a mail Sender.
 type SenderOption func(*Sender)
+
+// WithTemplates sets user-defined EJS templates by kind; empty kinds keep the built-in template.
+func WithTemplates(templates map[string]string) SenderOption {
+	return func(s *Sender) {
+		s.templates = templates
+	}
+}
+
+// renderCustom renders the user's template for kind, or returns ok=false to use the built-in one.
+func (s *Sender) renderCustom(kind string, props map[string]interface{}) (string, bool) {
+	tpl := strings.TrimSpace(s.templates[kind])
+	if tpl == "" {
+		return "", false
+	}
+	html, err := RenderEJS(tpl, props)
+	if err != nil {
+		s.logger.Warn("render custom email template failed, using built-in template", zap.String("kind", kind), zap.Error(err))
+		return "", false
+	}
+	return html, true
+}
 
 // WithLogger sets the logger for the mail sender.
 func WithLogger(l *zap.Logger) SenderOption {
@@ -536,6 +565,17 @@ type CommentNotifyData struct {
 	URL          string
 	OwnerAvatar  string
 	SiteName     string
+
+	// Only used by custom templates.
+	Avatar     string
+	Location   string
+	IsWhispers bool
+	Created    time.Time
+	RefID      string
+	RefText    string
+	RefCreated time.Time
+	OwnerMail  string
+	OwnerURL   string
 }
 
 // SubscribeVerifyData is the data for subscription verification emails.
@@ -552,6 +592,13 @@ type ReplyNotifyData struct {
 	Master          string
 	OwnerAvatar     string
 	SiteName        string
+
+	// Only used by custom templates.
+	Mail      string
+	IP        string
+	Created   time.Time
+	OwnerMail string
+	OwnerURL  string
 }
 
 // NewsletterData is the data for newsletter emails.
@@ -563,6 +610,12 @@ type NewsletterData struct {
 	DetailURL      string
 	UnsubscribeURL string
 	SiteName       string
+
+	// Only used by custom templates.
+	RefID             string
+	Created           time.Time
+	SubscriberEmail   string
+	SubscriberBitmask int
 }
 
 func renderTemplate(tpl string, data interface{}) (string, error) {
@@ -602,9 +655,12 @@ func (s *Sender) SendCommentNotify(to string, data CommentNotifyData) error {
 	if siteName == "" {
 		siteName = "Mix Space"
 	}
-	html, err := renderTemplate(commentNotifyTpl, data)
-	if err != nil {
-		return err
+	html, ok := s.renderCustom(TemplateOwner, ownerTemplateProps(data))
+	if !ok {
+		var err error
+		if html, err = renderTemplate(commentNotifyTpl, data); err != nil {
+			return err
+		}
 	}
 	return s.Send(Message{
 		To:      []string{to},
@@ -638,9 +694,12 @@ func (s *Sender) SendReplyNotify(to string, data ReplyNotifyData) error {
 	if siteName == "" {
 		siteName = "Mix Space"
 	}
-	html, err := renderTemplate(replyNotifyTpl, data)
-	if err != nil {
-		return err
+	html, ok := s.renderCustom(TemplateGuest, guestTemplateProps(data))
+	if !ok {
+		var err error
+		if html, err = renderTemplate(replyNotifyTpl, data); err != nil {
+			return err
+		}
 	}
 	return s.Send(Message{
 		To:      []string{to},
@@ -661,9 +720,12 @@ func (s *Sender) SendNewsletter(to string, data NewsletterData) error {
 	if siteName == "" {
 		siteName = "Mix Space"
 	}
-	html, err := renderTemplate(newsletterTpl, data)
-	if err != nil {
-		return err
+	html, ok := s.renderCustom(TemplateNewsletter, newsletterTemplateProps(data))
+	if !ok {
+		var err error
+		if html, err = renderTemplate(newsletterTpl, data); err != nil {
+			return err
+		}
 	}
 	var headers map[string]string
 	if strings.TrimSpace(data.UnsubscribeURL) != "" {

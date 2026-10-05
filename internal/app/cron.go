@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 		Name:        "check_links",
 		Description: "检查友链可用性",
 		Interval:    12 * time.Hour,
+		Offset:      2 * time.Hour,
 		Fn: func(ctx context.Context) error {
 			svc := link.NewServiceWithLogger(db, logger)
 			results := svc.HealthCheck(models.LinkPass, models.LinkOutdate)
@@ -90,6 +92,7 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 		Name:        "auto_backup",
 		Description: "自动备份数据库到本地，开启备份上传时同步上传到 S3",
 		Interval:    24 * time.Hour,
+		Offset:      time.Hour,
 		Fn: func(ctx context.Context) error {
 			_, err := backup.CreateBackup(ctx, db, cfgSvc, cronLogger)
 			return err
@@ -100,6 +103,7 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 		Name:        "sync_meilisearch_index",
 		Description: "全量推送搜索索引到 MeiliSearch",
 		Interval:    24 * time.Hour,
+		Offset:      3 * time.Hour,
 		Fn: func(ctx context.Context) error {
 			cfg, err := cfgSvc.Get()
 			if err != nil {
@@ -126,6 +130,7 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 		Name:        "push_baidu_search",
 		Description: "推送站点 URL 到百度搜索",
 		Interval:    24 * time.Hour,
+		Offset:      13 * time.Hour,
 		Fn: func(ctx context.Context) error {
 			cfg, err := cfgSvc.Get()
 			if err != nil {
@@ -156,7 +161,10 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 				cronLogger.Warn("百度搜索推送失败", zap.Error(err))
 				return err
 			}
-			resp.Body.Close()
+			if err := checkPushResponse(resp); err != nil {
+				cronLogger.Warn("百度搜索推送失败", zap.Error(err))
+				return err
+			}
 			cronLogger.Info("百度搜索推送完成")
 			return nil
 		},
@@ -166,6 +174,7 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 		Name:        "push_bing_search",
 		Description: "推送站点 URL 到 Bing 搜索",
 		Interval:    24 * time.Hour,
+		Offset:      13*time.Hour + 10*time.Minute,
 		Fn: func(ctx context.Context) error {
 			cfg, err := cfgSvc.Get()
 			if err != nil {
@@ -199,9 +208,23 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 				cronLogger.Warn("Bing 搜索推送失败", zap.Error(err))
 				return err
 			}
-			resp.Body.Close()
+			if err := checkPushResponse(resp); err != nil {
+				cronLogger.Warn("Bing 搜索推送失败", zap.Error(err))
+				return err
+			}
 			cronLogger.Info("Bing 搜索推送完成")
 			return nil
 		},
 	})
+}
+
+// checkPushResponse turns a non-2xx answer of a search engine push API into an error,
+// so the cron task shows as failed instead of fulfilled.
+func checkPushResponse(resp *http.Response) error {
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 }

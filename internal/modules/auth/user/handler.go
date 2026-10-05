@@ -173,6 +173,7 @@ func (h *Handler) login(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	middleware.ClearLegacyAuthCookie(c, middleware.IsSecureRequest(c))
 	response.OK(c, loginResponse{Token: token, User: toResponse(u)})
 }
 
@@ -227,7 +228,16 @@ func (h *Handler) updateProfile(c *gin.Context) {
 	}
 	u, err := h.svc.UpdateProfile(userID, &dto)
 	if err != nil {
-		response.InternalError(c, err)
+		switch {
+		case errors.Is(err, errPasswordSameAsOld):
+			response.UnprocessableEntity(c, "密码可不能和原来的一样哦")
+		case errors.Is(err, errInvalidPassword):
+			response.BadRequest(c, "密码至少需要 6 位")
+		case errors.Is(err, errInvalidUsername):
+			response.BadRequest(c, "用户名至少需要 3 位")
+		default:
+			response.InternalError(c, err)
+		}
 		return
 	}
 	if u == nil {
@@ -261,6 +271,7 @@ func (h *Handler) loginWithToken(c *gin.Context) {
 	if currentSessionID != "" {
 		sessionpkg.RevokeAfter(h.svc.db, userID, currentSessionID, 6*time.Second)
 	}
+	middleware.ClearLegacyAuthCookie(c, middleware.IsSecureRequest(c))
 	response.OK(c, gin.H{"token": token})
 }
 

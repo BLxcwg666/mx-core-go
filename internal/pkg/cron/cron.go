@@ -28,11 +28,29 @@ const (
 )
 
 // Job defines a scheduled background task.
+// Runs are anchored to local wall-clock time: at Offset after midnight, then every Interval
+// (e.g. Interval 24h + Offset 1h = every day at 01:00). Counting from process start instead
+// meant a job with a 24h interval never ran on a server restarted more than once a day.
 type Job struct {
 	Name        string
 	Description string
 	Interval    time.Duration
+	Offset      time.Duration
 	Fn          func(ctx context.Context) error
+}
+
+// nextRunAfter returns the first scheduled time strictly after now.
+func (j Job) nextRunAfter(now time.Time) time.Time {
+	interval := j.Interval
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	next := midnight.Add(j.Offset % interval)
+	for !next.After(now) {
+		next = next.Add(interval)
+	}
+	return next
 }
 
 // JobState holds runtime state for a registered job.
@@ -116,12 +134,10 @@ func (s *Scheduler) SetBaseContext(ctx context.Context) {
 func (s *Scheduler) Register(job Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
-	next := now.Add(job.Interval)
 	s.jobs[job.Name] = &JobState{
 		Job:       job,
 		Status:    StatusIdle,
-		NextRunAt: next,
+		NextRunAt: job.nextRunAfter(time.Now()),
 	}
 }
 
@@ -156,7 +172,7 @@ func (s *Scheduler) runLoop(ctx context.Context, js *JobState) {
 		case <-time.After(wait):
 			s.execute(ctx, js)
 			js.mu.Lock()
-			js.NextRunAt = time.Now().Add(js.Interval)
+			js.NextRunAt = js.Job.nextRunAfter(time.Now())
 			js.mu.Unlock()
 		}
 	}

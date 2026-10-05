@@ -22,7 +22,7 @@ import (
 type CreatePageDTO struct {
 	Slug         string                 `json:"slug"          binding:"required"`
 	Title        string                 `json:"title"         binding:"required"`
-	Text         string                 `json:"text"          binding:"required"`
+	Text         string                 `json:"text"`
 	Subtitle     string                 `json:"subtitle"`
 	Order        *int                   `json:"order"`
 	Meta         map[string]interface{} `json:"meta"`
@@ -235,7 +235,15 @@ func (s *Service) Delete(id string) error {
 	if s.slugTracker != nil {
 		go s.slugTracker.DeleteByTargetID(id) //nolint:errcheck
 	}
-	return s.db.Delete(&models.PageModel{}, "id = ?", id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&models.PageModel{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := models.DeleteAIDataByRef(tx, id); err != nil {
+			return err
+		}
+		return models.DeleteCommentsByRef(tx, models.RefTypePage, id)
+	})
 }
 
 func (s *Service) Reorder(id string, order int) (bool, error) {
@@ -317,7 +325,10 @@ func (h *Handler) getByIdentifier(c *gin.Context) {
 		return
 	}
 	resp := toResponse(p)
-	h.applyMacros(&resp, middleware.IsAuthenticated(c))
+	// Raw text for the admin editor, see posts getByIdentifier.
+	if !middleware.IsAuthenticated(c) {
+		h.applyMacros(&resp, false)
+	}
 	response.OK(c, resp)
 }
 
@@ -389,8 +400,16 @@ func (h *Handler) delete(c *gin.Context) {
 	response.NoContent(c)
 }
 
+type reorderItem struct {
+	ID    string `json:"id"    binding:"required"`
+	Order int    `json:"order"`
+}
+
 type reorderDTO struct {
-	IDs []string `json:"ids" binding:"required"`
+	// Seq is what the admin panel sends: explicit orders, the list is sorted by order DESC.
+	Seq []reorderItem `json:"seq"`
+	// IDs is kept for older clients: index i gets order i.
+	IDs []string `json:"ids"`
 }
 
 // PATCH /pages/reorder — reorder pages by setting Order field
@@ -400,9 +419,19 @@ func (h *Handler) reorder(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	seq := dto.Seq
+	if len(seq) == 0 {
+		for i, id := range dto.IDs {
+			seq = append(seq, reorderItem{ID: id, Order: i})
+		}
+	}
+	if len(seq) == 0 {
+		response.BadRequest(c, "seq is required")
+		return
+	}
 	changed := false
-	for i, id := range dto.IDs {
-		updated, err := h.svc.Reorder(id, i)
+	for _, item := range seq {
+		updated, err := h.svc.Reorder(item.ID, item.Order)
 		if err != nil {
 			if changed && h.webhook != nil {
 				h.webhook.DispatchContentRefresh("page-order")

@@ -16,8 +16,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// localImagePattern matches local image URLs like /objects/image/... or /files/image/...
-var localImagePattern = regexp.MustCompile(`(?:(/(?:objects|files)/image/[^\s"')\]]+))`)
+// localImagePattern matches whole local image URLs (optional origin and API prefix included, e.g.
+// https://api.example.com/api/v2/objects/image/a.png), so a replacement swaps the entire URL.
+var localImagePattern = regexp.MustCompile(`(?:https?://[^\s"'()\[\]<>/]+)?(?:/[^\s"'()\[\]<>]*?)?/(?:objects|files)/image/[^\s"'()\[\]<>]+`)
 
 // Service handles syncing local images to S3-compatible object storage.
 type Service struct {
@@ -114,6 +115,8 @@ func (s *Service) buildUploader(cfg *appcfg.FullConfig) (backup.S3Uploader, erro
 	}
 	if cfg.ImageStorageOptions.Endpoint != nil {
 		opts.Endpoint = *cfg.ImageStorageOptions.Endpoint
+		// imageStorageOptions has no path-style switch; keep path-style for custom endpoints as before.
+		opts.PathStyleAccess = strings.TrimSpace(opts.Endpoint) != ""
 	}
 	if cfg.ImageStorageOptions.SecretID != nil {
 		opts.AccessKeyID = *cfg.ImageStorageOptions.SecretID

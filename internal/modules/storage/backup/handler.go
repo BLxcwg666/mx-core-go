@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/modules/gateway/gateway"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
@@ -46,6 +47,13 @@ func WithLogger(l *zap.Logger) HandlerOption {
 func WithWebhook(svc *webhook.Service) HandlerOption {
 	return func(h *Handler) {
 		h.webhook = svc
+	}
+}
+
+// WithHub lets a restore tell connected admin panels and sites to reload.
+func WithHub(hub *gateway.Hub) HandlerOption {
+	return func(h *Handler) {
+		h.hub = hub
 	}
 }
 
@@ -86,7 +94,8 @@ func (h *Handler) createAndDownload(c *gin.Context) {
 		c.Header("X-Backup-S3-Error", url.QueryEscape(result.S3.Error))
 	}
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, result.Filename))
-	c.Data(http.StatusOK, "application/zip", artifact.Buffer.Bytes())
+	c.Header("Content-Type", "application/zip")
+	c.File(artifact.Path)
 }
 
 // POST /backups/new
@@ -165,8 +174,7 @@ func (h *Handler) rollback(c *gin.Context) {
 	filename := filepath.Base(c.Param("filename"))
 	backupDir := resolveBackupDir()
 	path := filepath.Join(backupDir, filename)
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			response.NotFoundMsg(c, "文件不存在")
 			return
@@ -175,14 +183,16 @@ func (h *Handler) rollback(c *gin.Context) {
 		return
 	}
 
-	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	// Read the archive from disk instead of loading it whole: it includes the uploaded files.
+	zr, err := zip.OpenReader(path)
 	if err != nil {
 		response.BadRequest(c, "invalid zip file")
 		return
 	}
+	defer zr.Close()
 
 	h.logger.Info(fmt.Sprintf("回滚备份：%s", filename))
-	if err := RestoreFromZip(h.db, zr); err != nil {
+	if err := RestoreFromZip(h.db, &zr.Reader); err != nil {
 		h.logger.Warn("回滚失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
@@ -203,6 +213,9 @@ func (h *Handler) invalidateRuntimeCaches(c *gin.Context) {
 func (h *Handler) dispatchContentRefresh() {
 	if h.webhook != nil {
 		h.webhook.DispatchContentRefresh("backup-restore")
+	}
+	if h.hub != nil {
+		h.hub.Broadcast("CONTENT_REFRESH", nil, "")
 	}
 }
 

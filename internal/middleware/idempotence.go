@@ -229,12 +229,5 @@ func resolveIdempotenceAuthToken(c *gin.Context) string {
 	if token := NormalizeToken(c.Query("token")); token != "" {
 		return token
 	}
-	for _, cookieKey := range []string{"mx-token", "mx_token", "token"} {
-		if raw, err := c.Cookie(cookieKey); err == nil {
-			if token := NormalizeToken(raw); token != "" {
-				return token
-			}
-		}
-	}
-	return ""
+	return TokenFromCookies(c)
 }

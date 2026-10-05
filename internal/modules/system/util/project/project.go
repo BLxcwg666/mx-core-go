@@ -16,9 +16,9 @@ import (
 type CreateProjectDTO struct {
 	Name        string   `json:"name"        binding:"required"`
 	Description string   `json:"description"`
-	PreviewURL  string   `json:"preview_url"`
-	DocURL      string   `json:"doc_url"`
-	ProjectURL  string   `json:"project_url"`
+	PreviewURL  string   `json:"previewUrl"`
+	DocURL      string   `json:"docUrl"`
+	ProjectURL  string   `json:"projectUrl"`
 	Images      []string `json:"images"`
 	Avatar      string   `json:"avatar"`
 	Text        string   `json:"text"`
@@ -27,9 +27,9 @@ type CreateProjectDTO struct {
 type UpdateProjectDTO struct {
 	Name        *string  `json:"name"`
 	Description *string  `json:"description"`
-	PreviewURL  *string  `json:"preview_url"`
-	DocURL      *string  `json:"doc_url"`
-	ProjectURL  *string  `json:"project_url"`
+	PreviewURL  *string  `json:"previewUrl"`
+	DocURL      *string  `json:"docUrl"`
+	ProjectURL  *string  `json:"projectUrl"`
 	Images      []string `json:"images"`
 	Avatar      *string  `json:"avatar"`
 	Text        *string  `json:"text"`

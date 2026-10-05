@@ -231,3 +231,8 @@ func detectRoot(path string) string {
 		return "objects"
 	}
 }
+
+// StaticDir is the local directory that backs /objects/<type>/<name>.
+func StaticDir() string {
+	return resolveStaticDir()
+}

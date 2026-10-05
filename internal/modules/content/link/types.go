@@ -29,8 +29,9 @@ type UpdateLinkDTO struct {
 }
 
 type AuditReasonDTO struct {
-	State  models.LinkState `json:"state"  binding:"required"`
-	Reason string           `json:"reason"`
+	// Pointer: LinkPass is 0, which `required` rejects on a plain int.
+	State  *models.LinkState `json:"state"  binding:"required"`
+	Reason string            `json:"reason"`
 }
 
 type linkResponse struct {

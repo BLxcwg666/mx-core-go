@@ -23,9 +23,9 @@ type DraftModel struct {
 	RefID            *string                `json:"refId"             gorm:"index"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"              gorm:"type:longtext"`
-	Images           []Image                `json:"images"            gorm:"serializer:json"`
-	Meta             map[string]interface{} `json:"meta,omitempty"    gorm:"serializer:json"`
-	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"serializer:json"`
+	Images           []Image                `json:"images"            gorm:"type:longtext;serializer:json"`
+	Meta             map[string]interface{} `json:"meta,omitempty"    gorm:"type:longtext;serializer:json"`
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"type:longtext;serializer:json"`
 	Version          int                    `json:"version"           gorm:"default:0"`
 	PublishedVersion *int                   `json:"publishedVersion"`
 
@@ -41,7 +41,7 @@ type DraftHistoryModel struct {
 	Version          int                    `json:"version"`
 	Title            string                 `json:"title"`
 	Text             string                 `json:"text"              gorm:"type:longtext"`
-	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"serializer:json"`
+	TypeSpecificData map[string]interface{} `json:"typeSpecificData,omitempty" gorm:"type:longtext;serializer:json"`
 	SavedAt          time.Time              `json:"savedAt"`
 	IsFullSnapshot   bool                   `json:"isFullSnapshot"  gorm:"default:true"`
 	RefVersion       *int                   `json:"refVersion"`

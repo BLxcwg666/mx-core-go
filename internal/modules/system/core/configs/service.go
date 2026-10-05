@@ -145,6 +145,9 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 			return nil, err
 		}
 		incoming = normalizeConfigSection(k, incoming)
+		if k == "oauth" {
+			incoming = mergeOAuthProviders(merged[k], incoming)
+		}
 		if existing, ok := merged[k]; ok {
 			merged[k] = deepMergeJSON(existing, incoming)
 			continue
@@ -165,6 +168,10 @@ func (s *Service) Patch(partial map[string]json.RawMessage) (*config.FullConfig,
 		updated.CommentOptions.AIReview &&
 		!hasEnabledAIProvider(updated.AI.Providers) {
 		return nil, errAIReviewProviderNotEnabled
+	}
+	if updated.AuthSecurity.DisablePasswordLogin && (current == nil || !current.AuthSecurity.DisablePasswordLogin) &&
+		!s.hasPasswordlessLogin(&updated) {
+		return nil, errNoPasswordlessLogin
 	}
 
 	if err := s.persist(&updated); err != nil {
@@ -245,4 +252,52 @@ func (s *Service) bumpCacheVersion() string {
 		return ""
 	}
 	return version
+}
+
+// PatchClientSection applies a camelCase body sent by the admin panel to one config section
+// and returns the updated section with camelCase keys.
+func (s *Service) PatchClientSection(key string, body json.RawMessage) (interface{}, error) {
+	key = normalizeOptionKey(key)
+	normalizedBody, err := normalizeJSONKeys(body, camelToSnakeKey)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.Patch(map[string]json.RawMessage{key: normalizedBody})
+	if err != nil {
+		return nil, err
+	}
+	full, err := json.Marshal(updated)
+	if err != nil {
+		return nil, err
+	}
+	var sections map[string]interface{}
+	if err := json.Unmarshal(full, &sections); err != nil {
+		return nil, err
+	}
+	if section, ok := sections[key]; ok {
+		return convertMapKeys(section, snakeToCamelKey), nil
+	}
+	return convertMapKeys(sections, snakeToCamelKey), nil
+}
+
+// hasPasswordlessLogin reports whether the owner could still log in with password login disabled:
+// a usable passkey (legacy ones imported without credential data are not), or a linked OAuth account
+// whose provider is enabled and configured.
+func (s *Service) hasPasswordlessLogin(cfg *config.FullConfig) bool {
+	var passkeys int64
+	if err := s.db.Model(&models.AuthnModel{}).Where("credential_json IS NOT NULL AND credential_json <> ''").Count(&passkeys).Error; err == nil && passkeys > 0 {
+		return true
+	}
+	var accounts []models.OAuth2Token
+	if err := s.db.Select("provider").Where("provider_uid IS NOT NULL AND provider_uid <> ''").Find(&accounts).Error; err != nil {
+		return false
+	}
+	for _, account := range accounts {
+		for _, p := range cfg.OAuth.Providers {
+			if p.Enabled && strings.EqualFold(strings.TrimSpace(p.Type), strings.TrimSpace(account.Provider)) {
+				return true
+			}
+		}
+	}
+	return false
 }

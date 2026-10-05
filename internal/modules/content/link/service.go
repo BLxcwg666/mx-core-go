@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/mx-space/core/internal/models"
@@ -226,32 +227,48 @@ func (s *Service) HealthCheck(states ...models.LinkState) map[string]HealthResul
 	result := make(map[string]HealthResult, len(links))
 	client := &http.Client{Timeout: 10 * time.Second}
 
+	// Checked concurrently: one by one, a handful of dead links (10s timeout each) outlasted the
+	// admin panel's request timeout.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, healthCheckConcurrency)
 	for _, l := range links {
-		s.logger.Debug(fmt.Sprintf("检查友链 %s 的健康状态：GET -> %s", l.Name, l.URL))
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
-		if err != nil {
-			cancel()
-			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
-			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
-			continue
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Mix-Space Friend Link Checker; +https://github.com/BLxcwg666/mx-core-go)")
-		resp, err := client.Do(req)
-		cancel()
-		if err != nil {
-			s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
-			result[l.ID] = HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
-			continue
-		}
-		resp.Body.Close()
-		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode != http.StatusForbidden {
-			s.logger.Debug(fmt.Sprintf("友链 %s 不可用：HTTP %d", l.Name, resp.StatusCode))
-			result[l.ID] = HealthResult{ID: l.ID, Status: resp.StatusCode,
-				Message: fmt.Sprintf("HTTP %d", resp.StatusCode)}
-		} else {
-			result[l.ID] = HealthResult{ID: l.ID, Status: resp.StatusCode}
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(l models.LinkModel) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			r := s.checkLinkHealth(client, l)
+			mu.Lock()
+			result[l.ID] = r
+			mu.Unlock()
+		}(l)
 	}
+	wg.Wait()
 	return result
+}
+
+const healthCheckConcurrency = 8
+
+func (s *Service) checkLinkHealth(client *http.Client, l models.LinkModel) HealthResult {
+	s.logger.Debug(fmt.Sprintf("检查友链 %s 的健康状态：GET -> %s", l.Name, l.URL))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
+	if err != nil {
+		s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
+		return HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Mix-Space Friend Link Checker; +https://github.com/BLxcwg666/mx-core-go)")
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.Debug(fmt.Sprintf("友链 %s 检查失败", l.Name), zap.Error(err))
+		return HealthResult{ID: l.ID, Status: 0, Message: err.Error()}
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode != http.StatusForbidden {
+		s.logger.Debug(fmt.Sprintf("友链 %s 不可用：HTTP %d", l.Name, resp.StatusCode))
+		return HealthResult{ID: l.ID, Status: resp.StatusCode, Message: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	}
+	return HealthResult{ID: l.ID, Status: resp.StatusCode}
 }

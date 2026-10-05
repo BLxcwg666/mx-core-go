@@ -64,28 +64,18 @@ func (h *Handler) patchConfigKey(c *gin.Context) {
 		response.ForbiddenMsg(c, "已经完成初始化，请登录后进行设置")
 		return
 	}
-	key := c.Param("key")
 	var body json.RawMessage
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	updated, err := h.cfgSvc.Patch(map[string]json.RawMessage{key: body})
+	// The wizard sends camelCase keys (adminUrl, webUrl, ...), same as PATCH /options/:key.
+	section, err := h.cfgSvc.PatchClientSection(c.Param("key"), body)
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-
-	full, _ := json.Marshal(updated)
-	var m map[string]json.RawMessage
-	json.Unmarshal(full, &m)
-	if val, ok := m[key]; ok {
-		var result interface{}
-		json.Unmarshal(val, &result)
-		response.OK(c, result)
-		return
-	}
-	response.OK(c, updated)
+	response.OK(c, section)
 }
 
 // POST /init/restore — upload and restore from backup ZIP

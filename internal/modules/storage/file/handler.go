@@ -1,6 +1,7 @@
 package file
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -222,7 +223,25 @@ func (h *Handler) loadConfig() (*appcfg.FullConfig, error) {
 }
 
 func (h *Handler) delete(c *gin.Context) {
+	// Image bed uploads (cancelled in the editor) live in S3; only objects of the configured
+	// bucket can be removed this way.
 	if strings.EqualFold(c.Query("storage"), "s3") {
+		if objectURL := strings.TrimSpace(c.Query("url")); objectURL != "" {
+			cfg, err := h.loadConfig()
+			if err != nil || cfg == nil {
+				response.InternalError(c, fmt.Errorf("config unavailable"))
+				return
+			}
+			deleter, err := backup.NewS3Deleter(cfg.S3Options)
+			if err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			if err := deleter.DeleteByURL(c.Request.Context(), objectURL); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+		}
 		response.NoContent(c)
 		return
 	}
@@ -274,6 +293,7 @@ func (h *Handler) batchDeleteOrphans(c *gin.Context) {
 		response.BadRequest(c, "ids or all is required")
 		return
 	}
+	h.activateReferencedFiles()
 
 	tx := h.db.Model(&models.FileReferenceModel{}).Where("status = ?", "pending")
 	if !dto.All {
@@ -351,6 +371,7 @@ func (h *Handler) batchUploadToS3(c *gin.Context) {
 }
 
 func (h *Handler) listOrphans(c *gin.Context) {
+	h.activateReferencedFiles()
 	q := pagination.FromContext(c)
 	tx := h.db.Model(&models.FileReferenceModel{}).
 		Where("status = ?", "pending").
@@ -380,6 +401,7 @@ func (h *Handler) listOrphans(c *gin.Context) {
 }
 
 func (h *Handler) countOrphans(c *gin.Context) {
+	h.activateReferencedFiles()
 	var count int64
 	if err := h.db.Model(&models.FileReferenceModel{}).Where("status = ?", "pending").Count(&count).Error; err != nil {
 		response.InternalError(c, err)
@@ -389,6 +411,7 @@ func (h *Handler) countOrphans(c *gin.Context) {
 }
 
 func (h *Handler) cleanupOrphans(c *gin.Context) {
+	h.activateReferencedFiles()
 	maxAgeMinutes := 60
 	if raw := strings.TrimSpace(c.Query("maxAgeMinutes")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -416,7 +439,14 @@ func (h *Handler) cleanupOrphans(c *gin.Context) {
 	response.OK(c, gin.H{"deleted": deleted})
 }
 
+// resolveURL prefers an absolute URL based on url.server_url: the value is stored in posts, avatars and
+// icons, which are rendered by the public site on another origin.
 func (h *Handler) resolveURL(c *gin.Context, root, typ, name string) string {
+	if cfg, err := h.loadConfig(); err == nil && cfg != nil {
+		if base := cfg.URL.APIBaseURL(); base != "" {
+			return base + "/" + root + "/" + typ + "/" + name
+		}
+	}
 	p := c.Request.URL.Path
 	marker := "/" + root + "/"
 	idx := strings.Index(p, marker)

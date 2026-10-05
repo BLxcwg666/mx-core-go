@@ -629,6 +629,7 @@ func (h *Handler) create(c *gin.Context) {
 		return
 	}
 	h.fillAvatarForComment(cm)
+	go h.appendIPLocation(cm.ID, cm.IP)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
 		go h.notifySvc.OnCommentCreate(cm, true)
@@ -791,6 +792,7 @@ func (h *Handler) reply(c *gin.Context) {
 		return
 	}
 	h.fillAvatarForComment(cm)
+	go h.appendIPLocation(cm.ID, cm.IP)
 	isAuthenticated := middleware.IsAuthenticated(c)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
@@ -988,6 +990,7 @@ func (h *Handler) createOnRef(c *gin.Context) {
 		return
 	}
 	h.fillAvatarForComment(cm)
+	go h.appendIPLocation(cm.ID, cm.IP)
 	isSpam := h.checkSpamAndMark(cm)
 	if !isSpam && !isAuthenticated && h.notifySvc != nil {
 		go h.notifySvc.OnCommentCreate(cm, true)

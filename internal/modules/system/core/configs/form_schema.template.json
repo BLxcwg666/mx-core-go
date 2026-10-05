@@ -131,7 +131,7 @@
               "ui": {
                 "component": "action",
                 "showWhen": {
-                  "aiReview": "true"
+                  "aiReview": true
                 },
                 "actionId": "test-ai-review",
                 "actionLabel": "测试"
@@ -646,6 +646,90 @@
               "required": true
             }
           ]
+        },
+        {
+          "key": "imageStorageOptions",
+          "title": "发布时同步图片到 S3",
+          "fields": [
+            {
+              "key": "enable",
+              "title": "启用图片同步",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "启用后，可以把文章里的本地图片上传到下方配置的 S3 存储，并把文中链接替换为 S3 地址"
+            },
+            {
+              "key": "syncOnPublish",
+              "title": "发布时自动同步",
+              "ui": {
+                "component": "switch"
+              },
+              "description": "文章、日记发布时自动同步其中的本地图片"
+            },
+            {
+              "key": "deleteLocalAfterSync",
+              "title": "同步后删除本地文件",
+              "ui": {
+                "component": "switch"
+              }
+            },
+            {
+              "key": "endpoint",
+              "title": "S3 服务端点",
+              "ui": {
+                "component": "input"
+              }
+            },
+            {
+              "key": "secretId",
+              "title": "Access Key ID / SecretId",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "secretKey",
+              "title": "Secret Access Key / SecretKey",
+              "ui": {
+                "component": "password",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "bucket",
+              "title": "Bucket 名称",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "region",
+              "title": "地域 Region",
+              "ui": {
+                "component": "input",
+                "halfGrid": true
+              }
+            },
+            {
+              "key": "customDomain",
+              "title": "自定义域名",
+              "ui": {
+                "component": "input"
+              },
+              "description": "如果配置了 CDN 或自定义域名，填写此项；留空则使用默认的 S3 URL"
+            },
+            {
+              "key": "prefix",
+              "title": "对象路径前缀",
+              "ui": {
+                "component": "input"
+              },
+              "description": "例如 images，留空则直接放在 Bucket 根目录"
+            }
+          ]
         }
       ]
     },
@@ -739,7 +823,7 @@
               "ui": {
                 "component": "input"
               },
-              "description": "生成的摘要目标语言，默认为 `auto`，根据用户的语言自动选择；如果需要固定语言，请填写 [ISO 639-1 语言代码](https://www.w3schools.com/tags/ref_language_codes.asp)"
+              "description": "生成的摘要语言，默认为 `auto`，即与文章原文语言一致；如果需要固定语言，请填写 [ISO 639-1 语言代码](https://www.w3schools.com/tags/ref_language_codes.asp)。每篇文章只保留一份摘要，不会按访客语言另行生成"
             }
           ]
         }

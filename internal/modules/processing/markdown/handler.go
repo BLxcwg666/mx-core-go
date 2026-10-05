@@ -350,9 +350,11 @@ func (h *Handler) importPosts(data []importItem) ([]models.PostModel, error) {
 					UpdatedAt: updatedAt,
 				},
 			},
-			Slug:       slug,
-			CategoryID: &categoryID,
-			Tags:       tags,
+			Slug:         slug,
+			CategoryID:   &categoryID,
+			Tags:         tags,
+			Copyright:    true,
+			AllowComment: true,
 		}
 
 		if err := h.db.Create(&post).Error; err != nil {
@@ -390,7 +392,8 @@ func (h *Handler) importNotes(data []importItem) ([]models.NoteModel, error) {
 					UpdatedAt: updatedAt,
 				},
 			},
-			NID: maxNID,
+			NID:          maxNID,
+			AllowComment: true,
 		}
 
 		if err := h.db.Create(&note).Error; err != nil {

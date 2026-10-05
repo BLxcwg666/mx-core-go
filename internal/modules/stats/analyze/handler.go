@@ -441,7 +441,8 @@ func (h *Handler) aggregate(c *gin.Context) {
 	})
 }
 
-// cleanOld deletes analytics older than 90 days (or the specified filter range).
+// cleanOld deletes the analytics in the given range, or all of them ("清空表") without one.
+// The 90-day retention is handled by the cleanup_analytics cron job.
 func (h *Handler) cleanOld(c *gin.Context) {
 	var aq analyzeQuery
 	if err := c.ShouldBindQuery(&aq); err != nil {
@@ -453,10 +454,13 @@ func (h *Handler) cleanOld(c *gin.Context) {
 	if aq.From != nil || aq.To != nil || aq.StartAt != nil || aq.EndAt != nil {
 		tx = applyFilter(tx, aq)
 	} else {
-		cutoff := time.Now().AddDate(0, 0, -90)
-		tx = tx.Where("timestamp < ?", cutoff)
+		tx = tx.Where("1 = 1")
 	}
 	result := tx.Delete(&models.AnalyzeModel{})
+	if result.Error != nil {
+		response.InternalError(c, result.Error)
+		return
+	}
 	response.OK(c, gin.H{"deleted": result.RowsAffected})
 }
 

@@ -207,7 +207,7 @@ func (s *Service) Delete(id string) error {
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
-	return nil
+	return models.DeleteCommentsByRef(s.db, models.RefTypeRecently, id)
 }
 
 func (s *Service) Update(id string, dto *UpdateRecentlyDTO) (*models.RecentlyModel, error) {

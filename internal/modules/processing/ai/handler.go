@@ -1,13 +1,13 @@
 package ai
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	appcfg "github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
@@ -30,9 +30,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	summaries := g.Group("/summaries")
 	summaries.GET("/article/:id", h.getSummary)
 	summaries.GET("/article/:id/generate", h.streamSummaryGenerate)
-	summaries.POST("/generate", h.generateSummary)
 
 	summariesAdmin := g.Group("/summaries", authMW)
+	summariesAdmin.POST("/generate", h.generateSummary)
 	summariesAdmin.GET("", h.listSummaries)
 	summariesAdmin.GET("/ref/:id", h.getSummariesByRefID)
 	summariesAdmin.POST("/task", h.createSummaryTask)
@@ -56,13 +56,25 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g.POST("/comment-review/test", authMW, h.testCommentReview)
 }
 
-// GET /ai/summaries/article/:id?lang=...&onlyDb=...
+// visitorMayGenerate: visitors only trigger generation when ai.enableAutoGenerateSummary is on.
+func (h *Handler) visitorMayGenerate(c *gin.Context) bool {
+	if middleware.IsAuthenticated(c) {
+		return true
+	}
+	cfg, err := h.svc.cfgSvc.Get()
+	return err == nil && cfg != nil && cfg.AI.EnableSummary && cfg.AI.EnableAutoGenerateSummary
+}
+
+// GET /ai/summaries/article/:id?onlyDb=...  (a "lang" query is ignored)
 func (h *Handler) getSummary(c *gin.Context) {
 	articleID := c.Param("id")
-	lang := c.DefaultQuery("lang", "zh-CN")
 	onlyDb := c.Query("onlyDb") == "true" || c.Query("only_db") == "true"
+	if !middleware.IsAuthenticated(c) && !h.svc.ArticleIsPublic(articleID) {
+		response.NotFoundMsg(c, "摘要不存在")
+		return
+	}
 
-	summary, err := h.svc.GetSummary(articleID, lang)
+	summary, err := h.svc.GetSummary(articleID)
 	if err != nil {
 		response.InternalError(c, err)
 		return
@@ -71,18 +83,14 @@ func (h *Handler) getSummary(c *gin.Context) {
 		response.OK(c, summary)
 		return
 	}
-	if onlyDb {
-		response.NotFoundMsg(c, "翻译不存在")
+	if onlyDb || !h.visitorMayGenerate(c) {
+		response.NotFoundMsg(c, "摘要不存在")
 		return
 	}
 
-	summary, err = h.generateSummaryNow(c.Request.Context(), articleID, lang)
+	summary, err = h.svc.GenerateSummary(articleID, false)
 	if err != nil {
-		if errors.Is(err, errSummaryArticleNotFound) {
-			response.NotFoundMsg(c, "文章不存在")
-			return
-		}
-		response.InternalError(c, err)
+		h.respondSummaryError(c, err)
 		return
 	}
 	response.OK(c, summary)
@@ -91,27 +99,39 @@ func (h *Handler) getSummary(c *gin.Context) {
 // GET /ai/summaries/article/:id/generate  — SSE streaming
 func (h *Handler) streamSummaryGenerate(c *gin.Context) {
 	articleID := c.Param("id")
-	lang := c.DefaultQuery("lang", "zh-CN")
-	h.svc.GenerateSummaryStream(c, articleID, lang)
+	if !middleware.IsAuthenticated(c) && !h.svc.ArticleIsPublic(articleID) {
+		response.NotFoundMsg(c, "摘要不存在")
+		return
+	}
+	h.svc.GenerateSummaryStream(c, articleID, h.visitorMayGenerate(c))
 }
 
-// POST /ai/summaries/generate
+// POST /ai/summaries/generate  [auth] — (re)generates and replaces the article summary
 func (h *Handler) generateSummary(c *gin.Context) {
 	var dto generateSummaryDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	summary, err := h.generateSummaryNow(c.Request.Context(), dto.RefID, dto.Lang)
+	summary, err := h.svc.GenerateSummary(dto.RefID, true)
 	if err != nil {
-		if errors.Is(err, errSummaryArticleNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
-			response.NotFoundMsg(c, "文章不存在")
-			return
-		}
-		response.InternalError(c, err)
+		h.respondSummaryError(c, err)
 		return
 	}
 	response.OK(c, summary)
+}
+
+func (h *Handler) respondSummaryError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errSummaryArticleNotFound), errors.Is(err, gorm.ErrRecordNotFound):
+		response.NotFoundMsg(c, "文章不存在")
+	case errors.Is(err, errSummaryDisabled):
+		response.BadRequest(c, "AI 摘要未开启")
+	case errors.Is(err, errNoAIProvider):
+		response.BadRequest(c, "没有可用的 AI Provider")
+	default:
+		response.InternalError(c, err)
+	}
 }
 
 // GET /ai/summaries  [auth]
@@ -196,59 +216,6 @@ func (h *Handler) deleteSummary(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
-}
-
-func (h *Handler) generateSummaryNow(ctx context.Context, refID, lang string) (*models.AISummaryModel, error) {
-	if lang == "" {
-		cfg, _ := h.svc.cfgSvc.Get()
-		if cfg != nil {
-			lang = cfg.AI.AISummaryTargetLanguage
-		}
-	}
-	if lang == "" {
-		lang = "zh-CN"
-	}
-
-	if existing, err := h.svc.GetSummary(refID, lang); err != nil {
-		return nil, err
-	} else if existing != nil {
-		return existing, nil
-	}
-
-	_, title, text := h.svc.fetchArticleInfo(refID)
-	if text == "" {
-		return nil, errSummaryArticleNotFound
-	}
-
-	cfg, err := h.svc.cfgSvc.Get()
-	if err != nil {
-		return nil, err
-	}
-	if cfg == nil || !cfg.AI.EnableSummary {
-		return nil, errors.New("AI summary is disabled")
-	}
-
-	provider := selectAIProvider(cfg.AI, cfg.AI.SummaryModel)
-	if provider == nil {
-		return nil, errors.New("no enabled AI provider")
-	}
-
-	summaryText, err := callAI(provider, title, text, lang)
-	if err != nil {
-		return nil, err
-	}
-
-	hash := hashKey(refID, lang)
-	model := models.AISummaryModel{
-		Hash:    hash,
-		Summary: summaryText,
-		RefID:   refID,
-		Lang:    lang,
-	}
-	if err := h.svc.db.Where("hash = ?", hash).Assign(model).FirstOrCreate(&model).Error; err != nil {
-		return nil, err
-	}
-	return &model, nil
 }
 
 func (h *Handler) findSummaryArticles(summaries []models.AISummaryModel) map[string]gin.H {

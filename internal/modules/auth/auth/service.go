@@ -55,9 +55,10 @@ func (s *Service) Register(dto *RegisterDTO) (*models.UserModel, error) {
 	return &u, s.db.Create(&u).Error
 }
 
+// ListTokens includes expired tokens so they can still be seen and deleted; they no longer authenticate.
 func (s *Service) ListTokens(userID string) ([]models.APIToken, error) {
 	var tokens []models.APIToken
-	return tokens, s.db.Where("user_id = ? AND (expired_at IS NULL OR expired_at > ?)", userID, time.Now()).
+	return tokens, s.db.Where("user_id = ?", userID).
 		Order("created_at DESC").Find(&tokens).Error
 }
 

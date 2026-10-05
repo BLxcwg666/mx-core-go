@@ -135,10 +135,14 @@ func (h *Handler) retryTask(c *gin.Context) {
 		return
 	}
 
-	newTask, err := h.svc.EnqueueSummary(c.Request.Context(), payload.RefID, payload.RefType, payload.Title, payload.Lang)
+	newTask, err := h.svc.EnqueueSummary(c.Request.Context(), payload.RefID, payload.RefType, payload.Title)
 	if err != nil {
 		response.InternalError(c, err)
 		return
+	}
+	if newTask != nil && newTask.ID != task.ID {
+		newTask.RetryCount = task.RetryCount + 1
+		_ = h.svc.taskSvc.SetRetryCount(c.Request.Context(), newTask.ID, newTask.RetryCount)
 	}
 	response.Created(c, newTask)
 }
@@ -160,7 +164,7 @@ func (h *Handler) createSummaryTask(c *gin.Context) {
 		return
 	}
 
-	task, err := h.svc.EnqueueSummary(c.Request.Context(), refID, "", "", strings.TrimSpace(dto.Lang))
+	task, err := h.svc.EnqueueSummary(c.Request.Context(), refID, "", "")
 	if err != nil {
 		if errors.Is(err, errSummaryArticleNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
 			response.NotFoundMsg(c, "文章不存在")
@@ -172,19 +176,15 @@ func (h *Handler) createSummaryTask(c *gin.Context) {
 	response.Created(c, task)
 }
 
-// GET /ai/summaries/task?ref_id=&lang=  [auth]
+// GET /ai/summaries/task?ref_id=  [auth]
 func (h *Handler) getSummaryTask(c *gin.Context) {
 	refID := strings.TrimSpace(c.Query("ref_id"))
-	lang := strings.TrimSpace(c.Query("lang"))
-	if lang == "" {
-		lang = "default"
-	}
 	if refID == "" {
 		response.BadRequest(c, "ref_id is required")
 		return
 	}
 
-	dedupKey := refID + ":" + lang
+	dedupKey := summaryKey(refID)
 	tasks, _, err := h.svc.taskSvc.List(c.Request.Context(), 1, 100, strPtr(TaskTypeSummary), nil)
 	if err != nil {
 		response.InternalError(c, err)

@@ -177,7 +177,7 @@ func (h *OAuthHandler) handleCallback(c *gin.Context) {
 	h.db.Where("user_id = ? AND provider = ?", owner.ID, providerID).First(&existing)
 
 	currentUserID := h.currentAuthenticatedUserID(c)
-	allowLink := currentUserID != "" && currentUserID == owner.ID
+	allowLink := (currentUserID != "" && currentUserID == owner.ID) || (state.LinkUserID != "" && state.LinkUserID == owner.ID)
 	linkedByRecord := existing.ID != "" && strings.TrimSpace(existing.ProviderUID) != "" && strings.TrimSpace(existing.ProviderUID) == strings.TrimSpace(socialUser.ID)
 	linkedByProfile := ownerHasLinkedSocialID(owner.SocialIDs, providerID, socialUser.ID)
 	if !allowLink && !linkedByRecord && !linkedByProfile {
@@ -308,7 +308,7 @@ func (h *OAuthHandler) resolveProvider(c *gin.Context, providerID, callbackURL s
 		clientID := oauthClientID(cfg.OAuth.Public, providerType)
 		clientSecret := oauthClientSecret(cfg.OAuth.Secrets, providerType)
 		if strings.EqualFold(providerType, providerID) && p.Enabled && clientID != "" && clientSecret != "" {
-			stateToken, err := buildOAuthState(providerType, validatedCallbackURL, clientSecret)
+			stateToken, err := buildOAuthState(providerType, validatedCallbackURL, clientSecret, h.currentAuthenticatedUserID(c))
 			if err != nil {
 				return nil, err
 			}
@@ -332,9 +332,12 @@ type oauthStatePayload struct {
 	CallbackURL string `json:"callback_url,omitempty"`
 	IssuedAt    int64  `json:"issued_at"`
 	Nonce       string `json:"nonce"`
+	// LinkUserID is the logged-in user who started the flow. The callback cannot rely on the
+	// session cookie: when the admin panel runs on another host the API never sees it.
+	LinkUserID string `json:"link_user_id,omitempty"`
 }
 
-func buildOAuthState(providerID, callbackURL, signingKey string) (string, error) {
+func buildOAuthState(providerID, callbackURL, signingKey, linkUserID string) (string, error) {
 	providerID = strings.ToLower(strings.TrimSpace(providerID))
 	if providerID == "" || strings.TrimSpace(signingKey) == "" {
 		return "", fmt.Errorf("oauth state signing secret is unavailable")
@@ -348,6 +351,7 @@ func buildOAuthState(providerID, callbackURL, signingKey string) (string, error)
 		CallbackURL: strings.TrimSpace(callbackURL),
 		IssuedAt:    time.Now().Unix(),
 		Nonce:       nonce,
+		LinkUserID:  strings.TrimSpace(linkUserID),
 	})
 	if err != nil {
 		return "", err
@@ -532,13 +536,14 @@ func setAuthTokenCookie(c *gin.Context, token string) {
 	const maxAge = 14 * 24 * 60 * 60
 	secure := requestScheme(c) == "https"
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("mx-token", token, maxAge, "/", "", secure, true)
+	c.SetCookie(middleware.SessionCookieName, token, maxAge, "/", "", secure, true)
 }
 
 func clearAuthTokenCookie(c *gin.Context) {
 	secure := requestScheme(c) == "https"
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("mx-token", "", -1, "/", "", secure, true)
+	c.SetCookie(middleware.SessionCookieName, "", -1, "/", "", secure, true)
+	middleware.ClearLegacyAuthCookie(c, secure)
 }
 
 func exchangeCode(providerID, code, clientID, clientSecret, redirectURI string) (string, error) {

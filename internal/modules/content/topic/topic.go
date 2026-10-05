@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/models"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
+	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
 )
@@ -126,13 +127,32 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	a.DELETE("/:id", h.delete)
 }
 
+// list pages when page/size are given; otherwise it returns every topic as a single page
+// (the note editor loads them all for its topic picker).
 func (h *Handler) list(c *gin.Context) {
+	if c.Query("page") != "" || c.Query("size") != "" {
+		q := pagination.FromContext(c)
+		var topics []models.TopicModel
+		pag, err := pagination.Paginate(h.svc.db.Model(&models.TopicModel{}).Order("created_at ASC"), q, &topics)
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.Paged(c, topics, pag)
+		return
+	}
 	topics, err := h.svc.List()
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-	response.OK(c, gin.H{"data": topics})
+	response.Paged(c, topics, response.Pagination{
+		Total:       int64(len(topics)),
+		CurrentPage: 1,
+		TotalPage:   1,
+		Size:        len(topics),
+		HasNextPage: false,
+	})
 }
 
 func (h *Handler) listAll(c *gin.Context) {

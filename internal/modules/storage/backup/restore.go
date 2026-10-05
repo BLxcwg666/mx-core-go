@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/mx-space/core/internal/config"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // RestoreFromZip imports table dumps from a backup ZIP.
@@ -65,6 +68,7 @@ func RestoreFromZip(db *gorm.DB, zr *zip.Reader) error {
 	}
 
 	columnCache := make(map[string]map[string]tableColumn, len(tableEntries))
+	var legacyRelated []map[string]interface{}
 	for _, table := range backupTableNames {
 		entry, ok := tableEntries[table]
 		if !ok {
@@ -86,6 +90,12 @@ func RestoreFromZip(db *gorm.DB, zr *zip.Reader) error {
 
 		normalizedRows := make([]map[string]interface{}, 0, len(rows))
 		for _, row := range rows {
+			if isSoftDeletedRestoreRow(row) {
+				continue
+			}
+			if table == "posts" {
+				legacyRelated = append(legacyRelated, legacyRelatedRows(row)...)
+			}
 			normalized := normalizeRestoreRow(table, row, columns)
 			if len(normalized) == 0 {
 				continue
@@ -106,6 +116,20 @@ func RestoreFromZip(db *gorm.DB, zr *zip.Reader) error {
 		}
 	}
 
+	// The original core keeps related posts in posts.related; Go backups carry the post_related table.
+	if _, hasTable := tableEntries["post_related"]; !hasTable {
+		if _, hasPosts := tableEntries["posts"]; hasPosts {
+			if err := tx.Exec("DELETE FROM `post_related`").Error; err != nil {
+				return err
+			}
+			if len(legacyRelated) > 0 {
+				if err := tx.Table("post_related").Clauses(clause.OnConflict{DoNothing: true}).Create(&legacyRelated).Error; err != nil {
+					return fmt.Errorf("restore related posts failed: %w", err)
+				}
+			}
+		}
+	}
+
 	if fkCheckDisabled {
 		if err := tx.Exec("SET FOREIGN_KEY_CHECKS = 1").Error; err != nil {
 			return err
@@ -122,7 +146,80 @@ func RestoreFromZip(db *gorm.DB, zr *zip.Reader) error {
 		return err
 	}
 	shouldRollback = false
+
+	if err := restoreStaticFiles(zr, resolveStaticDir()); err != nil {
+		return fmt.Errorf("database restored, but restoring uploaded files failed: %w", err)
+	}
 	return nil
+}
+
+func legacyRelatedRows(post map[string]interface{}) []map[string]interface{} {
+	related, ok := normalizeBSONValue(post["related"]).([]interface{})
+	if !ok || len(related) == 0 {
+		return nil
+	}
+	postID := strings.TrimSpace(fmt.Sprint(normalizeBSONValue(post["_id"])))
+	if postID == "" || postID == "<nil>" {
+		return nil
+	}
+	rows := make([]map[string]interface{}, 0, len(related))
+	for _, item := range related {
+		relatedID := strings.TrimSpace(fmt.Sprint(normalizeBSONValue(item)))
+		if relatedID == "" || relatedID == "<nil>" || relatedID == postID {
+			continue
+		}
+		rows = append(rows, map[string]interface{}{"post_id": postID, "related_post_id": relatedID})
+	}
+	return rows
+}
+
+// restoreStaticFiles writes the uploaded files of a backup back into the static directory.
+// Existing files with the same name are replaced; other files are left alone.
+func restoreStaticFiles(zr *zip.Reader, staticDir string) error {
+	for _, file := range zr.File {
+		name := strings.ReplaceAll(file.Name, "\\", "/")
+		var rel string
+		switch {
+		case strings.HasPrefix(name, backupStaticDir):
+			rel = strings.TrimPrefix(name, backupStaticDir)
+		case strings.HasPrefix(name, legacyBackupStaticDir):
+			rel = strings.TrimPrefix(name, legacyBackupStaticDir)
+		default:
+			continue
+		}
+		if file.FileInfo().IsDir() || rel == "" {
+			continue
+		}
+		cleaned := path.Clean("/" + rel)[1:]
+		if cleaned == "" || strings.HasPrefix(cleaned, "..") {
+			continue
+		}
+		target := filepath.Join(staticDir, filepath.FromSlash(cleaned))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := extractZipFile(file, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func extractZipFile(file *zip.File, target string) error {
+	src, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		return err
+	}
+	return dst.Close()
 }
 
 func parseBackupEntry(name string) (table string, format string, ok bool) {
@@ -236,8 +333,28 @@ func normalizeRestoreRow(table string, row map[string]interface{}, columns map[s
 		}
 		result[column] = normalizedValue
 	}
+	for column, value := range restoreColumnDefaults[table] {
+		if _, ok := columns[column]; !ok {
+			continue
+		}
+		if current, ok := result[column]; !ok || current == nil {
+			result[column] = value
+		}
+	}
 	ensureRestoreBaseTimestamps(result)
 	return result
+}
+
+// Backups made before soft delete was dropped still contain soft-deleted rows.
+func isSoftDeletedRestoreRow(row map[string]interface{}) bool {
+	for key, value := range row {
+		if strings.ToLower(camelToSnake(strings.TrimSpace(key))) != "deleted_at" {
+			continue
+		}
+		value = normalizeBSONValue(value)
+		return value != nil && !isZeroLikeTimeValue(value)
+	}
+	return false
 }
 
 func normalizeRestoreColumnName(table, name string) string {

@@ -1,22 +1,24 @@
 package debug
 
 import (
-	"fmt"
-	"net/http"
+	"errors"
 	"strings"
 	"time"
 
-	"github.com/dop251/goja"
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/modules/gateway/gateway"
+	"github.com/mx-space/core/internal/modules/serverless"
 	"github.com/mx-space/core/internal/pkg/response"
 )
 
 type Handler struct {
 	hub *gateway.Hub
+	fn  *serverless.Handler
 }
 
-func NewHandler(hub *gateway.Hub) *Handler { return &Handler{hub: hub} }
+func NewHandler(hub *gateway.Hub, fn *serverless.Handler) *Handler {
+	return &Handler{hub: hub, fn: fn}
+}
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 	g := rg.Group("/debug", authMW)
@@ -43,10 +45,14 @@ func (h *Handler) sendEvent(c *gin.Context) {
 		return
 	}
 
-	data := gin.H{
-		"event":   event,
-		"payload": payload,
-		"date":    time.Now(),
+	// The body is broadcast as the event data itself (plus `date` for objects), as the original core does;
+	// the admin handlers read fields like `type`/`message` straight from it.
+	data := payload
+	if obj, ok := payload.(map[string]interface{}); ok {
+		if _, exists := obj["date"]; !exists {
+			obj["date"] = time.Now()
+		}
+		data = obj
 	}
 	if h.hub != nil {
 		switch broadcastType {
@@ -70,177 +76,11 @@ func (h *Handler) runFunction(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-
-	vm := goja.New()
-
-	resState := &runtimeResponse{status: http.StatusOK}
-	ctxObj := h.buildDebugContext(vm, c, resState)
-
-	fn, err := resolveDebugFunction(vm, strings.TrimSpace(body.Function))
-	if err != nil {
-		response.BadRequest(c, err.Error())
+	if h.fn == nil {
+		response.InternalError(c, errServerlessUnavailable)
 		return
 	}
-
-	result, err := fn(goja.Undefined(), ctxObj)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	if resState.sent {
-		h.flushRuntimeResponse(c, resState)
-		return
-	}
-
-	resolved, err := resolveDebugResult(result)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	response.OK(c, resolved)
+	h.fn.RunDebug(c, body.Function)
 }
 
-type runtimeResponse struct {
-	status      int
-	contentType string
-	payload     interface{}
-	sent        bool
-}
-
-func (h *Handler) buildDebugContext(vm *goja.Runtime, c *gin.Context, state *runtimeResponse) goja.Value {
-	reqObj := vm.NewObject()
-	_ = reqObj.Set("method", c.Request.Method)
-	_ = reqObj.Set("path", c.Request.URL.Path)
-	_ = reqObj.Set("query", c.Request.URL.Query())
-	_ = reqObj.Set("headers", c.Request.Header)
-
-	resObj := vm.NewObject()
-	_ = resObj.Set("status", func(call goja.FunctionCall) goja.Value {
-		if call.Argument(0) != nil && !goja.IsUndefined(call.Argument(0)) && !goja.IsNull(call.Argument(0)) {
-			state.status = int(call.Argument(0).ToInteger())
-		}
-		return resObj
-	})
-	_ = resObj.Set("type", func(call goja.FunctionCall) goja.Value {
-		if call.Argument(0) != nil && !goja.IsUndefined(call.Argument(0)) && !goja.IsNull(call.Argument(0)) {
-			state.contentType = call.Argument(0).String()
-		}
-		return resObj
-	})
-	_ = resObj.Set("send", func(call goja.FunctionCall) goja.Value {
-		state.payload = exportJSValue(call.Argument(0))
-		state.sent = true
-		return goja.Undefined()
-	})
-	_ = resObj.Set("json", func(call goja.FunctionCall) goja.Value {
-		state.payload = exportJSValue(call.Argument(0))
-		state.sent = true
-		return goja.Undefined()
-	})
-	_ = resObj.Set("throws", func(call goja.FunctionCall) goja.Value {
-		code := int64(500)
-		if call.Argument(0) != nil && !goja.IsUndefined(call.Argument(0)) && !goja.IsNull(call.Argument(0)) {
-			code = call.Argument(0).ToInteger()
-		}
-		message := "runtime error"
-		if call.Argument(1) != nil && !goja.IsUndefined(call.Argument(1)) && !goja.IsNull(call.Argument(1)) {
-			message = call.Argument(1).String()
-		}
-		panic(vm.NewGoError(fmt.Errorf("%d:%s", code, message)))
-	})
-
-	ctx := vm.NewObject()
-	_ = ctx.Set("req", reqObj)
-	_ = ctx.Set("res", resObj)
-	_ = ctx.Set("isAuthenticated", true)
-
-	_ = vm.Set("require", func(goja.FunctionCall) goja.Value {
-		return vm.NewObject()
-	})
-
-	return ctx
-}
-
-func resolveDebugFunction(vm *goja.Runtime, src string) (goja.Callable, error) {
-	if src == "" {
-		return nil, fmt.Errorf("function is empty")
-	}
-
-	if fn := evalCallable(vm, "("+src+")"); fn != nil {
-		return fn, nil
-	}
-
-	_ = vm.Set("exports", vm.NewObject())
-	moduleObj := vm.NewObject()
-	_ = moduleObj.Set("exports", vm.Get("exports"))
-	_ = vm.Set("module", moduleObj)
-
-	normalized := strings.Replace(src, "export default", "var __mx_default__ =", 1)
-	if _, err := vm.RunString(normalized); err != nil {
-		return nil, err
-	}
-
-	candidates := []goja.Value{
-		vm.Get("__mx_default__"),
-		vm.Get("handler"),
-		vm.Get("module").ToObject(vm).Get("exports"),
-		vm.Get("exports").ToObject(vm).Get("default"),
-	}
-	for _, candidate := range candidates {
-		if fn, ok := goja.AssertFunction(candidate); ok {
-			return fn, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no callable function found; expected export default or handler")
-}
-
-func evalCallable(vm *goja.Runtime, expr string) goja.Callable {
-	v, err := vm.RunString(expr)
-	if err != nil {
-		return nil
-	}
-	if fn, ok := goja.AssertFunction(v); ok {
-		return fn
-	}
-	return nil
-}
-
-func resolveDebugResult(v goja.Value) (interface{}, error) {
-	if v == nil || goja.IsNull(v) || goja.IsUndefined(v) {
-		return nil, nil
-	}
-	if p, ok := v.Export().(*goja.Promise); ok {
-		switch p.State() {
-		case goja.PromiseStateRejected:
-			return nil, fmt.Errorf("promise rejected: %v", exportJSValue(p.Result()))
-		case goja.PromiseStatePending:
-			return nil, fmt.Errorf("promise is still pending; use synchronous return in debug mode")
-		default:
-			return exportJSValue(p.Result()), nil
-		}
-	}
-	return exportJSValue(v), nil
-}
-
-func exportJSValue(v goja.Value) interface{} {
-	if v == nil || goja.IsNull(v) || goja.IsUndefined(v) {
-		return nil
-	}
-	return v.Export()
-}
-
-func (h *Handler) flushRuntimeResponse(c *gin.Context, state *runtimeResponse) {
-	if state.status <= 0 {
-		state.status = http.StatusOK
-	}
-	if state.contentType != "" {
-		if s, ok := state.payload.(string); ok {
-			c.Data(state.status, state.contentType, []byte(s))
-			return
-		}
-		c.Header("Content-Type", state.contentType)
-	}
-	c.JSON(state.status, state.payload)
-}
+var errServerlessUnavailable = errors.New("serverless runtime is unavailable")

@@ -5,18 +5,16 @@ type SummaryPayload struct {
 	RefID   string `json:"ref_id"`
 	RefType string `json:"ref_type"` // post | note | page
 	Title   string `json:"title"`
-	Lang    string `json:"lang"`
 }
 
+// A "lang" sent by older clients is ignored: the language comes from ai.aiSummaryTargetLanguage.
 type generateSummaryDTO struct {
 	RefID string `json:"refId"    binding:"required"`
-	Lang  string `json:"lang"`
 }
 
 type createSummaryTaskDTO struct {
 	RefID       string `json:"refId"`
 	RefIDLegacy string `json:"ref_id"`
-	Lang        string `json:"lang"`
 }
 
 type updateSummaryDTO struct {

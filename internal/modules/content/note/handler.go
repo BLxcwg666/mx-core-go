@@ -1,9 +1,11 @@
 package note
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -57,6 +59,7 @@ func (h *Handler) list(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	applyDBQueryFilters(c, &lq)
 	notes, pag, err := h.svc.List(q, lq, middleware.IsAuthenticated(c))
 	if err != nil {
 		response.InternalError(c, err)
@@ -145,13 +148,18 @@ func (h *Handler) getByID(c *gin.Context) {
 		response.InternalError(c, err)
 		return
 	}
+	resp := toResponse(note, true)
+	// Raw text for the admin editor, see posts getByIdentifier.
+	if middleware.IsAuthenticated(c) {
+		response.OK(c, resp)
+		return
+	}
 	go func() {
 		if err := h.svc.IncrementReadCount(note.ID); err != nil {
 			zap.L().Named("NoteService").Warn("increment note read count failed", zap.String("id", note.ID), zap.Error(err))
 		}
 	}()
-	resp := toResponse(note, true)
-	h.applyMacros(&resp, middleware.IsAuthenticated(c))
+	h.applyMacros(&resp, false)
 	response.OK(c, resp)
 }
 
@@ -398,4 +406,22 @@ func isTruthy(value string) bool {
 	default:
 		return false
 	}
+}
+
+// applyDBQueryFilters reads the admin list filters, sent either as db_query[bookmark]=true or as a JSON object.
+func applyDBQueryFilters(c *gin.Context, lq *ListQuery) {
+	filters := map[string]string{}
+	for k, v := range c.QueryMap("db_query") {
+		filters[k] = v
+	}
+	if raw := strings.TrimSpace(c.Query("db_query")); strings.HasPrefix(raw, "{") {
+		var parsed map[string]interface{}
+		if json.Unmarshal([]byte(raw), &parsed) == nil {
+			for k, v := range parsed {
+				filters[k] = fmt.Sprint(v)
+			}
+		}
+	}
+	lq.OnlyBookmark = isTruthy(filters["bookmark"])
+	lq.OnlyUnpublished = isTruthy(filters["unpublished"])
 }

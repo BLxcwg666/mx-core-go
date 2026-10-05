@@ -80,9 +80,17 @@ func (w *Writer) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 
-	if !w.mu.TryLock() {
-		return len(p), nil
+	// zap writes from many goroutines; every line must be written, so wait for the lock
+	// (a TryLock here silently dropped lines under load).
+	n, err := w.writeLocked(p)
+	if n > 0 {
+		Publish(string(p[:n]))
 	}
+	return n, err
+}
+
+func (w *Writer) writeLocked(p []byte) (int, error) {
+	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	path := filepath.Join(w.dir, TodayFilename(time.Now()))
@@ -100,14 +108,7 @@ func (w *Writer) Write(p []byte) (int, error) {
 	if writeErr != nil {
 		return n, writeErr
 	}
-	if closeErr != nil {
-		return n, closeErr
-	}
-
-	if n > 0 {
-		Publish(string(p[:n]))
-	}
-	return n, nil
+	return n, closeErr
 }
 
 func (w *Writer) Sync() error {

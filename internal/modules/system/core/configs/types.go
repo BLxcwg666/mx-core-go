@@ -11,6 +11,8 @@ const configKey = "configs"
 
 var errAIReviewProviderNotEnabled = errors.New("no enabled ai provider for comment ai review")
 
+var errNoPasswordlessLogin = errors.New("no passkey or linked oauth account to log in without password")
+
 //go:embed form_schema.template.json
 var formSchemaTemplateRaw []byte
 

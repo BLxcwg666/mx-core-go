@@ -1,10 +1,12 @@
 package category
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mx-space/core/internal/middleware"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/pkg/response"
 )
@@ -35,6 +37,22 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 }
 
 func (h *Handler) list(c *gin.Context) {
+	if rawIDs := strings.TrimSpace(c.Query("ids")); rawIDs != "" {
+		ids := make([]string, 0)
+		for _, id := range strings.Split(rawIDs, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		entries, err := h.svc.ListEntries(ids, middleware.IsAuthenticated(c))
+		if err != nil {
+			response.InternalError(c, err)
+			return
+		}
+		response.OK(c, gin.H{"entries": entries})
+		return
+	}
+
 	listType := CategoryTypeCategory
 	rawType := strings.TrimSpace(c.Query("type"))
 	if rawType != "" {
@@ -151,6 +169,10 @@ func (h *Handler) update(c *gin.Context) {
 func (h *Handler) delete(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.svc.Delete(id); err != nil {
+		if errors.Is(err, errCategoryNotEmpty) {
+			response.BadRequest(c, "该分类中有其他文章，无法被删除")
+			return
+		}
 		response.InternalError(c, err)
 		return
 	}

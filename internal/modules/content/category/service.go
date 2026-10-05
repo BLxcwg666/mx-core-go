@@ -366,7 +366,110 @@ func (s *Service) Update(id string, dto *UpdateCategoryDTO) (*models.CategoryMod
 	return s.GetByID(id)
 }
 
+var errCategoryNotEmpty = errors.New("category still has posts")
+
+// Delete refuses to remove a category that still has posts, as the original core does:
+// a post without category breaks its public URL and the admin lists.
 func (s *Service) Delete(id string) error {
-	s.db.Model(&models.PostModel{}).Where("category_id = ?", id).Update("category_id", nil)
+	var count int64
+	if err := s.db.Model(&models.PostModel{}).Where("category_id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return errCategoryNotEmpty
+	}
 	return s.db.Delete(&models.CategoryModel{}, "id = ?", id).Error
+}
+
+type CategoryEntryPost struct {
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Slug        string                 `json:"slug"`
+	CategoryID  *string                `json:"categoryId"`
+	Tags        []string               `json:"tags"`
+	Count       models.Count           `json:"count"`
+	IsPublished bool                   `json:"isPublished"`
+	Pin         *time.Time             `json:"pin"`
+	PinOrder    int                    `json:"pinOrder"`
+	Meta        map[string]interface{} `json:"meta,omitempty"`
+	Created     time.Time              `json:"created"`
+	Modified    *time.Time             `json:"modified"`
+}
+
+type CategoryEntry struct {
+	ID       string              `json:"id"`
+	Name     string              `json:"name"`
+	Slug     string              `json:"slug"`
+	Type     int                 `json:"type"`
+	Created  time.Time           `json:"created"`
+	Modified *time.Time          `json:"modified"`
+	Children []CategoryEntryPost `json:"children"`
+}
+
+// ListEntries backs GET /categories?ids=a,b: each category with its posts, keyed by category id.
+func (s *Service) ListEntries(ids []string, includeUnpublished bool) (map[string]CategoryEntry, error) {
+	entries := make(map[string]CategoryEntry, len(ids))
+	if len(ids) == 0 {
+		return entries, nil
+	}
+	var cats []models.CategoryModel
+	if err := s.db.Where("id IN ?", ids).Find(&cats).Error; err != nil {
+		return nil, err
+	}
+	tx := s.db.Omit("text").Where("category_id IN ?", ids).Order("created_at DESC")
+	if !includeUnpublished {
+		tx = tx.Where("is_published = ?", true)
+	}
+	var posts []models.PostModel
+	if err := tx.Find(&posts).Error; err != nil {
+		return nil, err
+	}
+	for _, cat := range cats {
+		entries[cat.ID] = CategoryEntry{
+			ID:       cat.ID,
+			Name:     cat.Name,
+			Slug:     cat.Slug,
+			Type:     cat.Type,
+			Created:  cat.CreatedAt,
+			Modified: models.NullableModified(cat.CreatedAt, cat.UpdatedAt),
+			Children: []CategoryEntryPost{},
+		}
+	}
+	for _, p := range posts {
+		if p.CategoryID == nil {
+			continue
+		}
+		entry, ok := entries[*p.CategoryID]
+		if !ok {
+			continue
+		}
+		tags := []string(p.Tags)
+		if tags == nil {
+			tags = []string{}
+		}
+		var pin *time.Time
+		if p.Pin {
+			pin = p.PinnedAt
+			if pin == nil {
+				created := p.CreatedAt
+				pin = &created
+			}
+		}
+		entry.Children = append(entry.Children, CategoryEntryPost{
+			ID:          p.ID,
+			Title:       p.Title,
+			Slug:        p.Slug,
+			CategoryID:  p.CategoryID,
+			Tags:        tags,
+			Count:       p.GetCount(),
+			IsPublished: p.IsPublished,
+			Pin:         pin,
+			PinOrder:    p.PinOrder,
+			Meta:        p.Meta,
+			Created:     p.CreatedAt,
+			Modified:    models.NullableModified(p.CreatedAt, p.UpdatedAt),
+		})
+		entries[*p.CategoryID] = entry
+	}
+	return entries, nil
 }

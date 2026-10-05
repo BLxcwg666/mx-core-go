@@ -38,6 +38,12 @@ func (s *Service) List(q pagination.Query, lq ListQuery, isAdmin bool) ([]models
 	if !isAdmin {
 		tx = tx.Where("is_published = ?", true)
 	}
+	if lq.OnlyBookmark {
+		tx = tx.Where("bookmark = ?", true)
+	}
+	if lq.OnlyUnpublished && isAdmin {
+		tx = tx.Where("is_published = ?", false)
+	}
 	for _, order := range noteListOrders(lq) {
 		tx = tx.Order(order)
 	}
@@ -223,8 +229,7 @@ func (s *Service) nextNID(db *gorm.DB) (int, error) {
 		db = s.db
 	}
 	var maxNID int
-	// Include soft-deleted rows because the unique index on n_id still keeps them.
-	if err := db.Unscoped().Model(&models.NoteModel{}).Select("COALESCE(MAX(n_id), 0)").Scan(&maxNID).Error; err != nil {
+	if err := db.Model(&models.NoteModel{}).Select("COALESCE(MAX(n_id), 0)").Scan(&maxNID).Error; err != nil {
 		return 0, err
 	}
 	return maxNID + 1, nil
@@ -251,6 +256,10 @@ func (s *Service) Create(dto *CreateNoteDTO) (*models.NoteModel, error) {
 			Coordinates: dto.Coordinates,
 			Location:    dto.Location,
 			TopicID:     dto.TopicID,
+			Meta:        dto.Meta,
+		}
+		if dto.Created != nil && !dto.Created.IsZero() {
+			note.CreatedAt = *dto.Created
 		}
 		if dto.IsPublished != nil {
 			note.IsPublished = *dto.IsPublished
@@ -325,21 +334,29 @@ func (s *Service) Update(id string, dto *UpdateNoteDTO) (*models.NoteModel, erro
 	if dto.Bookmark != nil {
 		updates["bookmark"] = *dto.Bookmark
 	}
-	if dto.Location != nil {
-		updates["location"] = *dto.Location
+	if dto.Location.Set {
+		updates["location"] = dto.Location.V
 	}
-	if dto.TopicID != nil {
-		updates["topic_id"] = *dto.TopicID
-	}
-	if dto.PublicAt != nil {
-		updates["public_at"] = dto.PublicAt
-	}
-	if dto.Coordinates != nil {
-		encodedCoordinates, err := json.Marshal(dto.Coordinates)
-		if err != nil {
-			return nil, err
+	if dto.TopicID.Set {
+		if topicID := strings.TrimSpace(dto.TopicID.V); dto.TopicID.Valid && topicID != "" {
+			updates["topic_id"] = topicID
+		} else {
+			updates["topic_id"] = nil
 		}
-		updates["coordinates"] = string(encodedCoordinates)
+	}
+	if dto.PublicAt.Set {
+		updates["public_at"] = dto.PublicAt.Ptr()
+	}
+	if dto.Coordinates.Set {
+		if dto.Coordinates.Valid {
+			encodedCoordinates, err := json.Marshal(dto.Coordinates.V)
+			if err != nil {
+				return nil, err
+			}
+			updates["coordinates"] = string(encodedCoordinates)
+		} else {
+			updates["coordinates"] = nil
+		}
 	}
 	if dto.Images != nil {
 		encodedImages, err := json.Marshal(dto.Images)
@@ -347,6 +364,20 @@ func (s *Service) Update(id string, dto *UpdateNoteDTO) (*models.NoteModel, erro
 			return nil, err
 		}
 		updates["images"] = string(encodedImages)
+	}
+	if dto.Meta.Set {
+		if dto.Meta.Valid && dto.Meta.V != nil {
+			encodedMeta, err := json.Marshal(dto.Meta.V)
+			if err != nil {
+				return nil, err
+			}
+			updates["meta"] = string(encodedMeta)
+		} else {
+			updates["meta"] = nil
+		}
+	}
+	if dto.Created != nil && !dto.Created.IsZero() {
+		updates["created_at"] = *dto.Created
 	}
 	if dto.Password != nil {
 		if *dto.Password == "" {
@@ -363,11 +394,19 @@ func (s *Service) Update(id string, dto *UpdateNoteDTO) (*models.NoteModel, erro
 	if err := s.db.Model(note).Updates(updates).Error; err != nil {
 		return nil, err
 	}
-	return note, nil
+	return s.GetByID(note.ID)
 }
 
 func (s *Service) Delete(id string) error {
-	return s.db.Delete(&models.NoteModel{}, "id = ?", id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&models.NoteModel{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := models.DeleteAIDataByRef(tx, id); err != nil {
+			return err
+		}
+		return models.DeleteCommentsByRef(tx, models.RefTypeNote, id)
+	})
 }
 
 func (s *Service) IncrementReadCount(id string) error {

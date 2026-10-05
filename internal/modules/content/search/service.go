@@ -78,7 +78,7 @@ func (s *Service) ensureClient() (*meiliClient, error) {
 // Search queries MeiliSearch, with MySQL LIKE fallback.
 func (s *Service) Search(q string, isAdmin bool) ([]SearchResult, string, error) {
 	if client, err := s.ensureClient(); err == nil {
-		if results, err := client.Search(q); err == nil {
+		if results, err := s.cachedMeiliSearch(client, q); err == nil {
 			if !isAdmin {
 				results = s.filterPublicResults(results)
 			}
@@ -463,6 +463,7 @@ func (s *Service) IndexAll() error {
 		return err
 	}
 	s.logger.Info("MeiliSearch 索引推送完成")
+	invalidateSearchCache()
 	return nil
 }
 
@@ -483,6 +484,7 @@ func (s *Service) IndexDocument(id, title, text, docType, slug string, nid int) 
 	if err := client.AddDocuments([]map[string]interface{}{doc}); err != nil {
 		s.logger.Warn("MeiliSearch incremental index failed", zap.String("id", id), zap.String("type", docType), zap.Error(err))
 	}
+	invalidateSearchCache()
 }
 
 // GetAllDocuments returns all published documents (posts+notes+pages) as SearchResults.
@@ -535,4 +537,5 @@ func (s *Service) DeleteDocument(id string) {
 	if err := client.DeleteDocument(id); err != nil {
 		s.logger.Warn("MeiliSearch document delete failed", zap.String("id", id), zap.Error(err))
 	}
+	invalidateSearchCache()
 }

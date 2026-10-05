@@ -15,6 +15,7 @@ import (
 	"github.com/mx-space/core/internal/pkg/pagination"
 	"github.com/mx-space/core/internal/pkg/response"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Handler struct {
@@ -277,7 +278,10 @@ func (h *Handler) updatePresence(c *gin.Context) {
 
 	entry := upsertPresence(dto, c.ClientIP())
 
+	// One read record per session and room: heartbeats update it instead of adding rows,
+	// otherwise the reading list floods and the reading rank counts heartbeats.
 	row := models.ActivityModel{
+		Base: models.Base{ID: readRecordID(entry.SID, entry.RoomName)},
 		Type: fmt.Sprintf("%d", activityTypeReadDuration),
 		Payload: map[string]interface{}{
 			"identity":      entry.Identity,
@@ -293,7 +297,10 @@ func (h *Handler) updatePresence(c *gin.Context) {
 			"ip":            entry.IP,
 		},
 	}
-	_ = h.db.Create(&row).Error
+	_ = h.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_at"}),
+	}).Create(&row).Error
 
 	sanitized := sanitizePresence(entry)
 	if dto.ReaderID != "" {
