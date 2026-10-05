@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mx-space/core/internal/config"
+	"github.com/mx-space/core/internal/modules/system/core/configs"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -123,9 +126,87 @@ func (h *Handler) createBackupZip() (*bytes.Buffer, error) {
 	return buf, nil
 }
 
-// CreateLocalBackup creates a backup ZIP in the default backup directory.
-func CreateLocalBackup(db *gorm.DB) error {
-	h := &Handler{db: db}
-	_, err := h.createLocalBackupArtifact(time.Now())
-	return err
+// CreateBackup writes a local backup and uploads it to S3 when backup upload is enabled.
+// The local backup is kept even if the upload fails; the upload failure is returned as an error.
+func CreateBackup(ctx context.Context, db *gorm.DB, cfgSvc *configs.Service, logger *zap.Logger) (*BackupResult, error) {
+	h := NewHandler(db, cfgSvc, nil, WithLogger(logger))
+	result, _, err := h.createBackup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if result.S3.Status == S3UploadFailed {
+		return result, fmt.Errorf("本地备份 %s 已创建，但上传 S3 失败：%s", result.Filename, result.S3.Error)
+	}
+	return result, nil
+}
+
+// createBackup never fails because of S3: the upload outcome is reported in the result.
+func (h *Handler) createBackup(ctx context.Context) (*BackupResult, *backupArtifact, error) {
+	h.logger.Info("备份数据库中...")
+	now := time.Now()
+	artifact, err := h.createLocalBackupArtifact(now)
+	if err != nil {
+		h.logger.Warn("备份失败", zap.Error(err))
+		return nil, nil, err
+	}
+	h.logger.Info(fmt.Sprintf("备份成功：%s", artifact.Filename))
+
+	result := &BackupResult{
+		Filename: artifact.Filename,
+		Size:     formatSize(int64(artifact.Buffer.Len())),
+	}
+	cfg, err := h.loadConfig()
+	if err != nil {
+		h.logger.Warn("读取备份配置失败，跳过 S3 上传", zap.Error(err))
+		result.S3 = S3UploadResult{Status: S3UploadFailed, Error: err.Error()}
+		return result, artifact, nil
+	}
+	result.S3 = h.uploadBackupArtifact(ctx, cfg.BackupOptions, cfg.S3Options, artifact, now)
+	return result, artifact, nil
+}
+
+func (h *Handler) uploadBackupArtifact(
+	ctx context.Context,
+	backupOpts config.BackupOptions,
+	s3Opts config.S3Options,
+	artifact *backupArtifact,
+	now time.Time,
+) S3UploadResult {
+	if !backupOpts.Enable {
+		return S3UploadResult{Status: S3UploadSkipped}
+	}
+
+	newUploader := h.newUploader
+	if newUploader == nil {
+		newUploader = NewS3Uploader
+	}
+	uploader, err := newUploader(s3Opts)
+	if err != nil {
+		h.logger.Warn("S3 配置无效，备份未上传", zap.Error(err))
+		return S3UploadResult{Status: S3UploadFailed, Error: err.Error()}
+	}
+
+	key := renderBackupObjectKey(backupOpts.Path, artifact.Filename, now)
+	h.logger.Info(fmt.Sprintf("上传备份到 S3：%s", key))
+	url, err := uploader.Upload(ctx, key, artifact.Buffer.Bytes(), "application/zip")
+	if err != nil {
+		h.logger.Warn("S3 上传失败", zap.String("key", key), zap.Error(err))
+		return S3UploadResult{Status: S3UploadFailed, Key: key, Error: err.Error()}
+	}
+	h.logger.Info("S3 上传成功")
+	return S3UploadResult{Status: S3UploadUploaded, Key: key, URL: url}
+}
+
+func (h *Handler) loadConfig() (*config.FullConfig, error) {
+	if h.cfgSvc == nil {
+		return nil, fmt.Errorf("config service is unavailable")
+	}
+	cfg, err := h.cfgSvc.Get()
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("configs not initialized")
+	}
+	return cfg, nil
 }

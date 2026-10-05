@@ -88,16 +88,11 @@ func registerCronJobs(sched *pkgcron.Scheduler, db *gorm.DB, runtimeCfg *config.
 
 	sched.Register(pkgcron.Job{
 		Name:        "auto_backup",
-		Description: "自动备份数据库到本地",
+		Description: "自动备份数据库到本地，开启备份上传时同步上传到 S3",
 		Interval:    24 * time.Hour,
 		Fn: func(ctx context.Context) error {
-			cronLogger.Info("备份数据库中...")
-			if err := backup.CreateLocalBackup(db); err != nil {
-				cronLogger.Warn("备份失败", zap.Error(err))
-				return err
-			}
-			cronLogger.Info("备份成功")
-			return nil
+			_, err := backup.CreateBackup(ctx, db, cfgSvc, cronLogger)
+			return err
 		},
 	})
 

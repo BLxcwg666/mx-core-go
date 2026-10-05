@@ -3,13 +3,15 @@ package backup
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
@@ -52,6 +54,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 
 	g.GET("", h.list)
 	g.GET("/new", h.createAndDownload)
+	g.POST("/new", h.create)
 	g.GET("/:filename", h.download)
 	g.POST("", h.uploadAndRestore)
 	g.POST("/rollback", h.uploadAndRestore)
@@ -69,30 +72,32 @@ func (h *Handler) list(c *gin.Context) {
 }
 
 // GET /backups/new
+// The S3 upload outcome is reported via X-Backup-S3-Status / X-Backup-S3-Error since the body is the ZIP itself.
 func (h *Handler) createAndDownload(c *gin.Context) {
-	h.logger.Info("备份数据库中...")
-	buf, err := h.createBackupZip()
+	// The upload should finish even if the admin page is closed mid-request.
+	result, artifact, err := h.createBackup(context.WithoutCancel(c.Request.Context()))
 	if err != nil {
-		h.logger.Warn("备份失败", zap.Error(err))
 		response.InternalError(c, err)
 		return
 	}
 
-	backupDir := resolveBackupDir()
-	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		response.InternalError(c, err)
-		return
+	c.Header("X-Backup-S3-Status", result.S3.Status)
+	if result.S3.Error != "" {
+		c.Header("X-Backup-S3-Error", url.QueryEscape(result.S3.Error))
 	}
-	filename := fmt.Sprintf("backup-%s.zip", time.Now().Format("2006-01-02T15-04-05"))
-	path := filepath.Join(backupDir, filename)
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		response.InternalError(c, err)
-		return
-	}
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, result.Filename))
+	c.Data(http.StatusOK, "application/zip", artifact.Buffer.Bytes())
+}
 
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	c.Data(http.StatusOK, "application/zip", buf.Bytes())
-	h.logger.Info(fmt.Sprintf("备份成功：%s", filename))
+// POST /backups/new
+// Responds 200 with the S3 outcome in the body: a failed upload still leaves a usable local backup.
+func (h *Handler) create(c *gin.Context) {
+	result, _, err := h.createBackup(context.WithoutCancel(c.Request.Context()))
+	if err != nil {
+		response.InternalError(c, err)
+		return
+	}
+	response.OK(c, result)
 }
 
 // GET /backups/:filename
@@ -242,18 +247,9 @@ func (h *Handler) deleteOne(c *gin.Context) {
 
 // POST /backups/upload-to-s3
 func (h *Handler) uploadToS3(c *gin.Context) {
-	if h.cfgSvc == nil {
-		response.InternalError(c, fmt.Errorf("config service is unavailable"))
-		return
-	}
-
-	cfg, err := h.cfgSvc.Get()
+	cfg, err := h.loadConfig()
 	if err != nil {
 		response.InternalError(c, err)
-		return
-	}
-	if cfg == nil {
-		response.InternalError(c, fmt.Errorf("configs not initialized"))
 		return
 	}
 	if !cfg.BackupOptions.Enable {
@@ -262,27 +258,14 @@ func (h *Handler) uploadToS3(c *gin.Context) {
 		return
 	}
 
-	uploader, err := newS3Uploader(cfg.S3Options)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	now := time.Now()
-	artifact, err := h.createLocalBackupArtifact(now)
+	result, _, err := h.createBackup(context.WithoutCancel(c.Request.Context()))
 	if err != nil {
 		response.InternalError(c, err)
 		return
 	}
-
-	key := renderBackupObjectKey(cfg.BackupOptions.Path, artifact.Filename, now)
-	h.logger.Info(fmt.Sprintf("上传备份到 S3：%s", key))
-	if _, err := uploader.Upload(c.Request.Context(), key, artifact.Buffer.Bytes(), "application/zip"); err != nil {
-		h.logger.Warn("S3 上传失败", zap.Error(err))
-		response.InternalError(c, err)
+	if result.S3.Status == S3UploadFailed {
+		response.InternalError(c, errors.New(result.S3.Error))
 		return
 	}
-
-	h.logger.Info("S3 上传成功")
 	response.NoContent(c)
 }

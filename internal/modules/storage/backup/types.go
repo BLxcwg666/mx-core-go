@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"time"
 
+	appcfg "github.com/mx-space/core/internal/config"
 	"github.com/mx-space/core/internal/modules/gateway/webhook"
 	"github.com/mx-space/core/internal/modules/system/core/configs"
 	pkgredis "github.com/mx-space/core/internal/pkg/redis"
@@ -142,11 +143,33 @@ var legacyOptionKeyAliases = map[string]string{
 
 // Handler is the HTTP handler for backup operations.
 type Handler struct {
-	db      *gorm.DB
-	cfgSvc  *configs.Service
-	rc      *pkgredis.Client
-	logger  *zap.Logger
-	webhook *webhook.Service
+	db          *gorm.DB
+	cfgSvc      *configs.Service
+	rc          *pkgredis.Client
+	logger      *zap.Logger
+	webhook     *webhook.Service
+	newUploader func(appcfg.S3Options) (S3Uploader, error)
+}
+
+const (
+	S3UploadSkipped  = "skipped"
+	S3UploadUploaded = "uploaded"
+	S3UploadFailed   = "failed"
+)
+
+// S3UploadResult reports what happened to a backup's S3 upload.
+type S3UploadResult struct {
+	Status string `json:"status"`
+	Key    string `json:"key,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// BackupResult describes a created local backup and its S3 upload outcome.
+type BackupResult struct {
+	Filename string         `json:"filename"`
+	Size     string         `json:"size"`
+	S3       S3UploadResult `json:"s3"`
 }
 
 type backupManifest struct {

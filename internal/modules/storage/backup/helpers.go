@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -32,13 +33,18 @@ func renderBackupObjectKey(template, filename string, now time.Time) string {
 		tpl = defaultS3PathTemplate
 	}
 
+	// {h}/{i} match the default config template and the image bed renderer; {H}/{M} are kept for older configs.
 	replacer := strings.NewReplacer(
 		"{Y}", now.Format("2006"),
+		"{y}", now.Format("06"),
 		"{m}", now.Format("01"),
 		"{d}", now.Format("02"),
+		"{h}", now.Format("15"),
 		"{H}", now.Format("15"),
+		"{i}", now.Format("04"),
 		"{M}", now.Format("04"),
 		"{s}", now.Format("05"),
+		"{timestamp}", strconv.FormatInt(now.Unix(), 10),
 		"{filename}", filename,
 	)
 
