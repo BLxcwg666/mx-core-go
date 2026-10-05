@@ -23,6 +23,12 @@ import (
 	jetopenai "go.jetify.com/ai/provider/openai"
 )
 
+// Reasoning models count thinking tokens against this limit, so it must leave
+// room for both reasoning and the JSON payload.
+const aiMaxOutputTokens = 4096
+
+var errAIOutputTruncated = fmt.Errorf("AI output was truncated by max output tokens limit (%d), possibly consumed by reasoning", aiMaxOutputTokens)
+
 func isOpenAICompatibleProviderType(raw string) bool {
 	t := normalizeProviderType(raw)
 	return t == "openai-compatible" || t == "openaicompatible"
@@ -71,10 +77,13 @@ func callAIWithSystemPrompt(provider *appcfg.AIProvider, systemPrompt, prompt st
 		context.Background(),
 		buildAIPromptMessages(systemPrompt, prompt),
 		jetai.WithModel(model),
-		jetai.WithMaxOutputTokens(300),
+		jetai.WithMaxOutputTokens(aiMaxOutputTokens),
 	)
 	if err != nil {
 		return "", err
+	}
+	if resp != nil && resp.FinishReason == jetapi.FinishReasonLength {
+		return "", errAIOutputTruncated
 	}
 	return extractTextFromAIResponse(resp)
 }
@@ -108,12 +117,13 @@ func callAIStream(provider *appcfg.AIProvider, title, text, lang string, onToken
 		context.Background(),
 		buildAIPromptMessages(systemPrompt, prompt),
 		jetai.WithModel(model),
-		jetai.WithMaxOutputTokens(300),
+		jetai.WithMaxOutputTokens(aiMaxOutputTokens),
 	)
 	if err != nil {
 		return "", err
 	}
 	var full strings.Builder
+	var finishReason jetapi.FinishReason
 	for event := range streamResp.Stream {
 		switch evt := event.(type) {
 		case *jetapi.TextDeltaEvent:
@@ -129,7 +139,12 @@ func callAIStream(provider *appcfg.AIProvider, title, text, lang string, onToken
 				return "", errors.New("AI stream returned an unknown error")
 			}
 			return "", fmt.Errorf("%v", evt.Err)
+		case *jetapi.FinishEvent:
+			finishReason = evt.FinishReason
 		}
+	}
+	if finishReason == jetapi.FinishReasonLength {
+		return "", errAIOutputTruncated
 	}
 	result := full.String()
 	if strings.TrimSpace(result) == "" {
@@ -167,7 +182,7 @@ func callOpenAICompatibleChatCompletions(provider *appcfg.AIProvider, systemProm
 	body, _ := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"messages":   messages,
-		"max_tokens": 300,
+		"max_tokens": aiMaxOutputTokens,
 	})
 
 	req, err := http.NewRequest(http.MethodPost, endpoint+"/v1/chat/completions", bytes.NewReader(body))
@@ -197,6 +212,7 @@ func callOpenAICompatibleChatCompletions(provider *appcfg.AIProvider, systemProm
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Error *struct {
 			Message string `json:"message"`
@@ -213,6 +229,12 @@ func callOpenAICompatibleChatCompletions(provider *appcfg.AIProvider, systemProm
 		return "", fmt.Errorf("openai-compatible error: %s", result.Message)
 	}
 	if len(result.Choices) == 0 {
+		return "", errors.New("empty response from AI")
+	}
+	if result.Choices[0].FinishReason == "length" {
+		return "", errAIOutputTruncated
+	}
+	if strings.TrimSpace(result.Choices[0].Message.Content) == "" {
 		return "", errors.New("empty response from AI")
 	}
 	return result.Choices[0].Message.Content, nil
@@ -247,7 +269,7 @@ func callOpenAICompatibleChatCompletionsStream(provider *appcfg.AIProvider, syst
 	body, _ := json.Marshal(map[string]interface{}{
 		"model":      model,
 		"messages":   messages,
-		"max_tokens": 300,
+		"max_tokens": aiMaxOutputTokens,
 		"stream":     true,
 	})
 
@@ -272,6 +294,7 @@ func callOpenAICompatibleChatCompletionsStream(provider *appcfg.AIProvider, syst
 	}
 
 	var full strings.Builder
+	var finishReason string
 	buf := make([]byte, 4096)
 	remainder := ""
 	done := false
@@ -305,10 +328,14 @@ func callOpenAICompatibleChatCompletionsStream(provider *appcfg.AIProvider, syst
 						Delta struct {
 							Content string `json:"content"`
 						} `json:"delta"`
+						FinishReason *string `json:"finish_reason"`
 					} `json:"choices"`
 				}
 				if err2 := json.Unmarshal([]byte(data), &event); err2 != nil {
 					continue
+				}
+				if len(event.Choices) > 0 && event.Choices[0].FinishReason != nil {
+					finishReason = *event.Choices[0].FinishReason
 				}
 				if len(event.Choices) == 0 || event.Choices[0].Delta.Content == "" {
 					continue
@@ -330,6 +357,9 @@ func callOpenAICompatibleChatCompletionsStream(provider *appcfg.AIProvider, syst
 		}
 	}
 
+	if finishReason == "length" {
+		return "", errAIOutputTruncated
+	}
 	result := full.String()
 	if strings.TrimSpace(result) == "" {
 		return "", errors.New("empty response from AI")
@@ -350,8 +380,16 @@ func splitLines(s string) []string {
 	return lines
 }
 
+func stripThinkBlock(raw string) string {
+	const closeTag = "</think>"
+	if idx := strings.LastIndex(raw, closeTag); idx >= 0 {
+		return raw[idx+len(closeTag):]
+	}
+	return raw
+}
+
 func unmarshalAIJSON(raw string, out interface{}) error {
-	cleaned := strings.TrimSpace(raw)
+	cleaned := strings.TrimSpace(stripThinkBlock(raw))
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```JSON")
 	cleaned = strings.TrimPrefix(cleaned, "```")
